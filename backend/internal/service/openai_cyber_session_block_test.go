@@ -108,7 +108,7 @@ func TestCyberSessionPreviousResponseBlockKey(t *testing.T) {
 
 func TestSecurityAuditInvalidationBlocksPreviousResponseContinuation(t *testing.T) {
 	settingSvc := &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
-		SettingKeyCyberSessionBlockEnabled:    "true",
+		SettingKeyCyberSessionBlockEnabled:    "false",
 		SettingKeyCyberSessionBlockTTLSeconds: "3600",
 	}}}
 	combo := &comboCacheAndStore{}
@@ -118,7 +118,7 @@ func TestSecurityAuditInvalidationBlocksPreviousResponseContinuation(t *testing.
 	c, _ := newCyberBlockTestCtx(nil, string(body))
 	keys := []string{CyberSessionPreviousResponseBlockKey(9, body), CyberSessionExplicitBlockKey(9, c, body)}
 	require.NoError(t, svc.InvalidateSecurityAuditSession(ctx, nil, c, body, "", keys))
-	require.NotEmpty(t, svc.FindCyberSessionBlockedForRequest(ctx, 9, c, body, "", ""))
+	require.NotEmpty(t, svc.FindSecurityAuditSessionInvalidatedForRequest(ctx, 9, c, body, "", ""))
 }
 
 // --- fakes ---
