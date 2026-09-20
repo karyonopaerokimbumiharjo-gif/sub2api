@@ -29,6 +29,18 @@ func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) s
 	return hashCyberSessionBlockKey(apiKeyID, explicitOpenAISessionID(c, body))
 }
 
+// CyberSessionPreviousResponseBlockKey derives a stable block key from a valid
+// Responses previous_response_id. This closes the gap where a client continues
+// a rejected conversation using only resp_* without any explicit session header
+// or prompt_cache_key.
+func CyberSessionPreviousResponseBlockKey(apiKeyID int64, body []byte) string {
+	id := strings.TrimSpace(openAIRequestPayloadView(body).Get("previous_response_id").String())
+	if ClassifyOpenAIPreviousResponseIDKind(id) != OpenAIPreviousResponseIDKindResponseID {
+		return ""
+	}
+	return hashCyberSessionBlockKey(apiKeyID, "previous_response_id:"+id)
+}
+
 // CyberSessionTranscriptBlockKeys returns the exact full-request key followed
 // by an optional rewrite-tolerant context key. The latter is emitted only after
 // model-generated history has been observed.
@@ -114,6 +126,63 @@ func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scop
 	}
 }
 
+// InvalidateSecurityAuditSession invalidates a conversation after a blocking
+// security-audit verdict. Unlike the optional upstream cyber-policy switch, this
+// path is intentionally unconditional: a blocking prompt-guard verdict must not
+// be followed by continuation of the same local conversation.
+//
+// It (1) writes the conversation block keys, (2) removes sticky account binding,
+// (3) drops WS turn-state/session connection binding, and (4) drops the current
+// previous_response_id account/connection binding when present. The remote
+// upstream response object may still physically exist, but this gateway refuses
+// reuse of the blocked conversation and requires a new session.
+func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
+	ctx context.Context,
+	groupID *int64,
+	c *gin.Context,
+	body []byte,
+	scopeKey string,
+	keys []string,
+) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ttl := time.Hour
+	if _, configuredTTL := s.CyberSessionBlockRuntime(ctx); configuredTTL > 0 {
+		ttl = configuredTTL
+	}
+	var firstErr error
+	if store := s.cyberSessionBlockStore(); store != nil && len(keys) > 0 {
+		if err := store.SetCyberSessionBlocked(ctx, scopeKey, keys, ttl); err != nil {
+			firstErr = err
+			logger.LegacyPrintf("service.openai_gateway", "security audit session block write failed: err=%v", err)
+		}
+	}
+
+	sessionHash := s.GenerateSessionHash(c, body)
+	if sessionHash != "" {
+		if err := s.deleteStickySessionAccountID(ctx, groupID, sessionHash); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		store := s.getOpenAIWSStateStore()
+		store.DeleteSessionTurnState(derefGroupID(groupID), sessionHash)
+		store.DeleteSessionConn(derefGroupID(groupID), sessionHash)
+	}
+
+	previousID := strings.TrimSpace(openAIRequestPayloadView(body).Get("previous_response_id").String())
+	if ClassifyOpenAIPreviousResponseIDKind(previousID) == OpenAIPreviousResponseIDKindResponseID {
+		store := s.getOpenAIWSStateStore()
+		store.DeleteResponseConn(previousID)
+		if err := store.DeleteResponseAccount(ctx, derefGroupID(groupID), previousID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // FindCyberSessionBlockedForRequest applies explicit-first lookup followed by
 // scope-gated transcript matching. All failures remain fail-open.
 func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
@@ -125,10 +194,17 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Con
 	if store == nil {
 		return ""
 	}
+	directKeys := make([]string, 0, 2)
+	if previousKey := CyberSessionPreviousResponseBlockKey(apiKeyID, body); previousKey != "" {
+		directKeys = append(directKeys, previousKey)
+	}
 	if explicitKey := CyberSessionExplicitBlockKey(apiKeyID, c, body); explicitKey != "" {
-		key, err := store.FindCyberSessionBlocked(ctx, []string{explicitKey})
+		directKeys = append(directKeys, explicitKey)
+	}
+	if len(directKeys) > 0 {
+		key, err := store.FindCyberSessionBlocked(ctx, directKeys)
 		if err != nil {
-			logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
+			logger.LegacyPrintf("service.openai_gateway", "cyber direct session read failed: err=%v", err)
 			return ""
 		}
 		if key != "" {
