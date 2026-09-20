@@ -366,7 +366,16 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 			Protocol: strings.TrimSpace(endpoint.Protocol), BaseURL: baseURL, Model: strings.TrimSpace(endpoint.Model),
 			TimeoutMS: endpoint.TimeoutMS, InputLimit: endpoint.InputLimit, Enabled: endpoint.Enabled,
 		}
+		if stored.Protocol == "" {
+			stored.Protocol = "openai_compatible"
+		}
 		old, hadOld := currentByID[stored.ID]
+		// Never carry a credential across provider/origin changes.
+		if hadOld && old.TokenCiphertext != "" &&
+			(old.BaseURL != stored.BaseURL || old.Protocol != stored.Protocol) &&
+			strings.TrimSpace(endpoint.Token) == "" && !endpoint.ClearToken {
+			return storageConfig{}, infraerrors.BadRequest("prompt_audit_credential_reentry_required", "切换节点地址或协议后必须重新输入或清除凭据")
+		}
 		switch {
 		case endpoint.ClearToken:
 			stored.TokenCiphertext = ""
