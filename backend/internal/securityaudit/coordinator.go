@@ -22,8 +22,32 @@ type Coordinator struct {
 	prompt PromptEngine
 }
 
+type jevProductEngine interface {
+	JevBlockingReady() bool
+	EnhanceCompaction(ctx context.Context, body []byte) ([]byte, JevCompactionReport, error)
+}
+
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 	return &Coordinator{legacy: legacy, prompt: prompt}
+}
+
+func (c *Coordinator) JevBlockingReady() bool {
+	if c == nil || c.prompt == nil {
+		return false
+	}
+	engine, ok := c.prompt.(jevProductEngine)
+	return ok && engine.JevBlockingReady()
+}
+
+func (c *Coordinator) EnhanceCompaction(ctx context.Context, body []byte) ([]byte, JevCompactionReport, error) {
+	if c == nil || c.prompt == nil {
+		return body, JevCompactionReport{}, &GuardError{Code: ErrorCodeUnavailable}
+	}
+	engine, ok := c.prompt.(jevProductEngine)
+	if !ok || !engine.JevBlockingReady() {
+		return body, JevCompactionReport{}, &GuardError{Code: ErrorCodeUnavailable}
+	}
+	return engine.EnhanceCompaction(ctx, body)
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
