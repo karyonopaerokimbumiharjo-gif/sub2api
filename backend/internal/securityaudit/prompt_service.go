@@ -236,6 +236,24 @@ func (s *PromptService) Probe(ctx context.Context, request ProbeRequest) ProbeRe
 		return s.finishProbe(request.Endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: "endpoint_invalid", Message: "审计节点配置无效"})
 	}
 	LogInfo(EventProbeStarted, map[string]any{"guard_endpoint_id": endpoint.ID, "status": "started"})
+	if endpoint.Protocol == JevProtocol {
+		// Jev readiness uses its native structured evaluation endpoint. Never send
+		// user content as a health probe and never pretend /chat/completions works.
+		result, scanErr := callPromptScanner(ctx, s.scanner, endpoint, "Hello", AllScannerIDs)
+		if scanErr == nil && result != nil && result.Action == ActionAllow {
+			return s.finishProbe(endpoint.ID, started, ProbeResult{OK: true, Status: "healthy", Message: "Jev 结构化接口已验证；不代表策略准确率已验收", HTTPStatus: http.StatusOK, TokenApplied: tokenApplied})
+		}
+		status, retryable := 0, false
+		code := guardErrorCode(scanErr)
+		var guardErr *GuardError
+		if errors.As(scanErr, &guardErr) {
+			status, retryable = guardErr.HTTPStatus, guardErr.Retryable
+		}
+		if code == "" {
+			code = ErrorCodeInvalidResponse
+		}
+		return s.finishProbe(endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: code, Message: "Jev 合成探测未通过，禁止视为已就绪", HTTPStatus: status, Retryable: retryable, TokenApplied: tokenApplied})
+	}
 	client, err := NewSecureHTTPClient(endpoint)
 	if err != nil {
 		return s.finishProbe(endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: "endpoint_unsafe", Message: "审计节点地址不在允许范围", TokenApplied: tokenApplied})
@@ -312,12 +330,19 @@ func modelsResponseReady(body []byte, model string) bool {
 }
 
 func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoint, bool, error) {
+	protocol := strings.TrimSpace(input.Protocol)
+	if protocol == "" {
+		protocol = "openai_compatible"
+	}
 	baseURL, err := NormalizeBaseURL(input.BaseURL)
 	if err != nil {
 		return ActiveEndpoint{}, false, err
 	}
 	token := strings.TrimSpace(input.Token)
-	if token == "" {
+	if input.ClearToken {
+		token = ""
+	}
+	if token == "" && !input.ClearToken {
 		if cfg, ok := s.config.Active(); ok {
 			for _, endpoint := range cfg.Endpoints {
 				if endpoint.ID != strings.TrimSpace(input.ID) {
@@ -326,7 +351,7 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 				// Reuse a stored credential only when the probe targets the same
 				// normalized base URL. Otherwise an admin probe could exfiltrate
 				// the Guard token to an attacker-controlled HTTPS host.
-				if endpoint.BaseURL == baseURL {
+				if endpoint.BaseURL == baseURL && endpoint.Protocol == protocol {
 					token = endpoint.Token
 				}
 				break
@@ -336,6 +361,9 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 	model := strings.TrimSpace(input.Model)
 	if model == "" {
 		model = DefaultGuardModel
+		if protocol == JevProtocol {
+			model = DefaultJevModel
+		}
 	}
 	timeout := input.TimeoutMS
 	if timeout == 0 {
@@ -346,7 +374,7 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 		limit = DefaultInputLimit
 	}
 	storage := storageConfig{Enabled: false, Strategy: "priority", WorkerCount: DefaultWorkerCount, QueueCapacity: DefaultQueueCapacity, Scanners: append([]string(nil), AllScannerIDs...), AllGroups: true,
-		Endpoints: []StorageEndpoint{{ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name), Protocol: "openai_compatible", BaseURL: baseURL, Model: model, TimeoutMS: timeout, InputLimit: limit}}}
+		Endpoints: []StorageEndpoint{{ID: strings.TrimSpace(input.ID), Name: strings.TrimSpace(input.Name), Protocol: protocol, BaseURL: baseURL, Model: model, TimeoutMS: timeout, InputLimit: limit}}}
 	if storage.Endpoints[0].ID == "" {
 		storage.Endpoints[0].ID = "probe"
 	}
@@ -356,7 +384,7 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 	if err := validateStorageConfig(storage); err != nil {
 		return ActiveEndpoint{}, false, err
 	}
-	return ActiveEndpoint{ID: storage.Endpoints[0].ID, Name: storage.Endpoints[0].Name, Protocol: "openai_compatible", BaseURL: baseURL, Model: model, Token: token, TimeoutMS: timeout, InputLimit: limit, Enabled: true}, token != "", nil
+	return ActiveEndpoint{ID: storage.Endpoints[0].ID, Name: storage.Endpoints[0].Name, Protocol: protocol, BaseURL: baseURL, Model: model, Token: token, TimeoutMS: timeout, InputLimit: limit, Enabled: true}, token != "", nil
 }
 
 func (s *PromptService) finishProbe(id string, started time.Time, result ProbeResult) ProbeResult {
