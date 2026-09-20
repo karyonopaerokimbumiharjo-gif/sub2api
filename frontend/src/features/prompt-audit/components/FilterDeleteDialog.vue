@@ -146,11 +146,14 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 
 const preset = ref<DeleteRangePreset>('7d')
+// Freeze relative ranges at preview time; confirmation reuses the displayed scope.
+const previewCriteria = ref<PromptEventFilters | null>(null)
 const local = reactive<PromptEventFilters>(emptyEventFilters())
 
 watch(
   () => props.show,
   (visible) => {
+    previewCriteria.value = null
     if (!visible) return
     const initial = cloneData(props.initialFilters)
     // Only inherit an explicit list-filter range; otherwise default to the
@@ -163,30 +166,32 @@ watch(
 
 const canPreview = computed(() => preset.value !== 'custom' || hasExplicitDeleteRange(local))
 
-// One-click flow: a valid criteria selection is enough to confirm — the parent
-// mints the server-side confirmation token on the fly. The button stays
-// disabled only when the range is invalid, work is in flight, or a fresh
-// preview already proved there is nothing to delete.
+// A displayed preview is mandatory; the backend remains the final token/expiry authority.
 const confirmDisabled = computed(
-  () => !canPreview.value || props.previewing || props.deleting || (props.preview !== null && props.preview.matched_count === 0),
+  () => !canPreview.value || !previewCriteria.value || !props.preview || props.previewing || props.deleting || props.preview.matched_count === 0,
 )
 const confirmDisabledReason = computed(() => {
   if (props.previewing || props.deleting) return ''
+  if (!previewCriteria.value || !props.preview) return 'admin.promptAudit.events.filterDeleteNeedPreview'
   if (!canPreview.value) return 'admin.promptAudit.events.filterDeleteConfirmInvalidRange'
   if (props.preview && props.preview.matched_count === 0) return 'admin.promptAudit.events.filterDeleteConfirmNoMatches'
   return ''
 })
 
 function criteriaChanged() {
+  previewCriteria.value = null
   emit('criteria-change')
 }
 function requestPreview() {
   if (!canPreview.value) return
-  emit('preview', resolveDeleteRangeFilters(local, preset.value))
+  previewCriteria.value = resolveDeleteRangeFilters(local, preset.value)
+  emit('preview', cloneData(previewCriteria.value))
 }
 function requestConfirm() {
-  if (confirmDisabled.value) return
-  emit('confirm', resolveDeleteRangeFilters(local, preset.value))
+  if (confirmDisabled.value || !previewCriteria.value || !props.preview) return
+  const expires = Date.parse(props.preview.expires_at)
+  if (!Number.isFinite(expires) || expires <= Date.now()) { criteriaChanged(); return }
+  emit('confirm', cloneData(previewCriteria.value))
 }
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
