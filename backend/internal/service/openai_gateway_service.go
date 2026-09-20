@@ -458,6 +458,7 @@ type OpenAIGatewayService struct {
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
 	pluginManager         *PluginManager
+	harvestPluginManager  atomic.Pointer[PluginManager]
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
 	grokTokenProvider     *GrokTokenProvider
@@ -511,6 +512,9 @@ type OpenAIGatewayService struct {
 	// openaiCodexTickets: accountID\x00model → *openAICodexTicket，292 长度门票。
 	openaiCodexTickets           sync.Map
 	openaiCodexTicketFlight      singleflight.Group
+	openaiCodexHarvestLimitOnce  sync.Once
+	openaiCodexHarvestLimit      chan struct{}
+	openaiCodexHarvestRetry      sync.Map
 	openaiCodexTicketLifecycleMu sync.Mutex
 	openaiCodexTicketCancel      context.CancelFunc
 	openaiCodexTicketDone        chan struct{}

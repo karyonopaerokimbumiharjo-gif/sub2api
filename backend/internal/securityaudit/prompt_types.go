@@ -67,6 +67,7 @@ const (
 )
 
 type Request struct {
+	RequireJev bool
 	RequestID  string
 	UserID     int64
 	Username   string

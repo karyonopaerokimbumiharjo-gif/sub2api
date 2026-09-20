@@ -582,6 +582,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
+	if err := validateGPT6JUpstreamModel(c, gjson.GetBytes(body, "model").String()); err != nil {
+		return nil, err
+	}
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:

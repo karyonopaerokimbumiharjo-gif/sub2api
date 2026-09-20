@@ -153,6 +153,9 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 		}
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
+	if req.RequireJev && (cfg.EffectiveMode() != ModeBlocking || !cfg.IncludesGroup(req.GroupID) || !jevEndpointsReady(cfg)) {
+		return nil, &GuardError{Code: ErrorCodeUnavailable}
+	}
 	if cfg.EffectiveMode() != ModeBlocking || !cfg.IncludesGroup(req.GroupID) {
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}

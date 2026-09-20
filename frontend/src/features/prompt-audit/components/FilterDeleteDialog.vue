@@ -172,8 +172,8 @@ const confirmDisabled = computed(
 )
 const confirmDisabledReason = computed(() => {
   if (props.previewing || props.deleting) return ''
-  if (!previewCriteria.value || !props.preview) return 'admin.promptAudit.events.filterDeleteNeedPreview'
   if (!canPreview.value) return 'admin.promptAudit.events.filterDeleteConfirmInvalidRange'
+  if (!previewCriteria.value || !props.preview) return 'admin.promptAudit.events.filterDeleteNeedPreview'
   if (props.preview && props.preview.matched_count === 0) return 'admin.promptAudit.events.filterDeleteConfirmNoMatches'
   return ''
 })

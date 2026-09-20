@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -177,10 +178,9 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ttl := time.Hour
-	if _, configuredTTL := s.CyberSessionBlockRuntime(ctx); configuredTTL > 0 {
-		ttl = configuredTTL
-	}
+	// Prompt-guard revocations are durable until explicitly removed. The
+	// optional upstream cyber cooldown must not silently reopen an audit block.
+	ttl := time.Duration(0)
 	var firstErr error
 	namespacedKeys := securityAuditSessionBlockKeys(keys)
 	namespacedScope := securityAuditSessionBlockKey(scopeKey)
@@ -189,6 +189,8 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 			firstErr = err
 			logger.LegacyPrintf("service.openai_gateway", "security audit session block write failed: err=%v", err)
 		}
+	} else {
+		firstErr = errors.New("security audit session invalidation storage or identity unavailable")
 	}
 
 	sessionHash := s.GenerateSessionHash(c, body)

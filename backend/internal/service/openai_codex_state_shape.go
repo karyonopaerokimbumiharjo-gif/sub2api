@@ -27,9 +27,9 @@ type openAICodexStateShape struct {
 }
 
 type openAICodexStatePolicy struct {
-	PlanClass     string
+	PlanClass      string
 	ExpectedBlocks int
-	NominalLength int
+	NominalLength  int
 	TTL            time.Duration
 	RefreshBefore  time.Duration
 }

@@ -51,6 +51,9 @@ func (c *Coordinator) EnhanceCompaction(ctx context.Context, body []byte) ([]byt
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+	if req.RequireJev && !c.JevBlockingReady() {
+		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
+	}
 	if c == nil {
 		return allowDecision(nil, nil)
 	}

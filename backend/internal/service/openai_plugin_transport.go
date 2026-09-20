@@ -4,6 +4,7 @@ import "net/http"
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
+	s.harvestPluginManager.Store(manager)
 }
 
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。

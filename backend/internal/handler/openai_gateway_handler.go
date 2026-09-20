@@ -2377,6 +2377,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		c.Request = c.Request.WithContext(ctx)
 	}
 
+	// Consume product headers before the upgrade; every turn still checks the
+	// actual model and current Jev policy independently.
+	gpt6jMode, modeErr := parseGPT6JRequestMode(c, gpt6JUpstreamModel)
+	if modeErr != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", modeErr.Error())
+		return
+	}
+	if gpt6jMode.Enabled && (h.securityAuditCoordinator == nil || !h.securityAuditCoordinator.JevBlockingReady()) {
+		h.errorResponse(c, http.StatusServiceUnavailable, "gpt6j_guard_unavailable", "GPT-6J requires blocking Jev safety")
+		return
+	}
 	wsConn, err := coderws.Accept(c.Writer, c.Request, &coderws.AcceptOptions{
 		CompressionMode: coderws.CompressionContextTakeover,
 	})
@@ -2434,6 +2445,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
+		return
+	}
+	if gpt6jMode.Enabled && reqModel != gpt6JUpstreamModel {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, errGPT6JWrongModel.Error())
 		return
 	}
 	// 分组级模型白名单：首帧校验客户端模型，不通过则关闭连接并标记运维原因。
@@ -2859,6 +2874,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if model == "" {
 					model = reqModel
+				}
+				if gpt6jMode.Enabled && model != gpt6JUpstreamModel {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, errGPT6JWrongModel.Error(), nil)
 				}
 				// 分组级模型白名单：后续 turn 同样校验客户端模型（省略 model 时
 				// 沿用会话实际生效模型，含 session.update 轮换后的模型），不通过

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,7 +26,6 @@ import (
 const (
 	openAICodexTicketExtraKeyPrefix  = "codex_turn_ticket:"
 	openAICodexAstraMinVersion       = "0.153.4"
-	openAICodexTicketStatePrefix     = "gAAAAA"
 	openAICodexTicketDefaultModel    = "gpt-6-astra"
 	openAICodexTicketDefaultSolModel = "gpt-5.6-sol"
 )
@@ -132,7 +132,7 @@ type OpenAICodexTicketStatus struct {
 	Blocks           int        `json:"blocks,omitempty"`
 	Fingerprint      string     `json:"fingerprint,omitempty"`
 	Source           string     `json:"source,omitempty"`
-	RouteFingerprint string    `json:"route_fingerprint,omitempty"`
+	RouteFingerprint string     `json:"route_fingerprint,omitempty"`
 	Ready            bool       `json:"ready"`
 	RemainingSeconds int64      `json:"remaining_seconds"`
 	Blocked          bool       `json:"blocked"`
@@ -455,10 +455,17 @@ func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, a
 	}
 	applyOpenAICodexTicketHarvestIdentity(req.Header, model)
 
-	// Synthetic probes must use the dedicated no-reuse transport even when the
-	// production account is bound to a plugin. This also avoids reading pluginManager
-	// while handlers are still wiring it during gateway construction.
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	// Only an explicitly capable plugin may acquire state. Use an atomic
+	// snapshot because the background harvester can run during handler wiring.
+	var resp *http.Response
+	handled := false
+	if manager := s.harvestPluginManager.Load(); manager != nil {
+		resp, handled, err = manager.RoundTripOpenAICodexHarvest(attemptCtx, req, proxyURL, account)
+	}
+	if !handled {
+		resp, err = s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	}
+
 	if err != nil {
 		return "", 0, err
 	}
@@ -567,8 +574,24 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 	cfg := s.openAICodexTicketConfig()
 	now := time.Now()
 	refreshBefore := time.Duration(cfg.RefreshBeforeSeconds) * time.Second
+	type job struct {
+		account Account
+		model   string
+	}
+	jobs := make(chan job)
 	var wg sync.WaitGroup
+	for range cfg.HarvestMaxConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for work := range jobs {
+				s.probeOnceOpenAICodexTicket(ctx, &work.account, work.model)
+			}
+		}()
+	}
 	probed := 0
+enqueue:
+
 	for i := range accounts {
 		account := accounts[i]
 		if account.Status != StatusActive || !isOpenAICodexTicketAccount(&account) {
@@ -587,14 +610,15 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 			// Token/header helpers may update account metadata; each model owns its maps.
 			acc.Extra = maps.Clone(account.Extra)
 			acc.Credentials = maps.Clone(account.Credentials)
-			probed++
-			wg.Add(1)
-			go func(acc Account, model string) {
-				defer wg.Done()
-				s.probeOnceOpenAICodexTicket(ctx, &acc, model)
-			}(acc, model)
+			select {
+			case <-ctx.Done():
+				break enqueue
+			case jobs <- job{acc, model}:
+				probed++
+			}
 		}
 	}
+	close(jobs)
 	wg.Wait()
 	if probed > 0 {
 		logger.L().Info("openai_codex_ticket probe cycle", zap.Int("probed", probed))
@@ -609,12 +633,49 @@ func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, a
 		return
 	}
 	cfg := s.openAICodexTicketConfig()
-	proxyURL := s.openAICodexTicketHarvestProxyURLContext(ctx)
-	if proxyURL == "" || s.httpUpstream == nil || ctx.Err() != nil {
+	routes := s.openAICodexTicketHarvestRoutes(ctx)
+	if len(routes) == 0 || s.httpUpstream == nil || ctx.Err() != nil {
 		return
 	}
 	key := openAICodexTicketKey(account.ID, model)
 	_, _, _ = s.openaiCodexTicketFlight.Do(key, func() (any, error) {
+		s.openaiCodexHarvestLimitOnce.Do(func() { s.openaiCodexHarvestLimit = make(chan struct{}, cfg.HarvestMaxConcurrency) })
+		select {
+		case s.openaiCodexHarvestLimit <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() { <-s.openaiCodexHarvestLimit }()
+		now := time.Now()
+		var retry codexHarvestRetry
+		if raw, ok := s.openaiCodexHarvestRetry.Load(key); ok {
+			retry, _ = raw.(codexHarvestRetry)
+		}
+		if now.Before(retry.Next) {
+			return nil, nil
+		}
+		proxyURL := routes[retry.Failures%len(routes)]
+		succeeded := false
+		defer func() {
+			if succeeded {
+				s.openaiCodexHarvestRetry.Delete(key)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			retry.Failures++
+			delay := time.Duration(cfg.HarvestProbeIntervalSeconds) * time.Second
+			maxDelay := time.Duration(cfg.HarvestBackoffMaxSeconds) * time.Second
+			for n := 1; n < retry.Failures && delay < maxDelay; n++ {
+				delay = min(delay*2, maxDelay)
+			}
+			if cfg.HarvestJitterSeconds > 0 {
+				delay += time.Duration(rand.Int64N(int64(time.Duration(cfg.HarvestJitterSeconds)*time.Second) + 1))
+			}
+			retry.Next = time.Now().Add(min(delay, maxDelay))
+			s.openaiCodexHarvestRetry.Store(key, retry)
+		}()
 		token, _, err := s.GetAccessToken(ctx, account)
 		if err != nil || strings.TrimSpace(token) == "" {
 			logger.L().Info("openai_codex_ticket probe miss",
@@ -629,23 +690,28 @@ func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, a
 				zap.String("reason", "error"), zap.Error(perr))
 			return nil, nil
 		}
-		if status != http.StatusOK || state == "" || len(state) != cfg.TargetLength || !strings.HasPrefix(state, openAICodexTicketStatePrefix) {
+		shape, shapeErr := parseOpenAICodexStateShape(state)
+		policy := openAICodexPolicyForAccount(account, cfg)
+		if status != http.StatusOK || shapeErr != nil || !openAICodexStateAccepted(shape, policy, time.Now()) {
 			logger.L().Info("openai_codex_ticket probe miss",
 				zap.Int64("account_id", account.ID), zap.String("model", model),
 				zap.Int("http", status), zap.Int("len", len(state)))
 			return nil, nil
 		}
-		now := time.Now()
+		now = time.Now()
 		ticket := &openAICodexTicket{
-			AccountID:  account.ID,
-			Model:      model,
-			State:      state,
-			Length:     len(state),
-			CapturedAt: now,
-			ExpiresAt:  now.Add(time.Duration(cfg.TTLSeconds) * time.Second),
-			Attempts:   1,
+			AccountID:        account.ID,
+			Model:            model,
+			State:            state,
+			Length:           len(state),
+			CapturedAt:       now,
+			ExpiresAt:        now.Add(time.Duration(cfg.TTLSeconds) * time.Second),
+			Attempts:         retry.Failures + 1,
+			Source:           "harvester",
+			RouteFingerprint: openAICodexRouteFingerprint(proxyURL, "harvester"),
 		}
 		s.storeOpenAICodexTicket(ctx, account, ticket)
+		succeeded = true
 		logger.L().Info("openai_codex_ticket harvested",
 			zap.Int64("account_id", account.ID), zap.String("model", model),
 			zap.Int("length", ticket.Length), zap.String("mode", "continuous"))
@@ -755,4 +821,26 @@ func RedactOpenAICodexTicketExtra(extra map[string]any) map[string]any {
 		}
 	}
 	return redacted
+}
+
+// Retry metadata contains no credential or state material.
+type codexHarvestRetry struct {
+	Failures int
+	Next     time.Time
+}
+
+func (s *OpenAIGatewayService) openAICodexTicketHarvestRoutes(ctx context.Context) []string {
+	cfg := s.openAICodexTicketConfig()
+	values := append([]string{s.openAICodexTicketHarvestProxyURLContext(ctx)}, cfg.HarvestProxyURLs...)
+	routes := make([]string, 0, len(values))
+	seen := make(map[string]bool)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] || ValidateOpenAICodexTicketHarvestProxyURL(value) != nil {
+			continue
+		}
+		routes = append(routes, value)
+		seen[value] = true
+	}
+	return routes
 }

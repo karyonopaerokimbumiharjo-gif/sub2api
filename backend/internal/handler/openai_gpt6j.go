@@ -5,25 +5,27 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	gpt6JModeHeader                = "X-Sub2API-Model-Mode"
+	gpt6JModeHeader               = "X-Sub2API-Model-Mode"
 	gpt6JEnhancedCompactionHeader = "X-Sub2API-Enhanced-Compaction"
-	gpt6JModeValue                 = "gpt6j"
-	gpt6JUpstreamModel             = "gpt-6-astra"
+	gpt6JContextKey               = service.OpenAIGPT6JContextKey
+	gpt6JModeValue                = "gpt6j"
+	gpt6JUpstreamModel            = "gpt-6-astra"
 )
 
 type gpt6JRequestMode struct {
-	Enabled             bool
+	Enabled            bool
 	EnhancedCompaction bool
 }
 
 var (
-	errGPT6JWrongModel        = errors.New("gpt6j mode requires model gpt-6-astra")
-	errGPT6JCompactionNoMode  = errors.New("enhanced compaction is only available in GPT-6J mode")
-	errGPT6JInvalidToggle     = errors.New("invalid enhanced compaction toggle")
+	errGPT6JWrongModel       = errors.New("gpt6j mode requires model gpt-6-astra")
+	errGPT6JCompactionNoMode = errors.New("enhanced compaction is only available in GPT-6J mode")
+	errGPT6JInvalidToggle    = errors.New("invalid enhanced compaction toggle")
 )
 
 func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestMode, error) {
@@ -51,6 +53,9 @@ func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestM
 	}
 	if mode.Enabled && !strings.EqualFold(strings.TrimSpace(requestedModel), gpt6JUpstreamModel) {
 		return mode, errGPT6JWrongModel
+	}
+	if mode.Enabled {
+		c.Set(gpt6JContextKey, true)
 	}
 	return mode, nil
 }

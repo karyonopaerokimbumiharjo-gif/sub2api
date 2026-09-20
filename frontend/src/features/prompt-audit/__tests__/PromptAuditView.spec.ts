@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { PromptAuditConfig, PromptAuditRuntime } from '../types'
 import { SCANNER_CATALOG } from '../viewModel'
@@ -15,7 +15,7 @@ vi.mock('../api', () => ({ default: mocks }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
-  return { ...actual, useI18n: () => ({ locale: { value: 'en' }, t: (key: string, params?: Record<string, unknown>) => key.replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`)) }) }
+  return { ...actual, useI18n: () => ({ locale: ref('en'), t: (key: string, params?: Record<string, unknown>) => key.replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`)) }) }
 })
 
 const baseConfig = (): PromptAuditConfig => ({
@@ -216,26 +216,15 @@ describe('PromptAuditView', () => {
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(false)
   })
 
-  it('mints the confirmation token on the fly for one-click filter deletion without a manual preview', async () => {
+  it('refuses filter deletion without a displayed preview', async () => {
     const wrapper = mountView()
     await flushPromises()
-
     await wrapper.get('[data-test="preview"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
-    expect(mocks.previewDelete).not.toHaveBeenCalled()
-
     await wrapper.get('[data-test="dialog-confirm"]').trigger('click')
     await flushPromises()
-    expect(mocks.previewDelete).toHaveBeenCalledOnce()
-    expect(mocks.previewDelete).toHaveBeenCalledWith(expect.objectContaining({ start_at: '2026-07-15T00:00', end_at: '2026-07-16T00:00' }))
-    expect(mocks.deleteEventsByFilter).toHaveBeenCalledWith(expect.objectContaining({
-      start_at: '2026-07-15T00:00',
-      end_at: '2026-07-16T00:00',
-    }), expect.objectContaining({
-      snapshot_max_id: 10,
-      confirmation_token: 'opaque-confirmation',
-    }))
-    expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(false)
+    expect(mocks.previewDelete).not.toHaveBeenCalled()
+    expect(mocks.deleteEventsByFilter).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
   })
 })

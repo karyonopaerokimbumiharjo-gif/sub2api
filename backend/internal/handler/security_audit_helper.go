@@ -161,6 +161,7 @@ func invalidateSecurityAuditContext(c *gin.Context, reqLog *zap.Logger, gatewayS
 		if reqLog != nil {
 			reqLog.Warn("security_audit.context_invalidation_degraded", zap.Error(err))
 		}
+		return
 	}
 	c.Set(securityAuditContextInvalidatedContextKey, true)
 }
@@ -199,7 +200,8 @@ func securityAuditWSTurn(c *gin.Context) (int, bool) {
 func buildSecurityAuditRequest(c *gin.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) securityaudit.Request {
 	legacy := buildContentModerationInput(c, apiKey, subject, protocol, model, body)
 	request := securityaudit.Request{
-		RequestID: legacy.RequestID, UserID: legacy.UserID, UserEmail: legacy.UserEmail,
+		RequireJev: c.GetBool(gpt6JContextKey),
+		RequestID:  legacy.RequestID, UserID: legacy.UserID, UserEmail: legacy.UserEmail,
 		APIKeyID: legacy.APIKeyID, APIKeyName: legacy.APIKeyName, GroupID: cloneSecurityAuditGroupID(legacy.GroupID),
 		GroupName: legacy.GroupName, Provider: legacy.Provider, Endpoint: legacy.Endpoint,
 		Protocol: legacy.Protocol, Model: legacy.Model, Body: body, Stage: strings.TrimSpace(stage),

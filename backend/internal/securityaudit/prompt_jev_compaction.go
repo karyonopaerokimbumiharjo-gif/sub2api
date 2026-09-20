@@ -47,6 +47,10 @@ func (s *PromptService) JevBlockingReady() bool {
 	if !ok || cfg.EffectiveMode() != ModeBlocking {
 		return false
 	}
+	return jevEndpointsReady(cfg)
+}
+
+func jevEndpointsReady(cfg ActiveConfig) bool {
 	endpoints := cfg.EnabledEndpoints()
 	if len(endpoints) == 0 {
 		return false
@@ -157,15 +161,15 @@ func collectJevCompactionCandidates(input []json.RawMessage) ([]jevCompactionCan
 		if typ != "message" || role != "assistant" {
 			continue
 		}
-		text := compactItemText(input[i])
-		if text == "" {
+		text, complete := compactCandidateText(input[i])
+		if !complete || text == "" {
 			continue
 		}
 		key := fmt.Sprintf("candidate_%d", len(out))
 		out = append(out, jevCompactionCandidate{
 			Index: i,
 			Key:   key,
-			Text:  truncateRunes(text, jevCompactionExcerptRunes),
+			Text:  text,
 		})
 	}
 	return out, recent
@@ -312,4 +316,46 @@ func mathAbs(value float64) float64 {
 		return -value
 	}
 	return value
+}
+
+// A lossy excerpt cannot justify deleting the complete item. Retain long,
+// multimodal, annotated and unknown content even if its text looks redundant.
+func compactCandidateText(raw json.RawMessage) (string, bool) {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(raw, &item) != nil {
+		return "", false
+	}
+	for key := range item {
+		switch key {
+		case "type", "role", "content", "id", "status":
+		default:
+			return "", false
+		}
+	}
+	var content string
+	if json.Unmarshal(item["content"], &content) != nil {
+		var parts []map[string]json.RawMessage
+		if json.Unmarshal(item["content"], &parts) != nil {
+			return "", false
+		}
+		texts := make([]string, 0, len(parts))
+		for _, part := range parts {
+			var typ, text string
+			if json.Unmarshal(part["type"], &typ) != nil || (typ != "text" && typ != "output_text") || json.Unmarshal(part["text"], &text) != nil {
+				return "", false
+			}
+			for key, value := range part {
+				if key == "type" || key == "text" {
+					continue
+				}
+				if key == "annotations" && string(bytes.TrimSpace(value)) == "[]" {
+					continue
+				}
+				return "", false
+			}
+			texts = append(texts, text)
+		}
+		content = strings.Join(texts, "\n")
+	}
+	return content, len([]rune(content)) <= jevCompactionExcerptRunes
 }

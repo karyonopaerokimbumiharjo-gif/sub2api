@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"strings"
@@ -15,10 +17,17 @@ import (
 )
 
 func fakeCodexTicketState(n int) string {
-	if n < len(openAICodexTicketStatePrefix) {
-		return strings.Repeat("A", n)
+	for blocks := 1; blocks < 32; blocks++ {
+		raw := make([]byte, 57+16*blocks)
+		raw[0] = 0x80
+		binary.BigEndian.PutUint64(raw[1:9], uint64(time.Now().Unix()))
+		raw[9] = byte(n)
+		state := base64.URLEncoding.EncodeToString(raw)
+		if len(state) == n {
+			return state
+		}
 	}
-	return openAICodexTicketStatePrefix + strings.Repeat("B", n-len(openAICodexTicketStatePrefix))
+	return strings.Repeat("X", n)
 }
 
 func ticketTestAccount(id int64) *Account {
@@ -105,7 +114,7 @@ func TestLookupOpenAICodexTicket_PrefersNewerExtra(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 292, TTLSeconds: 3600}, nil)
 	account := ticketTestAccount(41)
 	oldState := fakeCodexTicketState(292)
-	newState := openAICodexTicketStatePrefix + strings.Repeat("C", 286)
+	newState := fakeCodexTicketState(292)
 	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
 		AccountID:  41,
 		Model:      "gpt-6-astra",
@@ -228,6 +237,16 @@ func TestHarvestOpenAICodexTicket_StopsAt292AndUsesHarvestProxy(t *testing.T) {
 
 	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 	require.Nil(t, svc.lookupOpenAICodexTicket(account, "gpt-6-astra"))
+	// A failed attempt must not immediately hit the upstream again.
+	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
+	require.Len(t, upstream.requests, 1)
+	retryKey := openAICodexTicketKey(account.ID, "gpt-6-astra")
+	retry, ok := svc.openaiCodexHarvestRetry.Load(retryKey)
+	require.True(t, ok)
+	expired := retry.(codexHarvestRetry)
+	require.True(t, expired.Next.After(time.Now()))
+	expired.Next = time.Now().Add(-time.Second)
+	svc.openaiCodexHarvestRetry.Store(retryKey, expired)
 	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 	ticket := svc.lookupOpenAICodexTicket(account, "gpt-6-astra")
 	require.NotNil(t, ticket)
@@ -272,6 +291,16 @@ func TestHarvestOpenAICodexTicket_HTTP503DoesNotAbortHunt(t *testing.T) {
 	account := ticketTestAccount(41)
 	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 	require.Nil(t, svc.lookupOpenAICodexTicket(account, "gpt-6-astra"))
+	// A failed attempt must not immediately hit the upstream again.
+	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
+	require.Len(t, upstream.requests, 1)
+	retryKey := openAICodexTicketKey(account.ID, "gpt-6-astra")
+	retry, ok := svc.openaiCodexHarvestRetry.Load(retryKey)
+	require.True(t, ok)
+	expired := retry.(codexHarvestRetry)
+	require.True(t, expired.Next.After(time.Now()))
+	expired.Next = time.Now().Add(-time.Second)
+	svc.openaiCodexHarvestRetry.Store(retryKey, expired)
 	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 	ticket := svc.lookupOpenAICodexTicket(account, "gpt-6-astra")
 	require.NotNil(t, ticket)
