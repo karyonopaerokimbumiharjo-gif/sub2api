@@ -521,7 +521,7 @@ func TestBuildSchedulerMetadataAccount_KeepsQuotaStateForCachedAccounts(t *testi
 			require.Equal(t, tc.extra, cached.Extra)
 			require.NotContains(t, cached.Extra, "unrelated")
 			require.Equal(t, tc.quotaExceeded, cached.IsQuotaExceeded())
-			require.Equal(t, !tc.quotaExceeded, cached.IsSchedulable())
+			require.False(t, cached.IsSchedulable(), "legacy direct-provider metadata must stay ineligible under the CPA policy")
 		})
 	}
 }

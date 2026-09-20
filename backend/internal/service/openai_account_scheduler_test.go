@@ -423,6 +423,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLega
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    5,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          36002,
@@ -432,6 +433,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabledUsesLega
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -497,6 +499,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_LoadBat
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"model_mapping": map[string]any{"gpt-4o": "gpt-4o"},
+			"base_url":      "http://cpa:8317",
 		},
 	}
 	excluded := Account{
@@ -506,6 +509,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_LoadBat
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	cfg := &config.Config{}
 	cfg.Gateway.Scheduling.LoadBatchEnabled = true
@@ -549,6 +553,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Require
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          36012,
@@ -561,6 +566,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Require
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := newSchedulerTestOpenAIWSV2Config()
@@ -603,6 +609,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Require
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := newSchedulerTestOpenAIWSV2Config()
@@ -645,6 +652,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 			Priority:    0,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions"},
+				"base_url":            "http://cpa:8317",
 			},
 		},
 		{
@@ -657,6 +665,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_Embeddi
 			Priority:    5,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions", "embeddings"},
+				"base_url":            "http://cpa:8317",
 			},
 		},
 	}
@@ -697,12 +706,12 @@ func TestOpenAIGatewayService_SelectAccountForTokenCount_DoesNotAcquireGeneratio
 		{
 			ID: 36501, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 			Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
-			Credentials: map[string]any{"openai_capabilities": []any{"chat_completions"}},
+			Credentials: map[string]any{"openai_capabilities": []any{"chat_completions"}, "base_url": "http://cpa:8317"},
 		},
 		{
 			ID: 36502, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 			Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5,
-			Credentials: map[string]any{"openai_capabilities": []any{"embeddings"}},
+			Credentials: map[string]any{"openai_capabilities": []any{"embeddings"}, "base_url": "http://cpa:8317"},
 		},
 		{
 			ID: 36503, Platform: PlatformGrok, Type: AccountTypeAPIKey,
@@ -715,6 +724,7 @@ func TestOpenAIGatewayService_SelectAccountForTokenCount_DoesNotAcquireGeneratio
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions"},
 				"model_mapping":       map[string]any{"gpt-4o": "gpt-4o"},
+				"base_url":            "http://cpa:8317",
 			},
 		},
 	}
@@ -765,12 +775,14 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ResponsesCapabilityExcl
 	supported := Account{
 		ID: 37001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	// 更高优先级但探测确认不支持 Responses——若门控失效会被优先选中。
 	unsupported := Account{
 		ID: 37002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5,
-		Extra: map[string]any{"openai_responses_supported": false},
+		Extra:       map[string]any{"openai_responses_supported": false},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 
 	t.Run("生图意图仅选中支持 responses 的账号", func(t *testing.T) {
@@ -828,6 +840,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_AlphaSearchAllowsAPIKey
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -1074,6 +1087,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorAggrega
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"model_mapping": map[string]any{"gpt-4o": "gpt-4o"},
+			"base_url":      "http://cpa:8317",
 		},
 	}
 	excluded := Account{
@@ -1083,6 +1097,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorAggrega
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{quotaPaused, mappingMiss, excluded}},
@@ -1141,6 +1156,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPrev
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          37002,
@@ -1150,6 +1166,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPrev
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -1204,6 +1221,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionIn
 			Concurrency: 1,
 			Priority:    100,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          37102,
@@ -1214,6 +1232,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedSessionIn
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -1275,6 +1294,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedPreviousR
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          37112,
@@ -1288,6 +1308,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedPreviousR
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := newSchedulerTestOpenAIWSV2Config()
@@ -1375,6 +1396,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseCompact
 				"openai_apikey_responses_websockets_v2_enabled": true,
 				"openai_compact_mode":                           OpenAICompactModeForceOff,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          37122,
@@ -1389,6 +1411,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseCompact
 				"openai_apikey_responses_websockets_v2_enabled": true,
 				"openai_compact_mode":                           OpenAICompactModeForceOn,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := newSchedulerTestOpenAIWSV2Config()
@@ -1449,6 +1472,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    0,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions"},
+				"base_url":            "http://cpa:8317",
 			},
 		},
 		{
@@ -1461,6 +1485,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    5,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions", "embeddings"},
+				"base_url":            "http://cpa:8317",
 			},
 		},
 	}
@@ -1511,6 +1536,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    0,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions"},
+				"base_url":            "http://cpa:8317",
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
@@ -1526,6 +1552,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    5,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions", "embeddings"},
+				"base_url":            "http://cpa:8317",
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
@@ -1698,8 +1725,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_AutoPauseBy5hT
 			"codex_5h_used_percent":   95.0,
 			"auto_pause_5h_threshold": 0.95,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1722,8 +1750,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_AllowsBelow5hT
 			"codex_5h_used_percent":   80.0,
 			"auto_pause_5h_threshold": 0.95,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35102, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35102, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1746,8 +1775,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_AutoPauseBy7dT
 			"codex_7d_used_percent":   95.0,
 			"auto_pause_7d_threshold": 0.95,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1758,8 +1788,8 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_AutoPauseBy7dT
 
 func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_UnconfiguredThresholdKeepsLegacyBehavior(t *testing.T) {
 	ctx := context.Background()
-	primary := Account{ID: 35301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, Extra: map[string]any{"codex_5h_used_percent": 99.0, "codex_7d_used_percent": 99.0}}
-	secondary := Account{ID: 35302, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	primary := Account{ID: 35301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, Extra: map[string]any{"codex_5h_used_percent": 99.0, "codex_7d_used_percent": 99.0}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
+	secondary := Account{ID: 35302, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1781,8 +1811,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_UsesGlobalDefa
 		Extra: map[string]any{
 			"codex_5h_used_percent": 95.0,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1811,8 +1842,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_PerAccountDisa
 			"codex_5h_used_percent":  99.0,
 			"auto_pause_5h_disabled": true,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35702, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35702, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1838,8 +1870,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_PerWindowDisab
 			"auto_pause_5h_disabled":  true,
 			"auto_pause_7d_threshold": 0.95,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35802, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35802, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1866,8 +1899,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleUsageWind
 			"auto_pause_5h_threshold": 0.95,
 			"codex_5h_reset_at":       time.Now().Add(-time.Minute).Format(time.RFC3339),
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35502, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35502, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1892,8 +1926,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_FreshUsageWind
 			"auto_pause_5h_threshold": 0.95,
 			"codex_5h_reset_at":       time.Now().Add(time.Hour).Format(time.RFC3339),
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35602, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35602, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1925,8 +1960,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_StaleUsageSnap
 			// Snapshot is stale: older than openAICodexAutoPauseStaleAfter (2h).
 			"codex_usage_updated_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35702, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35702, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -1955,8 +1991,9 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_FreshExhausted
 			// Snapshot refreshed 1 minute ago: not stale, so the account stays paused.
 			"codex_usage_updated_at": time.Now().Add(-time.Minute).Format(time.RFC3339),
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
-	secondary := Account{ID: 35802, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	secondary := Account{ID: 35802, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}}, cfg: &config.Config{}}
 
 	account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.1", nil)
@@ -2006,6 +2043,7 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_ModelRateLimit
 				},
 			},
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	secondary := Account{
 		ID:          32102,
@@ -2015,6 +2053,7 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_ModelRateLimit
 		Schedulable: true,
 		Concurrency: 1,
 		Priority:    5,
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{primary, secondary}},
@@ -2092,8 +2131,8 @@ func TestOpenAIGatewayService_SelectAccountForModelWithExclusions_DBRuntimeReche
 func TestOpenAIGatewayService_SelectAccountWithScheduler_DBFreshGroupRecheckReleasesMovedAccount(t *testing.T) {
 	ctx := context.Background()
 	groupID, otherGroupID := int64(10105), int64(10106)
-	stalePrimary := &Account{ID: 34101, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}}
-	staleBackup := &Account{ID: 34102, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10, GroupIDs: []int64{groupID}}
+	stalePrimary := &Account{ID: 34101, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
+	staleBackup := &Account{ID: 34102, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	dbPrimary := *stalePrimary
 	dbPrimary.GroupIDs = []int64{otherGroupID}
 	dbBackup := *staleBackup
@@ -2130,8 +2169,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DBFreshGroupRecheckRele
 func TestOpenAIGatewayService_SelectAccountWithLoadAwareness_DBFreshGroupRecheckWaitsOnValidAccount(t *testing.T) {
 	ctx := context.Background()
 	groupID, otherGroupID := int64(10107), int64(10108)
-	stalePrimary := &Account{ID: 34201, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}}
-	staleBackup := &Account{ID: 34202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10, GroupIDs: []int64{groupID}}
+	stalePrimary := &Account{ID: 34201, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
+	staleBackup := &Account{ID: 34202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	dbPrimary := *stalePrimary
 	dbPrimary.GroupIDs = []int64{otherGroupID}
 	dbBackup := *staleBackup
@@ -2158,7 +2197,7 @@ func TestOpenAIGatewayService_SelectAccountWithLoadAwareness_DBFreshGroupRecheck
 }
 
 func TestOpenAIGatewayService_RecheckSelectedOpenAIAccountFromDB_SimpleModeUsesFullPool(t *testing.T) {
-	grouped := Account{ID: 34301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{99}}
+	grouped := Account{ID: 34301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{99}, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{
 		accountRepo:       schedulerTestOpenAIAccountRepo{accounts: []Account{grouped}},
 		cfg:               &config.Config{RunMode: config.RunModeSimple},
@@ -2197,6 +2236,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseSticky(
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_enabled": true,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	cache := &schedulerTestGatewayCache{}
 	cfg := &config.Config{}
@@ -2300,6 +2340,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsS
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          21002,
@@ -2310,6 +2351,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsS
 			Concurrency: 1,
 			Priority:    9,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cache := &schedulerTestGatewayCache{
@@ -2384,6 +2426,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByTT
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          21102,
@@ -2394,6 +2437,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByTT
 			Concurrency: 1,
 			Priority:    1,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_sticky_ttft": 21101}}
@@ -2448,8 +2492,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByEr
 	ctx := context.Background()
 	groupID := int64(10102)
 	accounts := []Account{
-		{ID: 21201, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}},
-		{ID: 21202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}},
+		{ID: 21201, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
+		{ID: 21202, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
 	}
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_sticky_error_rate": 21201}}
 	cfg := &config.Config{}
@@ -2498,8 +2542,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyEscape
 	ctx := context.Background()
 	groupID := int64(10103)
 	accounts := []Account{
-		{ID: 21301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}},
-		{ID: 21302, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}},
+		{ID: 21301, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
+		{ID: 21302, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
 	}
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_sticky_busy_escape": 21301}}
 	cfg := &config.Config{}
@@ -2541,8 +2585,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeDisa
 	ctx := context.Background()
 	groupID := int64(10104)
 	accounts := []Account{
-		{ID: 21401, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}},
-		{ID: 21402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}},
+		{ID: 21401, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
+		{ID: 21402, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1, GroupIDs: []int64{groupID}, Credentials: map[string]any{"base_url": "http://cpa:8317"}},
 	}
 	cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:session_hash_sticky_disabled": 21401}}
 	cfg := &config.Config{}
@@ -2656,6 +2700,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityFal
 			Concurrency: 1,
 			Priority:    9,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	concurrencyCache := schedulerTestConcurrencyCache{
@@ -2709,6 +2754,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityDis
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	concurrencyCache := schedulerTestConcurrencyCache{
@@ -2752,7 +2798,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 			AccountGroups: []AccountGroup{
 				{AccountID: 21631, GroupID: groupID, Priority: 100},
 			},
-			GroupIDs: []int64{groupID},
+			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          21632,
@@ -2765,7 +2812,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 			AccountGroups: []AccountGroup{
 				{AccountID: 21632, GroupID: groupID, Priority: 1},
 			},
-			GroupIDs: []int64{groupID},
+			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := newSchedulerTestSubscriptionPriorityConfig()
@@ -2792,7 +2840,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_UsesAccountPriorityWith
 
 func TestOpenAIAccountScheduler_SkipsAccountBlockedForRequestedModel(t *testing.T) {
 	now := time.Now()
-	account := &Account{ID: 21633, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	account := &Account{ID: 21633, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "http://cpa:8317"}}
 	svc := &OpenAIGatewayService{openaiModelTransient: newOpenAIAccountModelTransientState(128)}
 	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now)
 	svc.openaiModelTransient.recordFailure(account.ID, "gpt-5.5", now.Add(time.Millisecond))
@@ -2917,6 +2965,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_RequiredWSV2_SkipsStick
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          2202,
@@ -2930,6 +2979,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_RequiredWSV2_SkipsStick
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cache := &schedulerTestGatewayCache{
@@ -2989,6 +3039,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ClearsStickyAccountOuts
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          2402,
@@ -3001,6 +3052,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ClearsStickyAccountOuts
 			AccountGroups: []AccountGroup{
 				{AccountID: 2402, GroupID: groupID},
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cache := &schedulerTestGatewayCache{
@@ -3090,6 +3142,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKFallback
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          3002,
@@ -3099,6 +3152,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKFallback
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          3003,
@@ -3108,6 +3162,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKFallback
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 
@@ -3182,6 +3237,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKExcludes
 				"codex_5h_used_percent":   96.0,
 				"auto_pause_5h_threshold": 0.95,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          37002,
@@ -3191,6 +3247,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceTopKExcludes
 			Schedulable: true,
 			Concurrency: 1,
 			Priority:    5,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 
@@ -3252,6 +3309,7 @@ func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics(t *testing.T) {
 		Schedulable: true,
 		Concurrency: 1,
 		GroupIDs:    []int64{groupID},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	cache := &schedulerTestGatewayCache{
 		sessionBindings: map[string]int64{
@@ -3416,6 +3474,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesA
 			Schedulable: true,
 			Concurrency: 3,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          5102,
@@ -3425,6 +3484,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesA
 			Schedulable: true,
 			Concurrency: 3,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          5103,
@@ -3434,6 +3494,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesA
 			Schedulable: true,
 			Concurrency: 3,
 			Priority:    0,
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -3659,6 +3720,7 @@ func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *
 		Extra: map[string]any{
 			"openai_apikey_responses_websockets_v2_enabled": true,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}
 	require.True(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2))
 	require.True(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2Ingress))
@@ -3692,6 +3754,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedFallbackS
 			Concurrency: 1,
 			Priority:    10,
 			GroupIDs:    []int64{groupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			// 会话粘连绑定指向的账号已被移出请求分组（绑定 TTL 内账号改组的场景）。
@@ -3703,6 +3766,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyWeightedFallbackS
 			Concurrency: 1,
 			Priority:    0,
 			GroupIDs:    []int64{otherGroupID},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -3780,6 +3844,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SubscriptionPriorityWai
 			Priority:    9,
 			GroupIDs:    []int64{groupID},
 			Extra:       map[string]any{"openai_compact_supported": false},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	concurrencyCache := schedulerTestConcurrencyCache{

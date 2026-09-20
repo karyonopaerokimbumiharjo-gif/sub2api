@@ -25,6 +25,8 @@ func TestCodexStatePolicyRejectsExpiredFutureAndWrongPlan(t *testing.T) {
 		{"personal", "plus", 292, -time.Minute, true},
 		{"team", "team", 332, -time.Minute, true},
 		{"team short", "team", 292, -time.Minute, false},
+		{"personal 312 rejected", "plus", 312, -time.Minute, false},
+		{"team 356 rejected", "team", 356, -time.Minute, false},
 		{"personal long", "plus", 332, -time.Minute, false},
 		{"expired", "plus", 292, -2 * time.Hour, false},
 		{"future", "plus", 292, time.Minute, false},

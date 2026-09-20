@@ -25,6 +25,7 @@ import (
 	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -2952,6 +2953,20 @@ func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
+	}
+	// An explicitly forbidden destination cannot become valid by merging it
+	// with stored credentials. Reject it before loading any account relations.
+	if raw, exists := updates.Credentials["base_url"]; exists {
+		baseURL, ok := raw.(string)
+		if !ok {
+			return 0, cpapolicy.Required()
+		}
+		if err := cpapolicy.ValidateBaseURL(baseURL); err != nil {
+			return 0, err
+		}
+	}
+	if updates.ProxyID != nil && *updates.ProxyID != 0 {
+		return 0, cpapolicy.Required()
 	}
 	// Metadata-only updates cannot change the mandatory CPA destination. Avoid
 	// loading every account and its relations unless routing credentials change;

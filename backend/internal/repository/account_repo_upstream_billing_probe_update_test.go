@@ -345,9 +345,10 @@ func TestUpdateCredentialsAtomicallyClearsProbeForOpenAIAPIKeyIdentityChange(t *
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
 
+	expectCredentialAccountLookup(mock, 27)
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)UPDATE accounts.*credentials IS DISTINCT FROM \$1::jsonb.*- 'upstream_billing_probe'`).
-		WithArgs(`{"api_key":"sk-new"}`, int64(27)).
+		WithArgs(`{"api_key":"sk-new","base_url":"http://cpa:8317"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
 		WithArgs(service.SchedulerOutboxEventAccountChanged, int64(27), nil, nil, sqlmock.AnyArg()).
@@ -355,7 +356,7 @@ func TestUpdateCredentialsAtomicallyClearsProbeForOpenAIAPIKeyIdentityChange(t *
 	mock.ExpectCommit()
 	repo := newAccountRepositoryWithSQL(client, db, nil)
 
-	err = repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new"})
+	err = repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new", "base_url": "http://cpa:8317"})
 
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -370,7 +371,7 @@ func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) 
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
-		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
+		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test","base_url":"http://cpa:8317"}`, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot", "current_extra"}).
 			AddRow(true, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil, nil))
 	mock.ExpectExec(`(?s)UPDATE .*accounts.*SET.*WHERE .*id.*`).
@@ -387,7 +388,7 @@ func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) 
 		Name:        "test",
 		Platform:    service.PlatformOpenAI,
 		Type:        service.AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "http://cpa:8317"},
 		Extra: map[string]any{
 			service.UpstreamBillingProbeExtraKey: map[string]any{"status": "stale"},
 		},
@@ -435,15 +436,16 @@ func TestUpdateCredentialsRollsBackWhenOutboxFails(t *testing.T) {
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
 
+	expectCredentialAccountLookup(mock, 27)
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)UPDATE accounts.*credentials IS DISTINCT FROM \$1::jsonb.*- 'upstream_billing_probe'`).
-		WithArgs(`{"api_key":"sk-new"}`, int64(27)).
+		WithArgs(`{"api_key":"sk-new","base_url":"http://cpa:8317"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).WillReturnError(errors.New("outbox failed"))
 	mock.ExpectRollback()
 
 	repo := newAccountRepositoryWithSQL(client, db, nil)
-	err = repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new"})
+	err = repo.UpdateCredentials(context.Background(), 27, map[string]any{"api_key": "sk-new", "base_url": "http://cpa:8317"})
 
 	require.EqualError(t, err, "outbox failed")
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -480,4 +482,13 @@ func updatedAccountRows(id int64, extra string) *sqlmock.Rows {
 		service.StatusActive, nil, nil, nil, false, true, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, service.QuotaDimensionGlobal,
 	)
+}
+
+// Credential writes validate the stored account identity before opening their
+// mutation transaction. Keep this lookup visible in SQL-mock expectations.
+func expectCredentialAccountLookup(mock sqlmock.Sqlmock, id int64) {
+	mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "accounts"."id" = \$1`).
+		WithArgs(id).WillReturnRows(updatedAccountRows(id, `{}`))
+	mock.ExpectQuery(`(?s)SELECT .* FROM "account_groups"`).
+		WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"account_id", "group_id", "priority", "created_at"}))
 }

@@ -26,6 +26,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactPrefersSupported
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{}, // unknown
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          71002,
@@ -36,6 +37,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactPrefersSupported
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{"openai_compact_supported": true}, // tier=2
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -80,6 +82,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactRejectsExplicitl
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{"openai_compact_mode": OpenAICompactModeForceOff},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          71011,
@@ -90,6 +93,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactRejectsExplicitl
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{"openai_compact_supported": false},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -164,6 +168,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NativeCompactionIgnores
 					"openai_compact_supported":   false,
 					"openai_responses_supported": true,
 				},
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 			}}, advanced)
 
 			selection, err := selectOpenAICompactionSchedulerTestAccount(t, svc, 91007, false)
@@ -189,6 +194,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NativeCompactionAllowsF
 					"openai_compact_mode":        OpenAICompactModeForceOff,
 					"openai_responses_supported": true,
 				},
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 			}}, advanced)
 
 			selection, err := selectOpenAICompactionSchedulerTestAccount(t, svc, 91008, false)
@@ -214,6 +220,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NativeCompactionRequire
 					"openai_compact_mode":        OpenAICompactModeForceOn,
 					"openai_responses_supported": false,
 				},
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 			}}, advanced)
 
 			selection, err := selectOpenAICompactionSchedulerTestAccount(t, svc, 91009, false)
@@ -241,6 +248,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyCompactionKeepsCo
 						"openai_compact_supported":   false,
 						"openai_responses_supported": true,
 					},
+					Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				},
 				{
 					ID:          71016,
@@ -253,6 +261,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyCompactionKeepsCo
 						"openai_compact_mode":        OpenAICompactModeForceOff,
 						"openai_responses_supported": true,
 					},
+					Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				},
 			}, advanced)
 
@@ -283,6 +292,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactRequiresResponse
 			"openai_compact_supported":   true,
 			"openai_responses_supported": false,
 		},
+		Credentials: map[string]any{"base_url": "http://cpa:8317"},
 	}}
 	cfg := &config.Config{}
 	cfg.Gateway.Scheduling.LoadBatchEnabled = false
@@ -329,6 +339,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactSkipsChatOnlyAcc
 				"openai_compact_supported":   true,
 				"openai_responses_supported": false,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          71061,
@@ -342,6 +353,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactSkipsChatOnlyAcc
 				"openai_compact_supported":   true,
 				"openai_responses_supported": true,
 			},
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}
@@ -389,6 +401,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactFallsBackToUnkno
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{"openai_compact_supported": false}, // tier=0
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 		{
 			ID:          71021,
@@ -399,6 +412,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactFallsBackToUnkno
 			Concurrency: 1,
 			Priority:    0,
 			Extra:       map[string]any{}, // unknown -> tier=1
+			Credentials: map[string]any{"base_url": "http://cpa:8317"},
 		},
 	}
 	cfg := &config.Config{}

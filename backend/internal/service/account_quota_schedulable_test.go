@@ -23,6 +23,8 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 				Status:      StatusActive,
 				Schedulable: true,
 				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				Extra: map[string]any{
 					"quota_daily_limit": 10.0,
 					"quota_daily_used":  10.0,
@@ -37,6 +39,8 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 				Status:      StatusActive,
 				Schedulable: true,
 				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				Extra: map[string]any{
 					"quota_weekly_limit": 50.0,
 					"quota_weekly_used":  50.0,
@@ -51,6 +55,8 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 				Status:      StatusActive,
 				Schedulable: true,
 				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				Extra: map[string]any{
 					"quota_limit": 100.0,
 					"quota_used":  100.0,
@@ -64,6 +70,8 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 				Status:      StatusActive,
 				Schedulable: true,
 				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				Extra: map[string]any{
 					"quota_daily_limit": 10.0,
 					"quota_daily_used":  5.0,
@@ -78,6 +86,8 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 				Status:      StatusActive,
 				Schedulable: true,
 				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "http://cpa:8317"},
 				Extra: map[string]any{
 					"quota_daily_limit": 10.0,
 					"quota_daily_used":  10.0,
@@ -87,7 +97,7 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "oauth ignores quota exceeded",
+			name: "direct OAuth remains ineligible regardless of quota",
 			account: &Account{
 				Status:      StatusActive,
 				Schedulable: true,
@@ -98,7 +108,7 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 					"quota_daily_start": now.Add(-1 * time.Hour).Format(time.RFC3339),
 				},
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "bedrock quota exceeded",

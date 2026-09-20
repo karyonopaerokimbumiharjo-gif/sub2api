@@ -61,10 +61,11 @@ or false-positive rate.
    provider accounts. There are also fixture failures and a service-suite
    timeout. These need an explicit compatibility inventory and resolution;
    the suite has not been disabled or reported as passing.
-2. The current CPA model discovery did not advertise GPT-6/Astra. A direct
-   probe also encountered an upstream proxy/authentication failure. GPT-6J's
-   genuine generation and model-identity path is therefore unverified. Do not
-   substitute another model or advertise it as available.
+2. After importing the current local Auth, CPA advertises `gpt-6-astra`, but a
+   real Responses request returns `gpt-5.6-luna`. Native generation with the
+   advertised upstream `gpt-reserve` also returns Luna. GPT-6J acceptance is
+   blocked by this model mismatch. The candidate now checks response model
+   evidence in JSON, SSE, and both WebSocket forwarding paths.
 3. The production account pool currently contains a CPA API-key bridge. A real
    OAuth/plan-aware state capture and user-distribution acceptance test remains
    outstanding. Token length or envelope shape alone does not establish model
@@ -102,4 +103,37 @@ in `_rehearsal`, after applying migrations. Run
 For live TypeSafe tests, supply `SUB2API_JEV_LIVE_KEY` only to the test process
 and run `go test ./internal/securityaudit -run '^TestJevLiveAcceptance$' -v -count=1`.
 
-No production deployment or CPA configuration change is included in this candidate.
+No production application deployment is included in this candidate; the separately authorized CPA Auth import is recorded below.
+
+
+## Local Auth and proxy pool verification (2026-09-20)
+
+The user's current local Codex Auth was uploaded to the existing matching CPA
+identity. Credential preflight returned 200, exact readback verification passed,
+and the previous credential file was backed up privately. No credential material
+is included in this repository or these reports.
+
+The local sleep-state pool contains 89 HTTP proxy routes. Its config was staged
+privately under `/home/ubuntu/sub2api-deploy/state-pool/config.json` with mode 0600.
+Server-side connectivity checks found 70 routes with CONNECT 200 and verified TLS;
+19 returned 502. This is configuration staging and transport verification only:
+the staged service has not been started and remote state harvesting is pending.
+
+Personal state policy accepts length 292 and rejects 312; Team policy targets 332
+and rejects 356. The inspected local runtime had active and standby personal
+states of length 292. Length and state shape do not prove generation model identity.
+
+The application candidate has not been deployed. The live CPA Auth import is a
+separate user-authorized operation and does not change the running Sub2API image.
+
+A private Sub2API merge fragment was also generated at
+`/home/ubuntu/sub2api-deploy/state-pool/sub2api-pool.fragment.yaml` (0600).
+Its `gateway.openai_codex_ticket.harvest_proxy_urls` list was read back and
+matched all 89 source routes exactly. It is not a complete application config
+and has not been merged into the running application configuration.
+
+Final candidate checks after response-model enforcement: focused service,
+securityaudit, handler, and repository tests passed; `golangci-lint run ./...`
+reported 0 issues; `go build ./cmd/server` succeeded. The explicit state-policy
+test includes rejected personal 312 and Team 356 cases. The broader backend
+suite remains a release gate as recorded above.

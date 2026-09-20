@@ -120,7 +120,7 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 		Name:                 "upstream",
 		Platform:             PlatformOpenAI,
 		Type:                 AccountTypeAPIKey,
-		Credentials:          map[string]any{"api_key": "sk-test"},
+		Credentials:          map[string]any{"api_key": "sk-test", "base_url": "http://cpa:8317"},
 		SkipDefaultGroupBind: true,
 		Extra: map[string]any{
 			UpstreamBillingProbeEnabledExtraKey:    true,
@@ -142,7 +142,7 @@ func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) 
 		Name:                 "upstream",
 		Platform:             PlatformOpenAI,
 		Type:                 AccountTypeAPIKey,
-		Credentials:          map[string]any{"api_key": "sk-test"},
+		Credentials:          map[string]any{"api_key": "sk-test", "base_url": "http://cpa:8317"},
 		ProbeEnabled:         &enabled,
 		SkipDefaultGroupBind: true,
 	})
@@ -158,7 +158,7 @@ func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) 
 		ProbeEnabled:         &enabled,
 		SkipDefaultGroupBind: true,
 	})
-	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+	require.ErrorContains(t, err, "CPA_BACKEND_REQUIRED")
 }
 
 func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(t *testing.T) {

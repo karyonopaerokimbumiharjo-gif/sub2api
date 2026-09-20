@@ -947,6 +947,17 @@ func TestGetRequestCredentialStateMutationFailureStopsAndKeepsRuntimeBlock(t *te
 	}
 }
 
+func awaitGrokCredentialMutationBoundary(t *testing.T, started <-chan struct{}, result <-chan error) {
+	t.Helper()
+	select {
+	case <-started:
+	case err := <-result:
+		t.Fatalf("credential mutation returned before reaching the expected boundary: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("credential mutation did not reach the expected boundary")
+	}
+}
+
 func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 	t.Run("blocked SetError cancellation prevents cache and runtime mutation", func(t *testing.T) {
 		account := expiredGrokOAuthAccountForCredentialTest(730)
@@ -960,6 +971,7 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 		cache := &grokTokenCacheForProviderTest{}
 		svc := &OpenAIGatewayService{accountRepo: repo, grokTokenProvider: NewGrokTokenProvider(repo, cache)}
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		result := make(chan error, 1)
 		go func() {
 			_, err := svc.applyGrokCredentialAccountFailure(ctx, account, grokCredentialFailureClass{
@@ -967,7 +979,7 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 			})
 			result <- err
 		}()
-		<-repo.setErrorStarted
+		awaitGrokCredentialMutationBoundary(t, repo.setErrorStarted, result)
 		require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "runtime block must precede persistent SetError")
 		cancel()
 
@@ -988,6 +1000,7 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 		}
 		svc := &OpenAIGatewayService{accountRepo: repo}
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		result := make(chan error, 1)
 		go func() {
 			_, err := svc.applyGrokCredentialAccountFailure(ctx, account, grokCredentialFailureClass{
@@ -995,7 +1008,7 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 			})
 			result <- err
 		}()
-		<-repo.setTempStarted
+		awaitGrokCredentialMutationBoundary(t, repo.setTempStarted, result)
 		require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "runtime block must precede temporary unscheduling")
 		cancel()
 
@@ -1011,6 +1024,14 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 		cache := &grokCredentialBlockingCache{deleteStarted: make(chan struct{}), releaseDelete: make(chan struct{})}
 		svc := &OpenAIGatewayService{accountRepo: repo, grokTokenProvider: NewGrokTokenProvider(repo, cache)}
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		defer func() {
+			select {
+			case <-cache.releaseDelete:
+			default:
+				close(cache.releaseDelete)
+			}
+		}()
 		result := make(chan error, 1)
 		go func() {
 			_, err := svc.applyGrokCredentialAccountFailure(ctx, account, grokCredentialFailureClass{
@@ -1018,7 +1039,7 @@ func TestGrokCredentialMutationBoundariesHonorParentCancellation(t *testing.T) {
 			})
 			result <- err
 		}()
-		<-cache.deleteStarted
+		awaitGrokCredentialMutationBoundary(t, cache.deleteStarted, result)
 		require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "runtime block must precede cache invalidation")
 		cancel()
 		close(cache.releaseDelete)

@@ -126,6 +126,7 @@ func TestAdminService_CreateAccountAllowsCompositeGroupAssignment(t *testing.T) 
 		Name:                  "OpenAI account",
 		Platform:              PlatformOpenAI,
 		Type:                  AccountTypeAPIKey,
+		Credentials:           map[string]any{"base_url": "http://cpa:8317", "api_key": "test-key"},
 		Concurrency:           1,
 		GroupIDs:              []int64{99},
 		SkipDefaultGroupBind:  true,
