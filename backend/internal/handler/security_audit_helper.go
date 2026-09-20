@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -48,24 +50,24 @@ func (h *GatewayHandler) checkSecurityAudit(c *gin.Context, reqLog *zap.Logger, 
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, nil, apiKey, subject, protocol, model, body, "http")
 }
 
 func (h *OpenAIGatewayHandler) checkSecurityAudit(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte) *securityaudit.Decision {
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, "http")
+	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, h.gatewayService, apiKey, subject, protocol, model, body, "http")
 }
 
 func (h *OpenAIGatewayHandler) checkSecurityAuditStage(c *gin.Context, reqLog *zap.Logger, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
 	if h == nil {
 		return nil
 	}
-	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, protocol, model, body, stage)
+	return runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, h.gatewayService, apiKey, subject, protocol, model, body, stage)
 }
 
-func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
+func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, gatewayService *service.OpenAIGatewayService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
 	if c == nil || c.Request == nil {
 		return nil
 	}
@@ -88,6 +90,9 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 		}
 		if legacyDecision.Blocked {
 			decision.Kind, decision.HTTPStatus, decision.ErrorCode, decision.ClientMessage, decision.AllowNextStage = securityaudit.DecisionBlock, contentModerationStatus(legacyDecision), "content_policy_violation", legacyDecision.Message, false
+		}
+		if decision.Kind == securityaudit.DecisionBlock {
+			invalidateSecurityAuditContext(c, reqLog, gatewayService, apiKey, body)
 		}
 		if decision.AllowNextStage && cacheCompletion {
 			c.Set(securityAuditCompletedContextKey, true)
@@ -112,6 +117,8 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 				c.Set(securityAuditWSDedupeContextKey, securityAuditWSDedupeEntry{
 					stage: request.Stage, turn: turnNo, bodyHash: bodyHash, decision: decision,
 				})
+			} else if decision.Kind == securityaudit.DecisionBlock {
+				invalidateSecurityAuditContext(c, reqLog, gatewayService, apiKey, body)
 			}
 			logSecurityAuditDone(reqLog, request, decision, false)
 			return &decision
@@ -119,11 +126,43 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 	}
 	logSecurityAuditStart(reqLog, request, len(body), false)
 	decision := coordinator.Check(c.Request.Context(), request)
+	if decision.Kind == securityaudit.DecisionBlock {
+		invalidateSecurityAuditContext(c, reqLog, gatewayService, apiKey, body)
+	}
 	if decision.AllowNextStage && cacheCompletion {
 		c.Set(securityAuditCompletedContextKey, true)
 	}
 	logSecurityAuditDone(reqLog, request, decision, false)
 	return &decision
+}
+
+const securityAuditContextInvalidatedContextKey = "sub2api.security_audit.context_invalidated"
+
+func invalidateSecurityAuditContext(c *gin.Context, reqLog *zap.Logger, gatewayService *service.OpenAIGatewayService, apiKey *service.APIKey, body []byte) {
+	if c == nil || c.Request == nil || gatewayService == nil || apiKey == nil {
+		return
+	}
+	plan := buildCyberSessionBlockWritePlan(apiKey.ID, c, body)
+	if previousKey := service.CyberSessionPreviousResponseBlockKey(apiKey.ID, body); previousKey != "" {
+		seen := false
+		for _, key := range plan.keys {
+			if key == previousKey {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			plan.keys = append([]string{previousKey}, plan.keys...)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	if err := gatewayService.InvalidateSecurityAuditSession(ctx, apiKey.GroupID, c, body, plan.scopeKey, plan.keys); err != nil {
+		if reqLog != nil {
+			reqLog.Warn("security_audit.context_invalidation_degraded", zap.Error(err))
+		}
+	}
+	c.Set(securityAuditContextInvalidatedContextKey, true)
 }
 
 func logSecurityAuditStart(reqLog *zap.Logger, request securityaudit.Request, bodyBytes int, cached bool) {
