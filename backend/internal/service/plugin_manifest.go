@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	PluginCapabilityOpenAIOAuthOutbound = "openai.oauth.outbound_transport.v1"
+	PluginCapabilityOpenAIOAuthOutbound      = "openai.oauth.outbound_transport.v1"
+	PluginCapabilityOpenAICodexStateHarvest = "openai.codex.state_harvest.v1"
 	PluginStateDisabled                 = "disabled"
 	PluginStateStarting                 = "starting"
 	PluginStateEnabled                  = "enabled"
@@ -168,10 +169,26 @@ func (m PluginManifest) Validate() error {
 	if len(m.Capabilities) == 0 {
 		return errors.New("插件必须声明至少一个能力")
 	}
+	hasOutbound := false
+	hasHarvest := false
 	for _, capability := range m.Capabilities {
-		if capability.ID != PluginCapabilityOpenAIOAuthOutbound || capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
-			return fmt.Errorf("初期仅支持能力 %s", PluginCapabilityOpenAIOAuthOutbound)
+		if capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
+			return errors.New("插件能力仅允许绑定 OpenAI OAuth 账号")
 		}
+		switch capability.ID {
+		case PluginCapabilityOpenAIOAuthOutbound:
+			hasOutbound = true
+		case PluginCapabilityOpenAICodexStateHarvest:
+			hasHarvest = true
+		default:
+			return fmt.Errorf("不支持的插件能力: %s", capability.ID)
+		}
+	}
+	// State-harvest plugins use the same audited Forward transport and therefore
+	// must also own the outbound capability. This deliberately keeps one active
+	// transport/state provider and prevents competing plugins from racing.
+	if hasHarvest && !hasOutbound {
+		return errors.New("Codex state harvest 能力必须同时声明 OpenAI OAuth outbound transport")
 	}
 	runtimeEntry, ok := m.Runtimes[m.RuntimeKey()]
 	if !ok || !safePluginRelativePath(runtimeEntry.Path) {
