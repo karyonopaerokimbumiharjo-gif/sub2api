@@ -1,0 +1,35 @@
+# Merge with your existing compose file. The gateway image must include Pi support.
+# Before starting, create pi-runtime.secret (32+ random bytes, mode 0600, uid 1000).
+services:
+  sub2api:
+    environment:
+      PI_RUNTIME_URL: http://pi-runtime:8091
+      PI_RUNTIME_SECRET_FILE: /run/pi-runtime.secret
+    volumes:
+      - ./pi-runtime.secret:/run/pi-runtime.secret:ro
+    depends_on:
+      pi-runtime:
+        condition: service_started
+  pi-runtime:
+    image: local/sub2api-pi-runtime:0.85.1
+    restart: unless-stopped
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      PI_RUNTIME_SECRET_FILE: /run/pi-runtime.secret
+    volumes:
+      - ./pi-runtime.secret:/run/pi-runtime.secret:ro
+    networks:
+      - sub2api-network
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Uses the existing Sub2API Compose network. No host port.

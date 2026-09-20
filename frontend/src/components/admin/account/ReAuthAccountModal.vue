@@ -130,7 +130,7 @@
         :show-help="isAnthropic"
         :show-proxy-warning="isAnthropic"
         :show-cookie-option="isAnthropic"
-        :show-refresh-token-option="isOpenAI || isAntigravity || isGrok"
+        :show-refresh-token-option="(isOpenAI && openaiOAuth.harnessKind.value !== 'pi') || isAntigravity || isGrok"
         :show-sso-option="isGrok"
         :show-email-password-option="false"
         :allow-multiple="false"
@@ -328,6 +328,8 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal && props.account) {
+      openaiOAuth.harnessKind.value = props.account.credentials?.harness_kind === 'pi' ? 'pi' : ''
+      openaiOAuth.piOwnerUserId.value = openaiOAuth.harnessKind.value === 'pi' ? Number(props.account.credentials?.pi_owner_user_id) : undefined
       // Initialize addMethod based on current account type (Claude only)
       if (
         isAnthropic.value &&

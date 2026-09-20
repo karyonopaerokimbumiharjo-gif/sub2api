@@ -233,6 +233,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 如果上游返回了压缩内容，解压后再交给业务层
 	decompressResponseBody(resp)
+	auditResponsesHTTP(req, resp, accountID)
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -297,6 +298,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	decompressResponseBody(resp)
+	auditResponsesHTTP(req, resp, accountID)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)

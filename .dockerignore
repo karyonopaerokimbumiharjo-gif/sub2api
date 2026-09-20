@@ -83,3 +83,6 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# Runtime dependency trees are installed from pinned locks.
+**/node_modules/

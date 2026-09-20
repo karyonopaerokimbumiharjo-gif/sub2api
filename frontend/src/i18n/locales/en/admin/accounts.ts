@@ -1,5 +1,12 @@
 export default {
     accounts: {
+      piNativeHarness: "OAuth runtime",
+      piNativeDefault: "Standard OpenAI",
+      piNativeOption: "Native Pi",
+      piNativeOwner: "Sub2API user ID that owns this credential",
+      piNativeHelp: "Uses the installed Pi runtime for authorization, refresh and requests. Only API keys belonging to this user can use the account. Use a dedicated group. Per-account proxies are not supported.",
+      piNativeValidation: "Enter a valid user ID and remove the per-account proxy before starting Pi authorization.",
+
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',

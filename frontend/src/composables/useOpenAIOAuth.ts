@@ -33,6 +33,8 @@ export function useOpenAIOAuth() {
   const endpointPrefix = '/admin/openai'
 
   // State
+  const harnessKind = ref<'' | 'pi'>('')
+  const piOwnerUserId = ref<number | undefined>()
   const authUrl = ref('')
   const sessionId = ref('')
   const oauthState = ref('')
@@ -60,7 +62,7 @@ export function useOpenAIOAuth() {
     error.value = ''
 
     try {
-      const payload: Record<string, unknown> = {}
+      const payload: Record<string, unknown> = { harness_kind: harnessKind.value, pi_owner_user_id: piOwnerUserId.value }
       if (proxyId) {
         payload.proxy_id = proxyId
       }
@@ -106,7 +108,8 @@ export function useOpenAIOAuth() {
     error.value = ''
 
     try {
-      const payload: { session_id: string; code: string; state: string; proxy_id?: number } = {
+      const payload: {session_id: string; code: string; state: string; proxy_id?: number; harness_kind: string; pi_owner_user_id?: number} = {
+        harness_kind: harnessKind.value, pi_owner_user_id: piOwnerUserId.value,
         session_id: currentSessionId,
         code: code.trim(),
         state: state.trim()
@@ -205,6 +208,10 @@ export function useOpenAIOAuth() {
       creds.client_id = tokenInfo.client_id
     }
 
+    if (tokenInfo.harness_kind === 'pi') {
+      creds.harness_kind = 'pi'
+      creds.pi_owner_user_id = tokenInfo.pi_owner_user_id
+    }
     return creds
   }
 
@@ -225,6 +232,7 @@ export function useOpenAIOAuth() {
 
   return {
     // State
+    harnessKind, piOwnerUserId,
     authUrl,
     sessionId,
     oauthState,

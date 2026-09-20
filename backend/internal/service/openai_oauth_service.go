@@ -112,6 +112,8 @@ type OpenAIExchangeCodeInput struct {
 
 // OpenAITokenInfo represents the token information for OpenAI
 type OpenAITokenInfo struct {
+	HarnessKind           string `json:"harness_kind,omitempty"`
+	PiOwnerUserID         string `json:"pi_owner_user_id,omitempty"`
 	AccessToken           string `json:"access_token"`
 	RefreshToken          string `json:"refresh_token"`
 	IDToken               string `json:"id_token,omitempty"`
@@ -337,6 +339,9 @@ func resolveChatGPTSubscriptionAccountID(tokenInfo *OpenAITokenInfo, orgID strin
 
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
 func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
+	if account.UsesNativePiRuntime() {
+		return refreshNativePiToken(ctx, account)
+	}
 	if account.Platform != PlatformOpenAI {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is not an OpenAI account")
 	}
@@ -393,6 +398,10 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 func (s *OpenAIOAuthService) BuildAccountCredentials(tokenInfo *OpenAITokenInfo) map[string]any {
 	creds := map[string]any{
 		"access_token": tokenInfo.AccessToken,
+	}
+	if tokenInfo.HarnessKind == "pi" {
+		creds["harness_kind"] = "pi"
+		creds["pi_owner_user_id"] = tokenInfo.PiOwnerUserID
 	}
 	if tokenInfo.ExpiresAt > 0 {
 		creds["expires_at"] = time.Unix(tokenInfo.ExpiresAt, 0).Format(time.RFC3339)

@@ -92,3 +92,18 @@ describe('useOpenAIOAuth.exchangeAuthCode', () => {
     )
   })
 })
+
+describe('native Pi OAuth binding', () => {
+  it('uses the same explicit owner and harness for authorization and exchange, and persists the returned binding', async () => {
+    vi.mocked(adminAPI.accounts.generateAuthUrl).mockResolvedValueOnce({ auth_url: 'https://auth.openai.com/oauth/authorize?state=fixture&originator=pi', session_id: 'pi-session' })
+    vi.mocked(adminAPI.accounts.exchangeCode).mockResolvedValueOnce({ access_token: 'fixture', harness_kind: 'pi', pi_owner_user_id: '42' })
+    const oauth = useOpenAIOAuth()
+    oauth.harnessKind.value = 'pi'
+    oauth.piOwnerUserId.value = 42
+    expect(await oauth.generateAuthUrl()).toBe(true)
+    expect(adminAPI.accounts.generateAuthUrl).toHaveBeenLastCalledWith('/admin/openai/generate-auth-url', { harness_kind: 'pi', pi_owner_user_id: 42 })
+    const info = await oauth.exchangeAuthCode('code', 'pi-session', 'fixture')
+    expect(adminAPI.accounts.exchangeCode).toHaveBeenLastCalledWith('/admin/openai/exchange-code', { harness_kind: 'pi', pi_owner_user_id: 42, code: 'code', state: 'fixture', session_id: 'pi-session' })
+    expect(oauth.buildCredentials(info!)).toMatchObject({ harness_kind: 'pi', pi_owner_user_id: '42' })
+  })
+})

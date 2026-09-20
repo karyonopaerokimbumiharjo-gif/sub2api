@@ -4,12 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -151,8 +153,10 @@ func (h *OpenAIOAuthHandler) ImportOAuthToCPA(c *gin.Context) {
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
 type OpenAIGenerateAuthURLRequest struct {
-	ProxyID     *int64 `json:"proxy_id"`
-	RedirectURI string `json:"redirect_uri"`
+	HarnessKind   string `json:"harness_kind"`
+	PiOwnerUserID int64  `json:"pi_owner_user_id"`
+	ProxyID       *int64 `json:"proxy_id"`
+	RedirectURI   string `json:"redirect_uri"`
 }
 
 // GenerateAuthURL generates OpenAI OAuth authorization URL
@@ -164,6 +168,27 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		req = OpenAIGenerateAuthURLRequest{}
 	}
 
+	if req.HarnessKind != "" && req.HarnessKind != "pi" {
+		response.BadRequest(c, "Unsupported OAuth harness")
+		return
+	}
+	if req.HarnessKind == "pi" {
+		if req.PiOwnerUserID <= 0 || req.ProxyID != nil || req.RedirectURI != "" {
+			response.BadRequest(c, "Pi OAuth requires a user ID and the runtime's network route and callback")
+			return
+		}
+		if _, err := h.adminService.GetUser(c.Request.Context(), req.PiOwnerUserID); err != nil {
+			response.BadRequest(c, "Pi credential owner does not exist")
+			return
+		}
+		var result service.OpenAIAuthURLResult
+		if err := piruntime.JSON(c.Request.Context(), "/oauth/start", map[string]any{"owner_id": req.PiOwnerUserID}, &result); err != nil {
+			response.BadRequest(c, "Pi runtime authorization is unavailable")
+			return
+		}
+		response.Success(c, result)
+		return
+	}
 	result, err := h.openaiOAuthService.GenerateAuthURL(
 		c.Request.Context(),
 		req.ProxyID,
@@ -180,11 +205,13 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 
 // OpenAIExchangeCodeRequest represents the request for exchanging OpenAI auth code
 type OpenAIExchangeCodeRequest struct {
-	SessionID   string `json:"session_id" binding:"required"`
-	Code        string `json:"code" binding:"required"`
-	State       string `json:"state" binding:"required"`
-	RedirectURI string `json:"redirect_uri"`
-	ProxyID     *int64 `json:"proxy_id"`
+	HarnessKind   string `json:"harness_kind"`
+	PiOwnerUserID int64  `json:"pi_owner_user_id"`
+	SessionID     string `json:"session_id" binding:"required"`
+	Code          string `json:"code" binding:"required"`
+	State         string `json:"state" binding:"required"`
+	RedirectURI   string `json:"redirect_uri"`
+	ProxyID       *int64 `json:"proxy_id"`
 }
 
 // ExchangeCode exchanges OpenAI authorization code for tokens
@@ -196,6 +223,24 @@ func (h *OpenAIOAuthHandler) ExchangeCode(c *gin.Context) {
 		return
 	}
 
+	if req.HarnessKind != "" && req.HarnessKind != "pi" {
+		response.BadRequest(c, "Unsupported OAuth harness")
+		return
+	}
+	if req.HarnessKind == "pi" {
+		if req.PiOwnerUserID <= 0 || req.ProxyID != nil || req.RedirectURI != "" {
+			response.BadRequest(c, "Invalid Pi OAuth binding")
+			return
+		}
+		callback := "http://localhost:1455/auth/callback?" + url.Values{"code": {req.Code}, "state": {req.State}}.Encode()
+		var tokenInfo service.OpenAITokenInfo
+		if err := piruntime.JSON(c.Request.Context(), "/oauth/complete", map[string]any{"owner_id": req.PiOwnerUserID, "session_id": req.SessionID, "callback_url": callback}, &tokenInfo); err != nil {
+			response.BadRequest(c, "Pi authorization failed; check the owner and callback")
+			return
+		}
+		response.Success(c, tokenInfo)
+		return
+	}
 	tokenInfo, err := h.openaiOAuthService.ExchangeCode(c.Request.Context(), &service.OpenAIExchangeCodeInput{
 		SessionID:   req.SessionID,
 		Code:        req.Code,

@@ -1,5 +1,12 @@
 export default {
     accounts: {
+      piNativeHarness: "OAuth 运行方式",
+      piNativeDefault: "标准 OpenAI",
+      piNativeOption: "原生 Pi",
+      piNativeOwner: "此凭据所属的 Sub2API 用户 ID",
+      piNativeHelp: "通过已安装的 Pi 运行时完成授权、刷新与请求。仅此用户的 API Key 可以使用该账号，请绑定专用分组；暂不支持账号级代理。",
+      piNativeValidation: "请填写有效用户 ID，并取消账号级代理后再开始 Pi 授权。",
+
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',

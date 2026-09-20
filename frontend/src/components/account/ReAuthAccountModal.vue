@@ -286,6 +286,8 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal && props.account) {
+      openaiOAuth.harnessKind.value = props.account.credentials?.harness_kind === 'pi' ? 'pi' : ''
+      openaiOAuth.piOwnerUserId.value = openaiOAuth.harnessKind.value === 'pi' ? Number(props.account.credentials?.pi_owner_user_id) : undefined
       // Initialize addMethod based on current account type (Claude only)
       if (
         isAnthropic.value &&
