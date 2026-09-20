@@ -244,6 +244,9 @@ func normalizeStorageConfig(cfg *storageConfig) {
 		ep.Model = strings.TrimSpace(ep.Model)
 		if ep.Model == "" {
 			ep.Model = DefaultGuardModel
+			if ep.Protocol == JevProtocol {
+				ep.Model = DefaultJevModel
+			}
 		}
 		if ep.TimeoutMS == 0 {
 			ep.TimeoutMS = DefaultTimeoutMS
@@ -275,6 +278,7 @@ func validateStorageConfig(cfg storageConfig) error {
 	}
 	seen := make(map[string]struct{}, len(cfg.Endpoints))
 	enabled := 0
+	enabledProtocol := ""
 	for _, ep := range cfg.Endpoints {
 		if ep.ID == "" || ep.Name == "" {
 			return infraerrors.BadRequest("prompt_audit_invalid_endpoint", "审计节点 ID 和名称不能为空")
@@ -283,8 +287,16 @@ func validateStorageConfig(cfg storageConfig) error {
 			return infraerrors.BadRequest("prompt_audit_duplicate_endpoint", "审计节点 ID 不能重复")
 		}
 		seen[ep.ID] = struct{}{}
-		if ep.Protocol != "openai_compatible" {
-			return infraerrors.BadRequest("prompt_audit_invalid_endpoint_protocol", "审计节点仅支持 OpenAI 兼容协议")
+		if ep.Protocol != "openai_compatible" && ep.Protocol != JevProtocol {
+			return infraerrors.BadRequest("prompt_audit_invalid_endpoint_protocol", "不支持的审计节点协议")
+		}
+		if ep.Protocol == JevProtocol {
+			if err := validateJevOptions(ep.BaseURL, ep.Model, ep.TimeoutMS, ep.InputLimit); err != nil {
+				return infraerrors.BadRequest("prompt_audit_invalid_jev_endpoint", err.Error())
+			}
+			if ep.Enabled && strings.TrimSpace(ep.TokenCiphertext) == "" {
+				return infraerrors.BadRequest("prompt_audit_jev_token_required", "启用 Jev 前必须配置凭据")
+			}
 		}
 		if _, err := NormalizeBaseURL(ep.BaseURL); err != nil {
 			return err
@@ -296,6 +308,10 @@ func validateStorageConfig(cfg storageConfig) error {
 			return infraerrors.BadRequest("prompt_audit_invalid_input_limit", "审计节点输入上限超出允许范围")
 		}
 		if ep.Enabled {
+			if enabledProtocol != "" && enabledProtocol != ep.Protocol {
+				return infraerrors.BadRequest("prompt_audit_mixed_provider_pool", "同一审查池不能同时启用 Jev 与 Qwen；切换时停用旧节点，避免隐式跨服务商降级")
+			}
+			enabledProtocol = ep.Protocol
 			enabled++
 		}
 	}
