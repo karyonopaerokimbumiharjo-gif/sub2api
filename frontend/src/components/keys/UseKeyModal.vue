@@ -110,6 +110,48 @@
           </div>
         </div>
 
+        <div
+          v-if="showGPT6JControls"
+          data-testid="gpt6j-controls"
+          class="rounded-lg border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/60 dark:bg-violet-950/20"
+        >
+          <label class="flex cursor-pointer items-start justify-between gap-4">
+            <span class="min-w-0">
+              <span class="block text-sm font-semibold text-gray-900 dark:text-white">GPT-6J</span>
+              <span class="mt-1 block text-xs leading-5 text-gray-600 dark:text-gray-300">
+                {{ locale.startsWith('zh')
+                  ? '复合模式：底层仍为 GPT-6 Astra，Jev 负责阻断式安全判定；不会伪装成新的基础模型权重。'
+                  : 'Composite mode: GPT-6 Astra remains the upstream model while Jev provides blocking safety decisions; this is not presented as newly trained base weights.' }}
+              </span>
+            </span>
+            <input
+              v-model="gpt6JMode"
+              data-testid="gpt6j-mode-toggle"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </label>
+
+          <label v-if="gpt6JMode" class="mt-4 flex cursor-pointer items-start justify-between gap-4 border-t border-violet-200 pt-4 dark:border-violet-900/60">
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ locale.startsWith('zh') ? '增强上下文压缩' : 'Enhanced context compaction' }}
+              </span>
+              <span class="mt-1 block text-xs leading-5 text-gray-600 dark:text-gray-300">
+                {{ locale.startsWith('zh')
+                  ? '仅 GPT-6J 生效。Jev 只高置信判断旧 assistant 中间输出是否可删；用户指令、工具调用/结果、近期上下文和压缩结果都不会被改写。不确定或 Jev 故障时保留原文。'
+                  : 'GPT-6J only. Jev may remove only high-confidence redundant old assistant output; user instructions, tool pairs, recent context and compacted output are never rewritten. Uncertainty or Jev failure keeps the original window.' }}
+              </span>
+            </span>
+            <input
+              v-model="gpt6JEnhancedCompaction"
+              data-testid="gpt6j-enhanced-compaction-toggle"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+          </label>
+        </div>
+
         <!-- OS/Shell Tabs -->
         <div v-if="showShellTabs" class="overflow-x-auto border-b border-gray-200 dark:border-dark-700">
           <nav class="-mb-px flex min-w-max gap-4" aria-label="Tabs">
@@ -298,7 +340,7 @@ interface FileConfig {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const copiedIndex = ref<number | null>(null)
@@ -306,6 +348,12 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
+const gpt6JMode = ref(false)
+const gpt6JEnhancedCompaction = ref(false)
+
+const showGPT6JControls = computed(() =>
+  props.platform === 'openai' && activeClientTab.value === 'codex'
+)
 type CodexModelManifestState = 'idle' | 'loading' | 'ready' | 'error'
 const codexModelManifestState = ref<CodexModelManifestState>('idle')
 const codexModelManifestContent = ref('')
@@ -350,11 +398,15 @@ watch(() => props.platform, () => {
   activeTab.value = 'unix'
   activeClientTab.value = defaultClientTab.value
   codexAuthMode.value = 'legacy'
+  gpt6JMode.value = false
+  gpt6JEnhancedCompaction.value = false
 }, { immediate: true })
 
 watch(() => props.show, (show) => {
   if (show) {
     codexAuthMode.value = 'legacy'
+    gpt6JMode.value = false
+    gpt6JEnhancedCompaction.value = false
   } else {
     resetCodexModelManifest()
   }
@@ -367,8 +419,15 @@ watch(codexManifestContext, (context, previousContext) => {
 })
 
 // Reset shell tab when client changes
-watch(activeClientTab, () => {
+watch(activeClientTab, (tab) => {
   activeTab.value = 'unix'
+  if (tab !== 'codex') {
+    gpt6JMode.value = false
+    gpt6JEnhancedCompaction.value = false
+  }
+})
+watch(gpt6JMode, (enabled) => {
+  if (!enabled) gpt6JEnhancedCompaction.value = false
 })
 
 // Icon components
@@ -942,7 +1001,7 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  const model = selectCodexCatalogModel('gpt-5.5')
+  const model = gpt6JMode.value ? 'gpt-6-astra' : selectCodexCatalogModel('gpt-5.5')
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content
@@ -967,13 +1026,28 @@ goals = true`
 }
 
 function generateCodexProviderAuthConfig(apiKey: string): string {
+  const headers: Record<string, string> = {}
+  if (codexAuthMode.value === 'api-key') {
+    headers['x-openai-actor-authorization'] = 'local-image-extension'
+  }
+  if (gpt6JMode.value) {
+    headers['X-Sub2API-Model-Mode'] = 'gpt6j'
+    if (gpt6JEnhancedCompaction.value) {
+      headers['X-Sub2API-Enhanced-Compaction'] = 'true'
+    }
+  }
+  const headerLine = Object.keys(headers).length
+    ? `\nhttp_headers = { ${Object.entries(headers)
+        .map(([key, value]) => `"${escapeTomlBasicString(key)}" = "${escapeTomlBasicString(value)}"`)
+        .join(', ')} }`
+    : ''
+
   if (codexAuthMode.value === 'api-key') {
     return `requires_openai_auth = false
-experimental_bearer_token = "${escapeTomlBasicString(apiKey)}"
-http_headers = { "x-openai-actor-authorization" = "local-image-extension" }`
+experimental_bearer_token = "${escapeTomlBasicString(apiKey)}"${headerLine}`
   }
 
-  return 'requires_openai_auth = true'
+  return `requires_openai_auth = true${headerLine}`
 }
 
 function buildOpenAICodexFileConfigs(
