@@ -18,6 +18,25 @@ import (
 func nativePiAccount() *Account {
 	return &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "42", "chatgpt_account_id": "fixture-account", "refresh_token": "fixture-refresh"}}
 }
+
+func TestNativePiStableSessionIgnoresPerRequestTraceID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, requestID := range []string{"request-one", "request-two"} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+		c.Request.Header.Set("x-client-request-id", requestID)
+		if got := nativePiSession(c, map[string]any{"prompt_cache_key": " stable-session "}); got != "stable-session" {
+			t.Fatalf("request tracing split stable cache session: %q", got)
+		}
+		if got := nativePiSession(c, map[string]any{}); got != "" {
+			t.Fatal("per-request ID must not establish a continuation session")
+		}
+		c.Request.Header.Set("session_id", "explicit-session")
+		if got := nativePiSession(c, map[string]any{"prompt_cache_key": "cache-session"}); got != "explicit-session" {
+			t.Fatalf("explicit session lost precedence: %q", got)
+		}
+	}
+}
 func TestNativePiOwnerAndIngress(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {

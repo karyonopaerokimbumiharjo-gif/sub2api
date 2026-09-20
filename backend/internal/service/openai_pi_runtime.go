@@ -31,6 +31,18 @@ func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 	}
 	return owner, nil
 }
+
+// A request correlation ID can change every turn; it cannot establish the
+// stable identity used by Pi's connection and continuation cache.
+func nativePiSession(c *gin.Context, request map[string]any) string {
+	for _, header := range []string{"session-id", "session_id"} {
+		if session := strings.TrimSpace(c.GetHeader(header)); session != "" {
+			return session
+		}
+	}
+	session, _ := request["prompt_cache_key"].(string)
+	return strings.TrimSpace(session)
+}
 func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
 		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
@@ -59,16 +71,7 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if _, ok := request["previous_response_id"]; ok {
 		return fail(http.StatusBadRequest, "Pi runtime owns continuation; send full input")
 	}
-	session := strings.TrimSpace(c.GetHeader("session-id"))
-	if session == "" {
-		session = strings.TrimSpace(c.GetHeader("session_id"))
-	}
-	if session == "" {
-		session = strings.TrimSpace(c.GetHeader("x-client-request-id"))
-	}
-	if session == "" {
-		session, _ = request["prompt_cache_key"].(string)
-	}
+	session := nativePiSession(c, request)
 	if session == "" {
 		return fail(http.StatusBadRequest, "A stable Pi session is required")
 	}
