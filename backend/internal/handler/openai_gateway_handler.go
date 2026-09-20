@@ -4075,6 +4075,9 @@ func findBlockedCyberSessionKey(ctx context.Context, gatewayService *service.Ope
 		clientIP = strings.TrimSpace(ip.GetClientIP(c))
 		userAgent = c.GetHeader("User-Agent")
 	}
+	if key := gatewayService.FindSecurityAuditSessionInvalidatedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent); key != "" {
+		return key
+	}
 	return gatewayService.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent)
 }
 
