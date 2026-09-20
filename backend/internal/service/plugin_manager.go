@@ -944,6 +944,43 @@ func (m *PluginManager) ReadUIAsset(ctx context.Context, id int64, relative stri
 	return data, path, nil
 }
 
+func pluginDeclaresCodexStateHarvestCapability(manifest PluginManifest) bool {
+	for _, capability := range manifest.Capabilities {
+		if capability.ID == PluginCapabilityOpenAICodexStateHarvest &&
+			capability.Platform == PlatformOpenAI && capability.AccountType == AccountTypeOAuth {
+			return true
+		}
+	}
+	return false
+}
+
+// RoundTripOpenAICodexHarvest lets the single active, explicitly-capable
+// transport plugin handle synthetic state acquisition. handled=false means no
+// harvest plugin is selected; handled=true+err never falls back to a different
+// route, avoiding silent credential/egress changes.
+func (m *PluginManager) RoundTripOpenAICodexHarvest(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, bool, error) {
+	if m == nil || account == nil || !m.ShouldRouteOpenAIOAuth(account) {
+		return nil, false, nil
+	}
+	route := m.route.Load()
+	if route == nil || route.runtime == nil || route.runtime.installation == nil ||
+		!pluginDeclaresCodexStateHarvestCapability(route.runtime.installation.Manifest) {
+		return nil, false, nil
+	}
+	if route.runtime.client.Exited() {
+		return nil, true, errors.New("Codex state harvest 插件进程已退出")
+	}
+	if !route.runtime.beginRequest() {
+		return nil, true, errors.New("Codex state harvest 插件正在停止")
+	}
+	response, err := route.runtime.roundTrip(ctx, request, proxyURL, account)
+	if err != nil {
+		route.runtime.finishRequest()
+		return nil, true, err
+	}
+	return response, true, nil
+}
+
 func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.Request, proxyURL string, account *Account) (*http.Response, bool, error) {
 	if !m.ShouldRouteOpenAIOAuth(account) {
 		return nil, false, nil
