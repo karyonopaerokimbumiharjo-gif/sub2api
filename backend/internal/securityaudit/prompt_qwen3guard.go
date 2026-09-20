@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -194,6 +193,12 @@ type OpenAICompatibleScanner struct {
 func NewOpenAICompatibleScanner() *OpenAICompatibleScanner { return &OpenAICompatibleScanner{} }
 
 func (s *OpenAICompatibleScanner) Scan(ctx context.Context, endpoint ActiveEndpoint, chunk string, enabledScanners []string) (*NormalizedResult, error) {
+	if endpoint.Protocol == JevProtocol {
+		return s.scanJev(ctx, endpoint, chunk, enabledScanners)
+	}
+	if endpoint.Protocol != "" && endpoint.Protocol != "openai_compatible" {
+		return nil, &GuardError{Code: ErrorCodeInvalidResponse}
+	}
 	client, err := s.clientFor(endpoint)
 	if err != nil {
 		return nil, &GuardError{Code: ErrorCodeUnavailable, Cause: err}
@@ -322,6 +327,5 @@ func ScannerDefinitions() []ScannerDefinition {
 	for _, id := range AllScannerIDs {
 		result = append(result, ScannerCatalog[id])
 	}
-	sort.SliceStable(result, func(i, j int) bool { return i < j })
 	return result
 }
