@@ -65,7 +65,7 @@ func extractPromptSnapshot(req Request, latestTurnOnly bool) (PromptSnapshot, er
 		GroupID: cloneInt64Ptr(req.GroupID), GroupName: req.GroupName, Provider: req.Provider,
 		Endpoint: req.Endpoint, Protocol: req.Protocol, Model: req.Model,
 		PromptHash: hex.EncodeToString(digest[:]), RedactedPreview: BuildPromptPreview(metadataText, DefaultPromptPreviewMaxRunes),
-		FullPrompt:   BuildFullPrompt(metadataText, DefaultFullPromptMaxRunes),
+		FullPrompt:   "", // Raw text is transient scan data, not an event field.
 		PromptLength: utf8.RuneCountInString(metadataText), MessageCount: len(segments), Stage: stage,
 		ScanText: scanText,
 	}, nil
@@ -198,6 +198,14 @@ func extractResponses(value any) []promptSegment {
 			case string:
 				result = append(result, promptSegment{text: entry, user: true, role: "user"})
 			case map[string]any:
+				// Responses tool results are untrusted input too. They use output,
+				// not message.content, and must not bypass prompt auditing.
+				if stringValue(entry["type"]) == "function_call_output" || stringValue(entry["type"]) == "custom_tool_call_output" {
+					for _, text := range contentTexts(entry["output"]) {
+						result = append(result, promptSegment{text: text, role: "tool"})
+					}
+					continue
+				}
 				role := strings.ToLower(stringValue(entry["role"]))
 				if role != "" && !isClientInstructionRole(role) {
 					continue
