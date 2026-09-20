@@ -97,6 +97,30 @@ func TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder(t *testing.T) {
 	require.Equal(t, fullKey, keys[len(keys)-1])
 }
 
+func TestCyberSessionPreviousResponseBlockKey(t *testing.T) {
+	body := []byte(`{"previous_response_id":"resp_parent_123"}`)
+	key := CyberSessionPreviousResponseBlockKey(77, body)
+	require.NotEmpty(t, key)
+	require.Equal(t, key, CyberSessionPreviousResponseBlockKey(77, body))
+	require.NotEqual(t, key, CyberSessionPreviousResponseBlockKey(78, body))
+	require.Empty(t, CyberSessionPreviousResponseBlockKey(77, []byte(`{"previous_response_id":"msg_not_a_response"}`)))
+}
+
+func TestSecurityAuditInvalidationBlocksPreviousResponseContinuation(t *testing.T) {
+	settingSvc := &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+		SettingKeyCyberSessionBlockEnabled:    "true",
+		SettingKeyCyberSessionBlockTTLSeconds: "3600",
+	}}}
+	combo := &comboCacheAndStore{}
+	svc := &OpenAIGatewayService{cache: combo, settingService: settingSvc}
+	ctx := context.Background()
+	body := []byte(`{"previous_response_id":"resp_block_me","prompt_cache_key":"session-1"}`)
+	c, _ := newCyberBlockTestCtx(nil, string(body))
+	keys := []string{CyberSessionPreviousResponseBlockKey(9, body), CyberSessionExplicitBlockKey(9, c, body)}
+	require.NoError(t, svc.InvalidateSecurityAuditSession(ctx, nil, c, body, "", keys))
+	require.NotEmpty(t, svc.FindCyberSessionBlockedForRequest(ctx, 9, c, body, "", ""))
+}
+
 // --- fakes ---
 
 type fakeCyberBlockStore struct {
