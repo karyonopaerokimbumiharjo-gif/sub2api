@@ -186,10 +186,11 @@ func opsErrorLogsOrderBy(filter *service.OpsErrorLogFilter) string {
 	case "model":
 		column = "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model)"
 	case "status_code":
-		// 与展示列/过滤保持同义:列表展示 COALESCE(upstream_status_code, status_code, 0),
+		// Client-visible semantic failures win over a transport-level upstream
+		// status. Recovered provider rows still fall back to upstream_status_code.
 		// status_code 过滤也用同一表达式,故排序必须一致——否则 recovered upstream 行
 		//（status_code<400 但展示上游 5xx）排序键与显示值/分页切分不符。
-		column = "COALESCE(e.upstream_status_code, e.status_code, 0)"
+		column = "CASE WHEN COALESCE(e.status_code,0)>=400 THEN e.status_code ELSE COALESCE(e.upstream_status_code,e.status_code,0) END"
 	default:
 		column = "e.created_at"
 	}
@@ -199,6 +200,58 @@ func opsErrorLogsOrderBy(filter *service.OpsErrorLogFilter) string {
 		dir = "ASC"
 	}
 	return fmt.Sprintf("%s %s, e.id %s", column, dir, dir)
+}
+
+const opsPropagatedRoutingPredicate = `
+COALESCE(e.status_code, 0) = 503
+AND e.error_phase = 'routing'
+AND e.error_type = 'api_error'
+AND COALESCE(e.error_owner, '') = 'platform'
+AND COALESCE(e.error_source, '') = 'gateway'
+AND e.account_id IS NULL
+AND BTRIM(COALESCE(e.error_message, '')) = 'Service temporarily unavailable'`
+
+// opsErrorLogsCollapseCTE returns a filtered data source that preserves every
+// raw row while presenting repeated, derived "no available accounts" routing
+// failures as one representative row per five-minute window. Root upstream
+// errors and every other error type retain one row per stored event.
+func opsErrorLogsCollapseCTE(where string) string {
+	return `
+WITH filtered_base AS (
+  SELECT
+    e.*,
+    CASE
+      WHEN ` + opsPropagatedRoutingPredicate + ` THEN
+        jsonb_build_array(
+          'propagated-routing-unavailable',
+          e.user_id,
+          e.api_key_id,
+          e.group_id,
+          COALESCE(e.platform, ''),
+          COALESCE(NULLIF(BTRIM(e.requested_model), ''), e.model, ''),
+          COALESCE(e.request_path, ''),
+          COALESCE(e.inbound_endpoint, ''),
+          COALESCE(e.stream, false),
+          date_bin('5 minutes', e.created_at, TIMESTAMPTZ '2000-01-01 00:00:00+00')
+        )::text
+      ELSE 'id:' || e.id::text
+    END AS collapse_key
+  FROM ops_error_logs e
+  ` + where + `
+),
+filtered AS (
+  SELECT
+    e.*,
+    COUNT(*) OVER (PARTITION BY e.collapse_key) AS occurrence_count,
+    MIN(e.created_at) OVER (PARTITION BY e.collapse_key) AS first_seen_at,
+    MAX(e.created_at) OVER (PARTITION BY e.collapse_key) AS last_seen_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY e.collapse_key
+      ORDER BY e.created_at DESC, e.id DESC
+    ) AS collapse_rank
+  FROM filtered_base e
+)
+`
 }
 
 func (r *opsRepository) ListErrorLogs(ctx context.Context, filter *service.OpsErrorLogFilter) (*service.OpsErrorLogList, error) {
@@ -222,7 +275,17 @@ func (r *opsRepository) ListErrorLogs(ctx context.Context, filter *service.OpsEr
 	}
 
 	where, args := buildOpsErrorLogsWhere(filter)
-	countSQL := "SELECT COUNT(*) FROM ops_error_logs e " + where
+	queryPrefix := ""
+	fromSQL := "ops_error_logs e"
+	rowWhere := where
+	aggregationSelect := "1::bigint, e.created_at, e.created_at"
+	if filter.CollapseRoutingUnavailable {
+		queryPrefix = opsErrorLogsCollapseCTE(where)
+		fromSQL = "filtered e"
+		rowWhere = "WHERE e.collapse_rank = 1"
+		aggregationSelect = "e.occurrence_count, e.first_seen_at, e.last_seen_at"
+	}
+	countSQL := queryPrefix + "SELECT COUNT(*) FROM " + fromSQL + " " + rowWhere
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
@@ -231,7 +294,7 @@ func (r *opsRepository) ListErrorLogs(ctx context.Context, filter *service.OpsEr
 
 	offset := (page - 1) * pageSize
 	argsWithLimit := append(args, pageSize, offset)
-	selectSQL := `
+	selectSQL := queryPrefix + `
 SELECT
   e.id,
   e.created_at,
@@ -240,7 +303,7 @@ SELECT
   COALESCE(e.error_owner, ''),
   COALESCE(e.error_source, ''),
   e.severity,
-  COALESCE(e.upstream_status_code, e.status_code, 0),
+  CASE WHEN COALESCE(e.status_code,0)>=400 THEN e.status_code ELSE COALESCE(e.upstream_status_code,e.status_code,0) END,
   COALESCE(e.platform, ''),
   COALESCE(e.model, ''),
   COALESCE(e.resolved, false),
@@ -267,14 +330,15 @@ SELECT
   COALESCE(e.user_agent, ''),
   e.request_type,
   COALESCE(ak.name, ''),
-  ak.deleted_at
-FROM ops_error_logs e
+  ak.deleted_at,
+  ` + aggregationSelect + `
+FROM ` + fromSQL + `
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN users u2 ON e.resolved_by_user_id = u2.id
 LEFT JOIN api_keys ak ON ak.id = e.api_key_id
-` + where + `
+` + rowWhere + `
 ORDER BY ` + opsErrorLogsOrderBy(filter) + `
 LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 
@@ -338,6 +402,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&requestType,
 			&apiKeyName,
 			&apiKeyDeletedAt,
+			&item.OccurrenceCount,
+			&item.FirstSeenAt,
+			&item.LastSeenAt,
 		); err != nil {
 			return nil, err
 		}
@@ -411,7 +478,7 @@ SELECT
   COALESCE(e.error_owner, ''),
   COALESCE(e.error_source, ''),
   e.severity,
-  COALESCE(e.upstream_status_code, e.status_code, 0),
+  COALESCE(e.status_code, 0),
   COALESCE(e.platform, ''),
   COALESCE(e.model, ''),
   COALESCE(e.resolved, false),
@@ -588,6 +655,9 @@ LIMIT 1`
 	}
 	out.APIKeyName = detailAPIKeyName
 	out.APIKeyDeleted = detailAPIKeyDeletedAt.Valid
+	out.OccurrenceCount = 1
+	out.FirstSeenAt = out.CreatedAt
+	out.LastSeenAt = out.CreatedAt
 
 	// Normalize upstream_errors to empty string when stored as JSON null.
 	out.UpstreamErrors = strings.TrimSpace(out.UpstreamErrors)
@@ -978,12 +1048,12 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	}
 	if len(filter.StatusCodes) > 0 {
 		args = append(args, pq.Array(filter.StatusCodes))
-		clauses = append(clauses, "COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+")")
+		clauses = append(clauses, "CASE WHEN COALESCE(e.status_code,0)>=400 THEN e.status_code ELSE COALESCE(e.upstream_status_code,e.status_code,0) END = ANY($"+itoa(len(args))+")")
 	} else if filter.StatusCodesOther {
 		// "Other" means: status codes not in the common list.
 		known := []int{400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
 		args = append(args, pq.Array(known))
-		clauses = append(clauses, "NOT (COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+"))")
+		clauses = append(clauses, "NOT (CASE WHEN COALESCE(e.status_code,0)>=400 THEN e.status_code ELSE COALESCE(e.upstream_status_code,e.status_code,0) END = ANY($"+itoa(len(args))+"))")
 	}
 	// Exact correlation keys (preferred for request↔upstream linkage).
 	if rid := strings.TrimSpace(filter.RequestID); rid != "" {

@@ -17,6 +17,36 @@ type PromptEngine interface {
 	Evaluate(ctx context.Context, req Request) (*PromptDecision, error)
 }
 
+type PromptRiskEscalationEngine interface {
+	EvaluateKnownRisk(ctx context.Context, req Request) (*PromptDecision, error)
+}
+
+type PromptAuditGapRecorder interface {
+	CaptureAuditGap(ctx context.Context, req Request)
+}
+
+type PromptBackgroundAuditEngine interface {
+	HasBackgroundAudit() bool
+}
+
+type PromptBypassEngine interface {
+	ShouldBypass(req Request) bool
+	RecordUserBypass(ctx context.Context, req Request)
+}
+
+type OutputAuditEngine interface {
+	ShouldAuditOutput(req Request, inputDecision DecisionKind) bool
+	ObserveOutput(ctx context.Context, req Request, inputDecision DecisionKind, responseBody []byte, streaming bool)
+}
+
+type UpstreamPolicyFeedbackRecorder interface {
+	RecordUpstreamPolicyFeedback(ctx context.Context, snapshot PromptSnapshot, code, message string) error
+}
+
+type LocalPolicyCacheRecorder interface {
+	RecordLocalPolicyCacheBlock(ctx context.Context, snapshot PromptSnapshot, code, message string) error
+}
+
 type Coordinator struct {
 	legacy LegacyEngine
 	prompt PromptEngine
@@ -50,11 +80,60 @@ func (c *Coordinator) EnhanceCompaction(ctx context.Context, body []byte) ([]byt
 	return engine.EnhanceCompaction(ctx, body)
 }
 
+// RecordUpstreamPolicyFeedback is best-effort and intentionally separate from
+// Check: the upstream response has already been returned, so recording must not
+// change the client outcome or make the request fail twice.
+func (c *Coordinator) RecordUpstreamPolicyFeedback(ctx context.Context, snapshot PromptSnapshot, code, message string) error {
+	if c == nil || c.prompt == nil {
+		return nil
+	}
+	recorder, ok := c.prompt.(UpstreamPolicyFeedbackRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.RecordUpstreamPolicyFeedback(ctx, snapshot, code, message)
+}
+
+func (c *Coordinator) RecordLocalPolicyCacheBlock(ctx context.Context, snapshot PromptSnapshot, code, message string) error {
+	if c == nil || c.prompt == nil {
+		return nil
+	}
+	recorder, ok := c.prompt.(LocalPolicyCacheRecorder)
+	if !ok {
+		return nil
+	}
+	return recorder.RecordLocalPolicyCacheBlock(ctx, snapshot, code, message)
+}
+
+func (c *Coordinator) ShouldAuditOutput(req Request, inputDecision DecisionKind) bool {
+	if c == nil || c.prompt == nil {
+		return false
+	}
+	engine, ok := c.prompt.(OutputAuditEngine)
+	return ok && engine.ShouldAuditOutput(req, inputDecision)
+}
+
+func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecision DecisionKind, responseBody []byte, streaming bool) {
+	if c == nil || c.prompt == nil {
+		return
+	}
+	if engine, ok := c.prompt.(OutputAuditEngine); ok {
+		engine.ObserveOutput(ctx, req, inputDecision, responseBody, streaming)
+	}
+}
+
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
 	if req.RequireJev && !c.JevBlockingReady() {
 		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
 	}
 	if c == nil {
+		return allowDecision(nil, nil)
+	}
+	// The explicit administrator-managed per-user bypass is the outermost
+	// policy boundary. A match bypasses both the legacy content moderator and
+	// every prompt-audit mode, including background jobs and cached blocks.
+	if bypass, ok := c.prompt.(PromptBypassEngine); ok && !req.RequireJev && bypass.ShouldBypass(req) {
+		bypass.RecordUserBypass(ctx, req.Clone())
 		return allowDecision(nil, nil)
 	}
 	mode := ModeOff
@@ -63,14 +142,31 @@ func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
 	}
 	switch mode {
 	case ModeAsync:
+		if riskEngine, ok := c.prompt.(PromptRiskEscalationEngine); ok {
+			prompt, err := riskEngine.EvaluateKnownRisk(ctx, req.Clone())
+			if err != nil {
+				return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
+			}
+			if prompt != nil && prompt.Kind != DecisionAllow {
+				return prioritize(nil, prompt)
+			}
+		}
 		// Enqueue is deliberately best-effort. The implementation owns a bounded
 		// context and copies request memory before it can outlive the Handler.
 		_ = c.prompt.Enqueue(ctx, req.Clone())
 		legacy, _ := c.checkLegacy(ctx, req)
 		return prioritize(legacy, nil)
 	case ModeBlocking:
+		// Optional background coverage is independent from the foreground gate.
+		// Enqueue owns a copied request and never delays the blocking decision.
+		if background, ok := c.prompt.(PromptBackgroundAuditEngine); ok && background.HasBackgroundAudit() {
+			_ = c.prompt.Enqueue(ctx, req.Clone())
+		}
 		return c.checkBlocking(ctx, req)
 	default:
+		if recorder, ok := c.prompt.(PromptAuditGapRecorder); ok {
+			recorder.CaptureAuditGap(ctx, req.Clone())
+		}
 		legacy, _ := c.checkLegacy(ctx, req)
 		return prioritize(legacy, nil)
 	}

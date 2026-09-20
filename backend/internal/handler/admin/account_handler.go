@@ -2799,13 +2799,21 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
-		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
-		// retain the legacy local catalog below so the test dialog remains usable.
-		if h.accountTestService != nil {
-			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
-				response.Success(c, models)
+		// The local CPA bridge publishes its current catalog upstream.
+		// The test picker must include new models without requiring an app release.
+		if service.ValidateCPAAccount(account) == nil &&
+			(len(account.GetModelMapping()) == 0 || account.IsOpenAIPassthroughEnabled()) &&
+			h.accountTestService != nil {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+			defer cancel()
+			ids, err := h.accountTestService.FetchUpstreamSupportedModels(ctx, account)
+			if err != nil {
+				slog.Warn("account_models_upstream_failed", "account_id", accountID)
+				response.Error(c, http.StatusBadGateway, "Failed to fetch current upstream model list")
 				return
 			}
+			response.Success(c, openai.ModelsFromIDs(ids))
+			return
 		}
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {

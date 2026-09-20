@@ -1,6 +1,10 @@
 package securityaudit
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestShouldStorePromptAuditEvent(t *testing.T) {
 	tests := []struct {
@@ -22,4 +26,10 @@ func TestShouldStorePromptAuditEvent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMarshalStringJSONArrayNormalizesNilToEmptyArray(t *testing.T) {
+	require.JSONEq(t, `[]`, string(marshalStringJSONArray(nil)))
+	require.JSONEq(t, `[]`, string(marshalStringJSONArray([]string{})))
+	require.JSONEq(t, `["jailbreak"]`, string(marshalStringJSONArray([]string{"jailbreak"})))
 }

@@ -1144,6 +1144,9 @@ func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *A
 // handle429 处理429限流错误
 // 解析响应头获取重置时间，标记账号为限流状态
 func (s *RateLimitService) handle429(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {
+	if isCPAModelCooldown(account, responseBody) {
+		return
+	}
 	// OpenAI OAuth stays on the same account for the gateway's bounded retry
 	// window. Persisting a rate-limit reset on the first 429 would make the next
 	// retry ineligible and silently turn same-account recovery into a switch.

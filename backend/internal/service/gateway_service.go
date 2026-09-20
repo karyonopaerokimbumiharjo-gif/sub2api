@@ -786,6 +786,7 @@ type GatewayService struct {
 	userGroupRateSF       singleflight.Group
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
+	modelsListUpstreamSF  singleflight.Group
 	settingService        *SettingService
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	debugModelRouting     atomic.Bool
@@ -1413,9 +1414,24 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 	// Collect unique models from all accounts
 	modelSet := make(map[string]struct{})
-	hasAnyMapping := false
+	hasCatalog := false
 
 	for _, acc := range accounts {
+		mapping := acc.GetModelMapping()
+		if ValidateCPAAccount(&acc) == nil &&
+			(len(mapping) == 0 || acc.IsOpenAIPassthroughEnabled()) && s.httpUpstream != nil {
+			// Use CPA's live catalog for unrestricted bridge accounts.
+			// Reuse the same URL validation, headers and TLS behavior as admin sync.
+			models, fetchErr := s.fetchOpenAIAPIKeyModels(ctx, &acc)
+			if fetchErr == nil {
+				hasCatalog = true
+				for _, model := range models {
+					modelSet[model] = struct{}{}
+				}
+				continue
+			}
+			slog.Warn("gateway_models_upstream_failed", "account_id", acc.ID)
+		}
 		// Passthrough routing accepts models independently of model_mapping. A stale
 		// mapping on any eligible passthrough account therefore cannot define the
 		// public whitelist; return nil so the handler uses its default model set.
@@ -1427,17 +1443,16 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			return nil
 		}
 
-		mapping := acc.GetModelMapping()
 		if len(mapping) > 0 {
-			hasAnyMapping = true
+			hasCatalog = true
 			for model := range mapping {
 				modelSet[model] = struct{}{}
 			}
 		}
 	}
 
-	// If no account has model_mapping, return nil (use default)
-	if !hasAnyMapping {
+	// If no account supplied an explicit or live catalog, use the defaults.
+	if !hasCatalog {
 		if s.modelsListCache != nil {
 			s.modelsListCache.Set(cacheKey, []string(nil), s.modelsListCacheTTL)
 			modelsListCacheStoreTotal.Add(1)
@@ -1461,6 +1476,32 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		modelsListCacheStoreTotal.Add(1)
 	}
 	return cloneStringSlice(models)
+}
+
+func (s *GatewayService) fetchOpenAIAPIKeyModels(ctx context.Context, account *Account) ([]string, error) {
+	result := s.modelsListUpstreamSF.DoChan(strconv.FormatInt(account.ID, 10), func() (any, error) {
+		fetchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		modelService := &AccountTestService{
+			httpUpstream:        s.httpUpstream,
+			cfg:                 s.cfg,
+			tlsFPProfileService: s.tlsFPProfileService,
+		}
+		return modelService.FetchUpstreamSupportedModels(fetchCtx, account)
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case fetched := <-result:
+		if fetched.Err != nil {
+			return nil, fetched.Err
+		}
+		models, ok := fetched.Val.([]string)
+		if !ok {
+			return nil, fmt.Errorf("invalid upstream model list result")
+		}
+		return cloneStringSlice(models), nil
+	}
 }
 
 func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, groupID int64, model string) (CompositeModelOwnership, error) {

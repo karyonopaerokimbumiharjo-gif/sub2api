@@ -99,6 +99,7 @@ type userProfileResponse struct {
 	OIDCBound         bool                                   `json:"oidc_bound"`
 	WeChatBound       bool                                   `json:"wechat_bound"`
 	DingTalkBound     bool                                   `json:"dingtalk_bound"`
+	BalanceGrants     []service.UserBalanceGrant             `json:"balance_grants"`
 }
 
 type userProfileSourceContext struct {
@@ -535,7 +536,13 @@ func (h *UserHandler) buildUserProfileResponse(ctx context.Context, userID int64
 	if err != nil {
 		return userProfileResponse{}, err
 	}
-	return userProfileResponseFromService(user, identities), nil
+	balanceGrants, err := h.userService.GetProfileBalanceGrants(ctx, userID)
+	if err != nil {
+		return userProfileResponse{}, err
+	}
+	resp := userProfileResponseFromService(user, identities)
+	resp.BalanceGrants = balanceGrants
+	return resp, nil
 }
 
 func userProfileResponseFromService(user *service.User, identities service.UserIdentitySummarySet) userProfileResponse {

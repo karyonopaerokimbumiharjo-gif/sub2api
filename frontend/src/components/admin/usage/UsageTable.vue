@@ -231,17 +231,30 @@
           </div>
         </template>
 
-        <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
+        <!-- 管理员端可对照审计前后耗时；用户端沿用旧版只展示上游耗时。 -->
         <template #cell-latency="{ row }">
           <div class="flex items-stretch gap-2">
             <span
               class="w-1 shrink-0 rounded-full"
-              :class="row.first_token_ms != null
-                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[firstTokenSeverity(row.first_token_ms)], LATENCY_BAR_TO_CLASSES[durationSeverity(row.duration_ms ?? 0)]]
+              :class="showAuditLatencyComparison && latencyWithAudit(row.first_token_ms, row.prompt_audit_latency_ms) != null
+                ? ['bg-gradient-to-b from-40% to-60%', LATENCY_BAR_FROM_CLASSES[firstTokenSeverity(latencyWithAudit(row.first_token_ms, row.prompt_audit_latency_ms)!)], LATENCY_BAR_TO_CLASSES[durationSeverity(latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms) ?? row.duration_ms ?? 0)]]
                 : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
               aria-hidden="true"
             ></span>
-            <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
+            <div v-if="showAuditLatencyComparison" class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
+              <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstTokenWithoutAudit') }}</span>
+              <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
+              <span v-else class="text-gray-400 dark:text-gray-500">-</span>
+              <span class="text-gray-400 dark:text-gray-500" :title="promptAuditLatencyTitle(row.prompt_audit_latency_ms)">{{ t('usage.latencyFirstTokenWithAudit') }}</span>
+              <span v-if="latencyWithAudit(row.first_token_ms, row.prompt_audit_latency_ms) != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(latencyWithAudit(row.first_token_ms, row.prompt_audit_latency_ms)!)]">{{ formatDuration(latencyWithAudit(row.first_token_ms, row.prompt_audit_latency_ms)) }}</span>
+              <span v-else class="text-gray-400 dark:text-gray-500">-</span>
+              <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDurationWithoutAudit') }}</span>
+              <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              <span class="text-gray-400 dark:text-gray-500" :title="promptAuditLatencyTitle(row.prompt_audit_latency_ms)">{{ t('usage.latencyDurationWithAudit') }}</span>
+              <span v-if="latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms) != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms)!)]">{{ formatDuration(latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms)) }}</span>
+              <span v-else class="text-gray-400 dark:text-gray-500">-</span>
+            </div>
+            <div v-else class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
@@ -577,6 +590,16 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   return Number.isNaN(result) ? 0 : result
 }
 
+function latencyWithAudit(baseMs: number | null | undefined, auditMs: number | null | undefined): number | null {
+  if (baseMs == null || auditMs == null || auditMs < 0) return null
+  return baseMs + auditMs
+}
+
+function promptAuditLatencyTitle(auditMs: number | null | undefined): string {
+  if (auditMs == null || auditMs < 0) return t('usage.promptAuditLatencyMissing')
+  return t('usage.promptAuditLatencyValue', { value: formatDuration(auditMs) })
+}
+
 
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -595,6 +618,8 @@ interface Props {
   defaultSortOrder?: 'asc' | 'desc'
   showAccountBilling?: boolean
   showUpstreamEndpoint?: boolean
+  /** 管理员端显示审计前后耗时对照；用户端沿用旧版净耗时口径。 */
+  showAuditLatencyComparison?: boolean
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
 }
@@ -606,6 +631,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultSortOrder: 'asc',
   showAccountBilling: true,
   showUpstreamEndpoint: true,
+  showAuditLatencyComparison: true,
   flat: false
 })
 const emit = defineEmits<{
@@ -618,6 +644,7 @@ const appStore = useAppStore()
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
+const showAuditLatencyComparison = props.showAuditLatencyComparison
 const ipGeoBatchLoading = ref(false)
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))

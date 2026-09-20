@@ -31,7 +31,7 @@
         <div v-if="!isCNApiKeyAccount || editApiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
-            v-model="editBaseUrl"
+            v-model="editBaseUrl" readonly
             type="text"
             class="input"
             :placeholder="
@@ -873,7 +873,7 @@
         <div>
           <label class="input-label">{{ t('admin.accounts.upstream.baseUrl') }}</label>
           <input
-            v-model="editBaseUrl"
+            v-model="editBaseUrl" readonly
             type="text"
             class="input"
             placeholder="https://cloudcode-pa.googleapis.com"
@@ -1643,12 +1643,12 @@
         </div>
       </div>
 
-      <div v-if="!isSparkShadow">
+      <p v-if="account?.extra?.openai_quota_via_compatible_upstream" class="text-sm text-gray-600 dark:text-gray-300">{{ cpaText('bridgeProxy') }}</p>
+      <div v-if="!isSparkShadow && !account?.extra?.openai_quota_via_compatible_upstream">
         <div class="mb-1 flex items-center gap-2">
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
-          <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <input class="input" value="CPA" readonly />
       </div>
 
       <UpstreamRequestIdHeaderField
@@ -2503,20 +2503,7 @@
             />
           </button>
         </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="input-label">{{ t('admin.accounts.autoResetCredit.threshold5h') }}</label>
-            <input
-              v-model.number="autoResetCredit5hThreshold"
-              type="number"
-              min="0.1"
-              max="100"
-              step="0.1"
-              class="input"
-              :disabled="!autoResetCreditEnabled"
-              data-testid="auto-reset-credit-5h-threshold"
-            />
-          </div>
+        <div>
           <div>
             <label class="input-label">{{ t('admin.accounts.autoResetCredit.threshold7d') }}</label>
             <input
@@ -3068,8 +3055,8 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
-import ProxySelector from '@/components/common/ProxySelector.vue'
-import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
+import { useCPAText } from './cpaRuntimeText'
+const cpaText = useCPAText()
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -3478,7 +3465,6 @@ const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 const autoResetCreditEnabled = ref(false)
-const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
@@ -4022,8 +4008,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
 	autoResetCreditEnabled.value = extra?.auto_reset_credit_enabled === true
-	autoResetCredit5hThreshold.value =
-		typeof extra?.auto_reset_credit_5h_threshold === 'number' ? extra.auto_reset_credit_5h_threshold * 100 : 100
 	autoResetCredit7dThreshold.value =
 		typeof extra?.auto_reset_credit_7d_threshold === 'number' ? extra.auto_reset_credit_7d_threshold * 100 : 100
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
@@ -4995,8 +4979,7 @@ const handleSubmit = async () => {
     return
   }
 	if (autoResetCreditEnabled.value) {
-		const thresholds = [autoResetCredit5hThreshold.value, autoResetCredit7dThreshold.value]
-		if (thresholds.some((value) => !Number.isFinite(value) || value < 0.1 || value > 100)) {
+		if (!Number.isFinite(autoResetCredit7dThreshold.value) || autoResetCredit7dThreshold.value < 0.1 || autoResetCredit7dThreshold.value > 100) {
 			appStore.showError(t('admin.accounts.autoResetCredit.thresholdInvalid'))
 			return
 		}
@@ -5589,8 +5572,10 @@ const handleSubmit = async () => {
 		}
 		if (props.account.type === 'oauth' && !isSparkShadow.value) {
 			newExtra.auto_reset_credit_enabled = autoResetCreditEnabled.value
-			newExtra.auto_reset_credit_5h_threshold = autoResetCredit5hThreshold.value / 100
 			newExtra.auto_reset_credit_7d_threshold = autoResetCredit7dThreshold.value / 100
+			// 5h was accepted by older versions but is intentionally no longer
+			// configurable: automatic reset credits only apply to the 7d window.
+			delete newExtra.auto_reset_credit_5h_threshold
 		}
 		// 运行态只允许后端服务更新，账号编辑不得回写旧状态。
 		delete newExtra.codex_auto_reset_credit_state

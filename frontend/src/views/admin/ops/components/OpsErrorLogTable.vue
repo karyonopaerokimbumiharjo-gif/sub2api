@@ -123,11 +123,17 @@
         </template>
 
         <template #cell-message="{ row }">
-          <span
-            v-if="row.message"
-            class="block max-w-[280px] truncate text-sm text-gray-600 dark:text-gray-400"
-            :title="row.message"
-          >{{ formatSmartMessage(row.message) || '-' }}</span>
+          <div v-if="row.message" class="max-w-[280px] space-y-1">
+            <span
+              class="block truncate text-sm text-gray-600 dark:text-gray-400"
+              :title="row.message"
+            >{{ formatSmartMessage(row.message) || '-' }}</span>
+            <span
+              v-if="(row.occurrence_count || 1) > 1"
+              class="inline-flex rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-500/20 dark:text-purple-300"
+              :title="aggregationTitle(row)"
+            >{{ t('admin.ops.errorLog.aggregatedCount', { count: row.occurrence_count }) }}</span>
+          </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
@@ -339,5 +345,11 @@ function formatSmartMessage(msg: string): string {
   if (msg.toLowerCase().includes('rate limit')) return t('admin.ops.errorLog.commonErrors.rateLimit')
 
   return msg.length > 200 ? msg.substring(0, 200) + '...' : msg
+}
+
+function aggregationTitle(log: OpsErrorLog): string {
+  const first = log.first_seen_at ? formatDateTime(log.first_seen_at) : '-'
+  const last = log.last_seen_at ? formatDateTime(log.last_seen_at) : '-'
+  return t('admin.ops.errorLog.aggregatedRange', { first, last })
 }
 </script>

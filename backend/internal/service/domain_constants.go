@@ -241,6 +241,8 @@ const (
 	SettingKeyContentModerationConfig             = "content_moderation_config"        // 内容审计配置（JSON）
 	SettingKeyCyberSessionBlockEnabled            = "cyber_session_block_enabled"      // cyber 命中后会话级自动屏蔽总开关(默认关)
 	SettingKeyCyberSessionBlockTTLSeconds         = "cyber_session_block_ttl_seconds"  // 会话屏蔽 TTL 秒数(默认 3600)
+	SettingKeyBioPromptBlockEnabled               = "bio_prompt_block_enabled"         // bio_policy 命中后同用户提示词指纹自动屏蔽
+	SettingKeyBioPromptBlockTTLSeconds            = "bio_prompt_block_ttl_seconds"     // bio 提示词指纹首次屏蔽 TTL 秒数(默认 30 天；重复命中滚动至 90 天)
 	SettingKeyLoginAgreementEnabled               = "login_agreement_enabled"          // 登录前是否要求同意条款
 	SettingKeyLoginAgreementMode                  = "login_agreement_mode"             // 条款确认展示模式：modal / checkbox
 	SettingKeyLoginAgreementUpdatedAt             = "login_agreement_updated_at"       // 条款更新日期（展示用）

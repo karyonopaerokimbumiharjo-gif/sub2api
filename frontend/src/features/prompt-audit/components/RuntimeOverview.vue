@@ -67,6 +67,58 @@
           </div>
         </div>
       </div>
+
+      <div v-if="runtime.adaptive" class="mt-4 rounded-xl border border-gray-100 px-4 py-4 dark:border-dark-700/60 dark:bg-dark-900/20" data-test="adaptive-runtime">
+        <div class="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.runtime.adaptiveTitle') }}</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.runtime.adaptiveHint') }}</p>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-dark-400">{{ runtime.adaptive.last_updated_at ? formatDate(runtime.adaptive.last_updated_at) : t('admin.promptAudit.common.never') }}</p>
+        </div>
+        <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div v-for="item in adaptiveMetricItems" :key="item.label" class="rounded-lg bg-gray-50 px-3 py-2.5 dark:bg-dark-900/60">
+            <dt class="text-[11px] text-gray-500 dark:text-dark-400">{{ item.label }}</dt>
+            <dd class="mt-1 text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatInteger(item.value) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div v-if="runtime.audit_usage" class="mt-4 rounded-xl border border-gray-100 px-4 py-4 dark:border-dark-700/60 dark:bg-dark-900/20" data-test="audit-usage-overview">
+        <div>
+          <h3 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.runtime.auditUsageTitle') }}</h3>
+          <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.runtime.auditUsageHint') }}</p>
+        </div>
+        <dl class="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <div v-for="item in usageMetricItems" :key="item.label" class="rounded-lg bg-gray-50 px-3 py-2.5 dark:bg-dark-900/60">
+            <dt class="text-[11px] text-gray-500 dark:text-dark-400">{{ item.label }}</dt>
+            <dd class="mt-1 text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{{ item.value }}</dd>
+          </div>
+        </dl>
+        <div v-if="runtime.audit_usage.by_account?.length" class="mt-4 overflow-x-auto">
+          <table class="min-w-full text-left text-xs">
+            <thead class="text-gray-500 dark:text-dark-400">
+              <tr>
+                <th class="pb-2 pr-4 font-medium">{{ t('admin.promptAudit.runtime.auditAccount') }}</th>
+                <th class="pb-2 pr-4 text-right font-medium">{{ t('admin.promptAudit.runtime.auditCalls') }}</th>
+                <th class="pb-2 pr-4 text-right font-medium">{{ t('admin.promptAudit.runtime.auditTokens') }}</th>
+                <th class="pb-2 text-right font-medium">{{ t('admin.promptAudit.runtime.auditEstimatedCost') }}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
+              <tr v-for="account in runtime.audit_usage.by_account" :key="`${account.account_id}-${account.account_email}`">
+                <td class="py-2 pr-4">
+                  <p class="font-medium text-gray-800 dark:text-dark-100">{{ account.account_email || account.account_name }}</p>
+                  <p class="mt-0.5 text-[11px] text-gray-500 dark:text-dark-400">{{ account.account_name }} · #{{ account.account_id }}</p>
+                </td>
+                <td class="py-2 pr-4 text-right tabular-nums text-gray-700 dark:text-dark-200">{{ formatInteger(account.invocations) }}</td>
+                <td class="py-2 pr-4 text-right tabular-nums text-gray-700 dark:text-dark-200">{{ formatInteger(account.input_tokens) }} / {{ formatInteger(account.output_tokens) }}</td>
+                <td class="py-2 text-right font-medium tabular-nums text-gray-900 dark:text-white">{{ formatUSD(account.estimated_cost_usd) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </template>
   </section>
 </template>
@@ -107,6 +159,38 @@ const guardMetricItems = computed(() => {
     { label: 'P95', value: metrics.latency_p95_ms != null ? `${metrics.latency_p95_ms} ms` : '—' },
   ]
 })
+
+const usageMetricItems = computed(() => {
+  const usage = props.runtime?.audit_usage
+  if (!usage) return []
+  return [
+    { label: t('admin.promptAudit.runtime.auditToday'), value: formatUSD(usage.today.estimated_cost_usd) },
+    { label: t('admin.promptAudit.runtime.auditLast7Days'), value: formatUSD(usage.last_7_days.estimated_cost_usd) },
+    { label: t('admin.promptAudit.runtime.auditAllTime'), value: formatUSD(usage.all_time.estimated_cost_usd) },
+    { label: t('admin.promptAudit.runtime.auditCalls'), value: formatInteger(usage.all_time.invocations) },
+  ]
+})
+
+const adaptiveMetricItems = computed(() => {
+  const adaptive = props.runtime?.adaptive
+  if (!adaptive) return []
+  return [
+    { label: t('admin.promptAudit.runtime.adaptivePending'), value: adaptive.pending },
+    { label: t('admin.promptAudit.runtime.adaptiveMatch'), value: adaptive.shadow_match },
+    { label: t('admin.promptAudit.runtime.adaptiveDisagreement'), value: adaptive.disagreement },
+    { label: t('admin.promptAudit.runtime.adaptiveFailed'), value: adaptive.shadow_failed },
+    { label: t('admin.promptAudit.runtime.adaptiveReviewedAllow'), value: adaptive.reviewed_allow },
+    { label: t('admin.promptAudit.runtime.adaptiveReviewedBlock'), value: adaptive.reviewed_block },
+  ]
+})
+
+function formatUSD(value: number): string {
+  return new Intl.NumberFormat(locale.value, { style: 'currency', currency: 'USD', minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(Number(value) || 0)
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat(locale.value, { maximumFractionDigits: 0 }).format(Number(value) || 0)
+}
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))

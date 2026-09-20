@@ -35,6 +35,9 @@ const (
 	EventEventsDeleted        = "prompt_audit.events_deleted"
 	EventDeletePreviewed      = "prompt_audit.events_delete_previewed"
 	EventEventsFilterDeleted  = "prompt_audit.events_filter_deleted"
+	EventUserBypass           = "prompt_audit.user_bypass"
+	EventUserBypassDropped    = "prompt_audit.user_bypass_record_dropped"
+	EventUserBypassFailed     = "prompt_audit.user_bypass_record_failed"
 )
 
 var knownLogEvents = map[string]struct{}{
@@ -45,6 +48,7 @@ var knownLogEvents = map[string]struct{}{
 	EventChunkStarted: {}, EventChunkCompleted: {}, EventChunkFailed: {}, EventChunksAggregated: {},
 	EventEvaluationStarted: {}, EventGuardAllowed: {}, EventGuardBlocked: {}, EventGuardFailed: {}, EventResultRecordFailed: {},
 	EventEventDeleted: {}, EventEventsDeleted: {}, EventDeletePreviewed: {}, EventEventsFilterDeleted: {},
+	EventUserBypass: {}, EventUserBypassDropped: {}, EventUserBypassFailed: {},
 }
 
 var allowedLogFields = map[string]struct{}{

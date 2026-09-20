@@ -127,6 +127,7 @@ type fakeCyberBlockStore struct {
 	blocked   map[string]bool
 	scopes    map[string]bool
 	findCalls int
+	readErr   error
 }
 
 var _ CyberSessionBlockStore = (*fakeCyberBlockStore)(nil)
@@ -152,6 +153,9 @@ func (f *fakeCyberBlockStore) IsCyberSessionScopeActive(_ context.Context, scope
 }
 
 func (f *fakeCyberBlockStore) FindCyberSessionBlocked(_ context.Context, keys []string) (string, error) {
+	if f.readErr != nil {
+		return "", f.readErr
+	}
 	f.findCalls++
 	for _, key := range keys {
 		if f.blocked[key] {
@@ -353,4 +357,55 @@ func TestCyberSessionScopeKeyNormalizesUserAgentVersion(t *testing.T) {
 	require.Equal(t, base, CyberSessionScopeKey(7, "203.0.113.10", "Codex CLI 1.2.4"))
 	require.NotEqual(t, base, CyberSessionScopeKey(8, "203.0.113.10", "Codex CLI 1.2.3"))
 	require.NotEqual(t, base, CyberSessionScopeKey(7, "203.0.113.11", "Codex CLI 1.2.3"))
+}
+
+func TestSecurityAuditInvalidationFailsClosedOnStoreReadError(t *testing.T) {
+	combo := &comboCacheAndStore{}
+	combo.store.readErr = errors.New("synthetic store outage")
+	svc := &OpenAIGatewayService{cache: combo}
+	c, body := newCyberBlockTestCtx(nil, `{"previous_response_id":"resp_blocked"}`)
+	require.Equal(t, SecurityAuditSessionStoreUnavailable, svc.FindSecurityAuditSessionInvalidatedForRequest(context.Background(), 9, c, body, "", ""))
+}
+
+type durableRevocationSettings struct {
+	SettingRepository
+	records map[string]bool
+	readErr error
+}
+
+func (r *durableRevocationSettings) SaveSecurityAuditRevocations(_ context.Context, keys []string) error {
+	if r.records == nil {
+		r.records = map[string]bool{}
+	}
+	for _, key := range keys {
+		r.records[key] = true
+	}
+	return nil
+}
+func (r *durableRevocationSettings) LoadSecurityAuditRevocations(_ context.Context, keys []string) (map[string]bool, error) {
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
+	found := map[string]bool{}
+	for _, key := range keys {
+		if r.records[key] {
+			found[key] = true
+		}
+	}
+	return found, nil
+}
+func TestSecurityAuditRevocationSurvivesServiceAndRedisReplacement(t *testing.T) {
+	repo := &durableRevocationSettings{SettingRepository: &fakeSettingRepo{vals: map[string]string{SettingKeyCyberSessionBlockEnabled: "false"}}}
+	setting := &SettingService{settingRepo: repo}
+	first := &OpenAIGatewayService{settingService: setting, cache: &comboCacheAndStore{}}
+	c, body := newCyberBlockTestCtx(nil, `{"previous_response_id":"resp_revoked","prompt_cache_key":"blocked-session"}`)
+	keys := []string{CyberSessionPreviousResponseBlockKey(19, body), CyberSessionExplicitBlockKey(19, c, body)}
+	require.NoError(t, first.InvalidateSecurityAuditSession(context.Background(), nil, c, body, "", keys))
+	restarted := &OpenAIGatewayService{settingService: setting, cache: &comboCacheAndStore{}}
+	require.NotEmpty(t, restarted.FindSecurityAuditSessionInvalidatedForRequest(context.Background(), 19, c, body, "", ""))
+	require.Empty(t, restarted.FindSecurityAuditSessionInvalidatedForRequest(context.Background(), 20, c, body, "", ""))
+	fresh, freshBody := newCyberBlockTestCtx(nil, `{"input":"hello","prompt_cache_key":"new-session"}`)
+	require.Empty(t, restarted.FindSecurityAuditSessionInvalidatedForRequest(context.Background(), 19, fresh, freshBody, "", ""))
+	repo.readErr = errors.New("synthetic database outage")
+	require.Equal(t, SecurityAuditSessionStoreUnavailable, restarted.FindSecurityAuditSessionInvalidatedForRequest(context.Background(), 19, fresh, freshBody, "", ""))
 }

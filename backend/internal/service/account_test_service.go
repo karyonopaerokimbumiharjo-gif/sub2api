@@ -105,6 +105,17 @@ const (
 	grokRealtimeProbeTimeout     = DefaultGrokRealtimeDialTimeout
 )
 
+// pelicanTestInstructions deliberately bypass the normal Codex coding-agent
+// instructions.  The admin "鹈鹕测试" is a render probe: the model must return
+// a self-contained document immediately, rather than asking where to save a
+// file or describing how it would build one.
+const pelicanTestInstructions = `You are answering a render probe. Return ONLY one complete, self-contained HTML document (no Markdown fences, no explanation, no questions). The document must start with <!doctype html> and end with </html>, contain an inline SVG animation of a pelican riding a bicycle, and use only inline HTML/CSS/SVG/JavaScript with no external files or network requests. Keep it concise (under 1800 output tokens) but visibly animated so it can be rendered directly in a sandboxed iframe.`
+
+func isPelicanTestPrompt(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	return strings.Contains(p, "鹈鹕") || strings.Contains(p, "pelican")
+}
+
 // isOpenAIImageModel checks if the model is an OpenAI image generation model (e.g. gpt-image-2).
 func isOpenAIImageModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-image-")
@@ -761,6 +772,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = openai.DefaultTestModel
+		if ValidateCPAAccount(account) == nil {
+			testModelID = defaultCPAAccountTestModel(account)
+		}
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal
@@ -846,7 +860,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if isOAuth {
 		upstreamTestModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
 	}
-	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth)
+	payload := createOpenAITestPayload(upstreamTestModelID, isOAuth, prompt)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event once. A task-invalid Agent Identity response may
@@ -2725,7 +2739,11 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 }
 
 // createOpenAITestPayload creates a test payload for OpenAI Responses API
-func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
+func createOpenAITestPayload(modelID string, isOAuth bool, prompts ...string) map[string]any {
+	testPrompt := "hi"
+	if len(prompts) > 0 && strings.TrimSpace(prompts[0]) != "" {
+		testPrompt = strings.TrimSpace(prompts[0])
+	}
 	payload := map[string]any{
 		"model": modelID,
 		"input": []map[string]any{
@@ -2734,7 +2752,7 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 				"content": []map[string]any{
 					{
 						"type": "input_text",
-						"text": "hi",
+						"text": testPrompt,
 					},
 				},
 			},
@@ -2747,8 +2765,15 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 		payload["store"] = false
 	}
 
-	// All accounts require instructions for Responses API
-	payload["instructions"] = openai.DefaultInstructions
+	// All accounts require instructions for Responses API.  The Pelican render
+	// probe uses a dedicated output contract so coding-agent instructions do not
+	// make the model ask for a file path or return a prose-only answer.
+	if isPelicanTestPrompt(testPrompt) {
+		payload["instructions"] = pelicanTestInstructions
+		payload["max_output_tokens"] = 2200
+	} else {
+		payload["instructions"] = openai.DefaultInstructions
+	}
 
 	return payload
 }

@@ -181,6 +181,7 @@
           :data="usageLogs"
           :loading="loading"
           :columns="visibleColumns"
+          :show-audit-latency-comparison="false"
           :server-side-sort="true"
           :show-account-billing="false"
           :show-upstream-endpoint="false"

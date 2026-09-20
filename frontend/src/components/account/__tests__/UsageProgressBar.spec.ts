@@ -13,6 +13,18 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('UsageProgressBar', () => {
+  it('missing upstream quota preserves local usage without claiming zero percent', () => {
+    const wrapper = mount(UsageProgressBar, { props: {
+      label: '5h', utilization: 0, utilizationUnavailable: true,
+      showNowWhenIdle: true, color: 'indigo',
+      windowStats: { requests: 75, tokens: 11200000, cost: 6.56 }
+    } })
+    expect(wrapper.text()).toContain('75 req')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.quotaUnavailable')
+    expect(wrapper.text()).not.toContain('0%')
+    expect(wrapper.text()).not.toContain('usage.resetNow')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-03-17T00:00:00Z'))

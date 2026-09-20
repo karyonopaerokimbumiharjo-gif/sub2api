@@ -1,14 +1,19 @@
-export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone'
 export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
+export type PromptBlockingAuditMode = 'fast_latest' | 'incremental_full' | 'full'
+export type PromptBackgroundAuditMode = 'off' | PromptBlockingAuditMode
 export type PromptDecision = 'pass' | 'flag' | 'critical'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
+export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone' | 'antigravity_internal' | 'openai_internal'
+export type PromptAuditAdapter = 'qwen3guard' | 'generic_llm'
 
 export interface PromptAuditEndpoint {
   id: string
   name: string
   protocol: PromptAuditProtocol
+  adapter: PromptAuditAdapter
   base_url: string
   model: string
+  account_id: number
   timeout_ms: number
   input_limit: number
   enabled: boolean
@@ -24,15 +29,26 @@ export interface PromptAuditEndpointDraft extends PromptAuditEndpoint {
 export interface PromptAuditConfig {
   enabled: boolean
   blocking_enabled: boolean
+  blocking_audit_mode: PromptBlockingAuditMode
+  background_audit_mode?: PromptBackgroundAuditMode
   blocking_latest_turn_only: boolean
   store_pass_events: boolean
+  adaptive_enabled: boolean
+  adaptive_collect_when_disabled: boolean
+  adaptive_allow_sample_rate: number
+  adaptive_risk_sample_rate: number
+  output_audit_enabled: boolean
+  output_allow_sample_rate: number
+  output_risk_sample_rate: number
   effective_mode: PromptAuditMode
   strategy: 'priority'
   worker_count: number
+  prompt_chunk_concurrency: number
   queue_capacity: number
   scanners: string[]
   all_groups: boolean
   group_ids: number[]
+  whitelist_emails?: string[]
   endpoints: PromptAuditEndpoint[]
   config_version: number
   updated_at: string
@@ -40,7 +56,18 @@ export interface PromptAuditConfig {
   change_summary: string
 }
 
-export interface PromptAuditDraft extends Omit<PromptAuditConfig, 'endpoints'> {
+export interface PromptPolicyVersion {
+  id: number
+  config_version: number
+  endpoint_order: string[]
+  created_by: number
+  created_at: string
+  change_summary: string
+}
+
+export interface PromptAuditDraft extends Omit<PromptAuditConfig, 'endpoints' | 'background_audit_mode' | 'whitelist_emails'> {
+  background_audit_mode: PromptBackgroundAuditMode
+  whitelist_emails: string[]
   endpoints: PromptAuditEndpointDraft[]
 }
 
@@ -48,20 +75,33 @@ export interface PromptAuditUpdateRequest {
   expected_config_version: number
   enabled: boolean
   blocking_enabled: boolean
+  blocking_audit_mode: PromptBlockingAuditMode
+  background_audit_mode: PromptBackgroundAuditMode
   blocking_latest_turn_only: boolean
   store_pass_events: boolean
+  adaptive_enabled: boolean
+  adaptive_collect_when_disabled: boolean
+  adaptive_allow_sample_rate: number
+  adaptive_risk_sample_rate: number
+  output_audit_enabled: boolean
+  output_allow_sample_rate: number
+  output_risk_sample_rate: number
   strategy: 'priority'
   worker_count: number
+  prompt_chunk_concurrency: number
   queue_capacity: number
   scanners: string[]
   all_groups: boolean
   group_ids: number[]
+  whitelist_emails: string[]
   endpoints: Array<{
     id: string
     name: string
     protocol: PromptAuditProtocol
+    adapter: PromptAuditAdapter
     base_url: string
     model: string
+    account_id: number
     token?: string
     clear_token: boolean
     timeout_ms: number
@@ -110,6 +150,40 @@ export interface PromptGuardMetrics {
   latency_max_ms?: number
 }
 
+export interface PromptAuditUsagePeriod {
+  invocations: number
+  successes: number
+  failures: number
+  invalid: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  estimated_cost_usd: number
+  priced_invocations: number
+}
+
+export interface PromptAuditAccountUsage extends PromptAuditUsagePeriod {
+  account_id: number
+  account_name: string
+  account_email: string
+}
+
+export interface PromptAuditUsageOverview {
+  today: PromptAuditUsagePeriod
+  last_7_days: PromptAuditUsagePeriod
+  all_time: PromptAuditUsagePeriod
+  by_account: PromptAuditAccountUsage[]
+}
+
+export interface PromptAuditOAuthAccount {
+  id: number
+  name: string
+  email: string
+  status: string
+  schedulable: boolean
+}
+
 export interface PromptAuditRuntime {
   process_status: 'disabled' | 'running' | 'degraded' | 'error' | string
   effective_mode: PromptAuditMode
@@ -133,6 +207,58 @@ export interface PromptAuditRuntime {
   redis_status: string
   endpoints: Record<string, PromptProbeResult>
   guard_metrics: PromptGuardMetrics
+  audit_usage: PromptAuditUsageOverview
+  adaptive: {
+    pending: number
+    shadow_match: number
+    disagreement: number
+    shadow_failed: number
+    reviewed_allow: number
+    reviewed_block: number
+    total: number
+    last_updated_at?: string
+  }
+}
+
+export interface PromptAdaptiveSample {
+  id: number
+  request_id: string
+  user_id: number
+  prompt_hash: string
+  task_fingerprint: string
+  stage: string
+  audit_subject: string
+  redacted_preview: string
+  full_prompt: string
+  config_version: number
+  policy_version: number
+  primary_endpoint_id: string
+  shadow_endpoint_id: string
+  primary_decision: PromptDecision
+  shadow_decision: PromptDecision | ''
+  primary_categories: string[]
+  shadow_categories: string[]
+  primary_intent_categories: string[]
+  primary_content_categories: string[]
+  shadow_intent_categories: string[]
+  shadow_content_categories: string[]
+  status: 'pending' | 'shadow_match' | 'disagreement' | 'shadow_failed' | string
+  review_status: 'pending' | 'allow' | 'block' | string
+  review_note: string
+  reviewed_by: number
+  reviewed_at?: string
+  occurrence_count: number
+  last_error_code: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PromptAdaptiveSamplePage {
+  items: PromptAdaptiveSample[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
 }
 
 export interface PromptSnapshot {
@@ -149,8 +275,11 @@ export interface PromptSnapshot {
   protocol: string
   model: string
   prompt_hash: string
+  task_fingerprint?: string
+  audit_subject?: string
   redacted_preview: string
   full_prompt: string
+  audited_prompt?: string
   prompt_length: number
   message_count: number
   stage: string
@@ -177,10 +306,13 @@ export interface PromptAuditEvent {
   id: number
   job_id: number
   snapshot: PromptSnapshot
+  audit_status?: 'audited' | 'gap' | string
   decision: PromptDecision
   risk_level: PromptRiskLevel
   action: 'Allow' | 'Warn' | 'Block' | string
   categories: string[]
+  intent_categories: string[]
+  content_categories: string[]
   matched_scanners: string[]
   scanner_scores: Record<string, number>
   scanner_evidence: Record<string, string>
@@ -193,10 +325,15 @@ export interface PromptAuditEvent {
   chunk_total: number
   latency_ms: number
   issue_summaries: PromptIssueSummary[]
+  duplicate_count?: number
+  policy_source?: string
+  policy_code?: string
+  review_status?: string
   created_at: string
 }
 
 export interface PromptEventFilters {
+  aggregate?: boolean
   decision: string
   risk_level: string
   endpoint: string
@@ -243,5 +380,8 @@ export interface PromptLoadErrors {
   config: string
   runtime: string
   groups: string
+  accounts: string
   events: string
+  adaptive: string
+  policies: string
 }

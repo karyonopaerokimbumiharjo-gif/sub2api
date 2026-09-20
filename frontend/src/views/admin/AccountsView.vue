@@ -17,6 +17,7 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button class="btn btn-secondary" @click="showCPA = true">{{ cpaText('title') }}</button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -88,12 +89,6 @@
                           {{ t('admin.accounts.dataActions') }}
                         </div>
                       </div>
-                      <button class="account-tools-menu-item" @click="openSyncFromCrs">
-                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-                          <Icon name="sync" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
-                      </button>
                       <button class="account-tools-menu-item" @click="openImportData">
                         <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
                           <Icon name="upload" size="sm" />
@@ -242,6 +237,7 @@
                 </template>
               </HelpTooltip>
               <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span v-if="row.extra?.openai_quota_bridge_auth_email" class="text-xs text-teal-700 dark:text-teal-300 break-all">额度展示：{{ row.extra.openai_quota_bridge_auth_email }}</span>
               <span
                 v-if="accountDisplayEmail(row)"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -431,6 +427,24 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button
+                type="button"
+                :title="t('admin.accounts.testConnection')"
+                @click="handleTest(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+              >
+                <Icon name="play" size="sm" />
+                <span class="text-xs">{{ t('admin.accounts.testConnection') }}</span>
+              </button>
+              <button
+                type="button"
+                :title="t('admin.accounts.pelicanTest')"
+                @click="handlePelicanTest(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-amber-600 transition-colors hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20 dark:hover:text-amber-300"
+              >
+                <span class="text-base leading-4" aria-hidden="true">🐦</span>
+                <span class="text-xs">{{ t('admin.accounts.pelicanTest') }}</span>
+              </button>
               <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
                 <span class="text-xs">{{ t('common.edit') }}</span>
@@ -453,12 +467,12 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal :show="showTest" :account="testingAcc" :pelican-test="pelicanTest" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
+    <CPACredentialsModal :show="showCPA" @close="showCPA = false" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
-    <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
-    <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <CreateAccountModal :show="showImportData" @close="showImportData = false" @created="reload" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -486,6 +500,8 @@
 </template>
 
 <script setup lang="ts">
+import CPACredentialsModal from '@/components/account/CPACredentialsModal.vue'
+import { useCPAText } from '@/components/account/cpaRuntimeText'
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -503,12 +519,11 @@ import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
+import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
-import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
@@ -516,6 +531,7 @@ import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
+import { accountSupportsBatchUsage } from './accountUsageSupport'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
@@ -588,8 +604,9 @@ const selTypes = computed<AccountType[]>(() => {
   return [...types]
 })
 const showCreate = ref(false)
+const showCPA = ref(false)
+const cpaText = useCPAText()
 const showEdit = ref(false)
-const showSync = ref(false)
 const showImportData = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
@@ -600,6 +617,7 @@ const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
+const pelicanTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
@@ -730,17 +748,6 @@ const buildDefaultTodayStats = (): WindowStats => ({
   standard_cost: 0,
   user_cost: 0
 })
-
-const accountSupportsBatchUsage = (account: Account) => {
-  if (account.platform === 'anthropic') {
-    return account.type === 'oauth' || account.type === 'setup-token'
-  }
-  if (account.platform === 'gemini') return true
-  if (account.platform === 'antigravity') return account.type === 'oauth'
-  if (account.platform === 'openai') return account.type === 'oauth'
-  if (account.platform === 'grok') return account.type === 'oauth'
-  return false
-}
 
 const setUsageBatchLoading = (accountID: number, loadingState: boolean) => {
   usageBatchLoadingByAccountId.value = {
@@ -1356,9 +1363,9 @@ watch(accounts, (rows) => {
 
 const isAnyModalOpen = computed(() => {
   return (
+    showCPA.value ||
     showCreate.value ||
     showEdit.value ||
-    showSync.value ||
     showImportData.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
@@ -1513,11 +1520,6 @@ const toggleAccountToolsDropdown = () => {
   showAutoRefreshDropdown.value = false
   if (nextVisible) updateAccountToolsDropdownPosition()
   showAccountToolsDropdown.value = nextVisible
-}
-
-const openSyncFromCrs = () => {
-  closeAccountToolsDropdown()
-  showSync.value = true
 }
 
 const openImportData = () => {
@@ -2121,7 +2123,6 @@ const handleBulkUpdated = () => {
   clearSelection()
   reload()
 }
-const handleDataImported = () => { showImportData.value = false; reload() }
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
 const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({
@@ -2307,13 +2308,21 @@ const handleExportData = async () => {
   }
 }
 const accountExportStepUp = useStepUp()
-const closeTestModal = () => { showTest.value = false; testingAcc.value = null }
+const closeTestModal = () => { showTest.value = false; testingAcc.value = null; pelicanTest.value = false }
 const closeStatsModal = () => { showStats.value = false; statsAcc.value = null }
 const closeReAuthModal = () => { showReAuth.value = false; reAuthAcc.value = null }
 const handleTest = async (a: AccountListItem) => {
   const account = await loadAccountDetails(a)
   if (!account) return
   testingAcc.value = account
+  pelicanTest.value = false
+  showTest.value = true
+}
+const handlePelicanTest = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  testingAcc.value = account
+  pelicanTest.value = true
   showTest.value = true
 }
 const handleViewStats = async (a: AccountListItem) => {

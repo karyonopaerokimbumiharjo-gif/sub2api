@@ -121,3 +121,19 @@ func TestAuthCacheInvalidationMigration_SecurityCoverageAndNoPlaintextPayload(t 
 	require.Len(t, hex.EncodeToString(sum[:]), 64)
 	require.NotContains(t, sqlText, plaintext)
 }
+
+func TestUserPromptAuditBypassMigration_InvalidatesAuthCacheAndConvertsLegacyList(t *testing.T) {
+	content, err := migrations.FS.ReadFile("205_user_prompt_audit_bypass.sql")
+	require.NoError(t, err)
+	sqlText := string(content)
+
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS prompt_audit_bypass",
+		"OLD.prompt_audit_bypass IS NOT DISTINCT FROM NEW.prompt_audit_bypass",
+		"jsonb_array_elements_text",
+		"SET prompt_audit_bypass = TRUE",
+		"- 'whitelist_emails'",
+	} {
+		require.Contains(t, sqlText, required)
+	}
+}

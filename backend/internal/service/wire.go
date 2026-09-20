@@ -186,6 +186,7 @@ func ProvideOpenAIQuotaService(
 ) *OpenAIQuotaService {
 	service := NewOpenAIQuotaService(accountRepo, proxyRepo, tokenProvider, privacyClientFactory)
 	service.agentIdentityWS = openAIGatewayService
+	service.StartAutoResetWorker()
 	return service
 }
 

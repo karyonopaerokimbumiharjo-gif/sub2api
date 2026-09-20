@@ -524,7 +524,9 @@ export default {
         concurrencyPlaceholder: '0 = unlimited',
         concurrencyHint: 'Max concurrent requests for this user; 0 = unlimited.',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
+        rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.',
+        promptAuditBypass: 'Bypass security audit',
+        promptAuditBypassHint: 'When enabled, all requests from this user bypass foreground, background, content, fingerprint, and output auditing. A user-bypass trace event is still recorded. Enable only for fully trusted users.'
       },
       columns: {
         user: 'User',

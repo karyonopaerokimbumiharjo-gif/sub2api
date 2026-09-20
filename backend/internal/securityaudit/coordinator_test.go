@@ -28,6 +28,8 @@ type fakePromptEngine struct {
 	err       error
 	enqueues  atomic.Int64
 	evaluates atomic.Int64
+	bypass    bool
+	bypasses  atomic.Int64
 }
 
 func (f *fakePromptEngine) EffectiveMode() Mode { return f.mode }
@@ -38,6 +40,21 @@ func (f *fakePromptEngine) Enqueue(context.Context, Request) error {
 func (f *fakePromptEngine) Evaluate(context.Context, Request) (*PromptDecision, error) {
 	f.evaluates.Add(1)
 	return f.decision, f.err
+}
+func (f *fakePromptEngine) ShouldBypass(Request) bool                 { return f.bypass }
+func (f *fakePromptEngine) RecordUserBypass(context.Context, Request) { f.bypasses.Add(1) }
+
+func TestCoordinatorUserBypassSkipsEveryAuditEngine(t *testing.T) {
+	legacy := &fakeLegacyEngine{decision: &LegacyDecision{Blocked: true, StatusCode: http.StatusForbidden}}
+	prompt := &fakePromptEngine{mode: ModeBlocking, bypass: true, decision: &PromptDecision{Kind: DecisionBlock}}
+	decision := NewCoordinator(legacy, prompt).Check(context.Background(), Request{PromptAuditBypass: true, Body: []byte(`{"messages":[{"role":"user","content":"blocked text"}]}`)})
+
+	require.Equal(t, DecisionAllow, decision.Kind)
+	require.True(t, decision.AllowNextStage)
+	require.Zero(t, legacy.calls.Load())
+	require.Zero(t, prompt.evaluates.Load())
+	require.Zero(t, prompt.enqueues.Load())
+	require.Equal(t, int64(1), prompt.bypasses.Load())
 }
 
 func TestCoordinatorModesAndPriority(t *testing.T) {

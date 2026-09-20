@@ -38,6 +38,7 @@ const statusCode = ref<number | 'other' | null>(null)
 const phase = ref<string>('')
 const errorOwner = ref<string>('')
 const viewMode = ref<'errors' | 'excluded' | 'all'>('errors')
+const collapseRoutingUnavailable = ref(true)
 
 
 const modalTitle = computed(() => {
@@ -111,6 +112,9 @@ async function fetchErrorLogs() {
       sort_by: sortBy.value,
       sort_order: sortOrder.value
     }
+    if (props.errorType === 'request' && collapseRoutingUnavailable.value) {
+      params.collapse_routing_unavailable = '1'
+    }
     Object.assign(params, buildOpsErrorTimeParams(props.timeRange, props.customStartTime, props.customEndTime))
 
     if (props.timeRange === 'custom') {
@@ -159,6 +163,7 @@ async function fetchErrorLogs() {
     phase.value = props.errorType === 'upstream' ? 'upstream' : ''
     errorOwner.value = ''
     viewMode.value = 'errors'
+    collapseRoutingUnavailable.value = true
     page.value = 1
     fetchErrorLogs()
   }
@@ -206,7 +211,7 @@ watch(
 )
 
 watch(
-  () => [statusCode.value, phase.value, errorOwner.value, viewMode.value] as const,
+  () => [statusCode.value, phase.value, errorOwner.value, viewMode.value, collapseRoutingUnavailable.value] as const,
   () => {
     if (!props.show) return
     page.value = 1
@@ -259,6 +264,15 @@ watch(
           <div class="compact-select">
             <Select :model-value="viewMode" :options="viewModeSelectOptions" @update:model-value="viewMode = $event as any" />
           </div>
+
+          <label
+            v-if="errorType === 'request'"
+            class="flex cursor-pointer items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700 dark:bg-dark-800 dark:text-gray-300"
+            :title="t('admin.ops.errorDetails.collapseRoutingHint')"
+          >
+            <input v-model="collapseRoutingUnavailable" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+            <span>{{ t('admin.ops.errorDetails.collapseRouting') }}</span>
+          </label>
 
           <div class="flex items-center justify-end">
             <button type="button" class="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-700 dark:text-gray-300 dark:hover:bg-dark-600" @click="resetFilters">

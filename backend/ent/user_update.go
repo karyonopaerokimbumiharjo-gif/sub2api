@@ -446,6 +446,20 @@ func (_u *UserUpdate) AddRpmLimit(v int) *UserUpdate {
 	return _u
 }
 
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (_u *UserUpdate) SetPromptAuditBypass(v bool) *UserUpdate {
+	_u.mutation.SetPromptAuditBypass(v)
+	return _u
+}
+
+// SetNillablePromptAuditBypass sets the "prompt_audit_bypass" field if the given value is not nil.
+func (_u *UserUpdate) SetNillablePromptAuditBypass(v *bool) *UserUpdate {
+	if v != nil {
+		_u.SetPromptAuditBypass(*v)
+	}
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdate) AddAPIKeyIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -1115,6 +1129,9 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.PromptAuditBypass(); ok {
+		_spec.SetField(user.FieldPromptAuditBypass, field.TypeBool, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2139,6 +2156,20 @@ func (_u *UserUpdateOne) AddRpmLimit(v int) *UserUpdateOne {
 	return _u
 }
 
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (_u *UserUpdateOne) SetPromptAuditBypass(v bool) *UserUpdateOne {
+	_u.mutation.SetPromptAuditBypass(v)
+	return _u
+}
+
+// SetNillablePromptAuditBypass sets the "prompt_audit_bypass" field if the given value is not nil.
+func (_u *UserUpdateOne) SetNillablePromptAuditBypass(v *bool) *UserUpdateOne {
+	if v != nil {
+		_u.SetPromptAuditBypass(*v)
+	}
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *UserUpdateOne) AddAPIKeyIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2838,6 +2869,9 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(user.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.PromptAuditBypass(); ok {
+		_spec.SetField(user.FieldPromptAuditBypass, field.TypeBool, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

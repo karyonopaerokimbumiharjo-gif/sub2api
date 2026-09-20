@@ -28,6 +28,9 @@ type Runner struct {
 	clock   Clock
 	runtime WorkerRuntime
 
+	adaptiveReview func(ActiveConfig, PromptSnapshot, *PromptDecision)
+	auditComplete  func(ActiveConfig, PromptSnapshot, *PromptDecision)
+
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -134,44 +137,56 @@ func (r *Runner) processSafely(ctx context.Context, workerID int, cfg ActiveConf
 }
 
 func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig, job *Job) error {
+	ctx = withPromptInvocationContext(ctx, job.Snapshot.RequestID, job.ConfigVersion)
 	baseFields := jobLogFields(job)
 	LogInfo(EventAuditStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "attempts": job.Attempts, "status": "processing"}))
-	scanText, err := r.payload.Get(ctx, job.ID)
+	payloadValue, err := r.payload.Get(ctx, job.ID)
 	if err != nil {
 		return r.finishFailure(ctx, job, &GuardError{Code: "payload_missing", Retryable: false, Cause: err})
 	}
-	// The job row only carries redacted metadata; the full prompt for the audit
-	// event is reconstructed here from the transient scan payload.
-	job.Snapshot.FullPrompt = FullPromptFromScanText(scanText)
+	queuedPayload := decodeQueuedPromptPayload(payloadValue)
+	scanText := queuedPayload.ScanText
+	job.Snapshot.FullPrompt = queuedPayload.FullPrompt
+	job.Snapshot.AuditedPrompt = queuedPayload.AuditedPrompt
+	job.Snapshot.ScanText = scanText
+	job.Snapshot.SegmentFingerprints = append([]string(nil), queuedPayload.SegmentFingerprints...)
 	endpoints := cfg.EnabledEndpoints()
 	if len(endpoints) == 0 {
 		return r.finishFailure(ctx, job, &GuardError{Code: "no_enabled_endpoint", Retryable: true})
 	}
 	chunks := SplitRunes(scanText, minimumInputLimit(endpoints))
-	results := make([]*NormalizedResult, 0, len(chunks))
 	started := r.clock.Now()
-	for index, chunk := range chunks {
-		if err := r.repo.RefreshLease(ctx, job.ID, job.ClaimVersion, r.clock.Now()); err != nil {
-			return err
+	inputLimit := minimumInputLimit(endpoints)
+	chunkConcurrency := cfg.PromptChunkConcurrency
+	if chunkConcurrency < MinPromptChunkConcurrency || chunkConcurrency > MaxPromptChunkConcurrency {
+		chunkConcurrency = DefaultPromptChunkConcurrency
+	}
+	results, scanErr := scanChunksConcurrently(ctx, chunks, chunkConcurrency, func(scanCtx context.Context, index int, chunk string) (*NormalizedResult, error) {
+		if err := r.repo.RefreshLease(scanCtx, job.ID, job.ClaimVersion, r.clock.Now()); err != nil {
+			return nil, err
 		}
 		chunkStarted := r.clock.Now()
-		LogInfo(EventChunkStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "chunk_chars": len([]rune(chunk)), "input_chars": job.Snapshot.PromptLength, "input_limit": minimumInputLimit(endpoints), "status": "started"}))
-		result, scanErr := scanWithFailover(ctx, r.scanner, cfg.Scanners, endpoints, chunk, r.metrics)
-		if scanErr != nil {
+		LogInfo(EventChunkStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "chunk_chars": len([]rune(chunk)), "input_chars": job.Snapshot.PromptLength, "input_limit": inputLimit, "status": "started"}))
+		result, err := scanWithFailover(scanCtx, r.scanner, cfg.Scanners, endpoints, chunk, r.metrics)
+		if err != nil {
 			LogWarn(EventChunkFailed, mergeLogFields(baseFields, map[string]any{
 				"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks),
 				"chunk_chars": len([]rune(chunk)), "input_chars": job.Snapshot.PromptLength,
-				"input_limit": minimumInputLimit(endpoints), "latency_ms": r.clock.Now().Sub(chunkStarted).Milliseconds(),
-				"error_code": guardErrorCode(scanErr), "status": "failed",
+				"input_limit": inputLimit, "latency_ms": r.clock.Now().Sub(chunkStarted).Milliseconds(),
+				"error_code": guardErrorCode(err), "status": "failed",
 			}))
-			r.observeAsyncFailure(scanErr, r.clock.Now().Sub(started))
-			return r.finishFailure(ctx, job, scanErr)
+			return nil, err
 		}
-		results = append(results, result)
 		LogInfo(EventChunkCompleted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "chunk_index": index + 1, "chunk_total": len(chunks), "guard_endpoint_id": result.GuardEndpointID, "action": result.Action, "latency_ms": r.clock.Now().Sub(chunkStarted).Milliseconds(), "status": "completed"}))
-		if result.Action == ActionBlock {
-			break
+		return result, nil
+	})
+	if scanErr != nil {
+		var guardErr *GuardError
+		if !errors.As(scanErr, &guardErr) {
+			return scanErr
 		}
+		r.observeAsyncFailure(scanErr, r.clock.Now().Sub(started))
+		return r.finishFailure(ctx, job, scanErr)
 	}
 	aggregated, err := AggregateResults(results, r.clock.Now().Sub(started))
 	if err != nil {
@@ -192,6 +207,16 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 	event, err := r.repo.Complete(ctx, job, aggregated, cfg.StorePassEvents)
 	if err != nil {
 		return err
+	}
+	decision := &PromptDecision{
+		Kind: decisionKindForResult(aggregated), Result: aggregated,
+		AllowNextStage: aggregated.Action != ActionBlock,
+	}
+	if r.auditComplete != nil {
+		r.auditComplete(cfg, job.Snapshot, decision)
+	}
+	if r.adaptiveReview != nil {
+		r.adaptiveReview(cfg, job.Snapshot, decision)
 	}
 	if deleteErr := r.payload.Delete(ctx, job.ID); deleteErr != nil {
 		LogWarn(EventProcessFailed, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "status": "payload_delete_deferred", "error_code": "payload_delete_failed"}))
@@ -309,7 +334,7 @@ func (r *Runner) setLastError(code, _ string) {
 func scanWithFailover(ctx context.Context, scanner PromptScanner, scanners []string, endpoints []ActiveEndpoint, chunk string, metrics Metrics) (*NormalizedResult, error) {
 	var lastErr error
 	for index, endpoint := range endpoints {
-		result, err := scanner.Scan(ctx, endpoint, chunk, scanners)
+		result, err := callPromptScanner(ctx, scanner, endpoint, chunk, scanners)
 		if err == nil && result != nil {
 			return result, nil
 		}
@@ -317,13 +342,13 @@ func scanWithFailover(ctx context.Context, scanner PromptScanner, scanners []str
 			err = &GuardError{Code: ErrorCodeInvalidResponse, Retryable: false}
 		}
 		lastErr = err
-		var guardErr *GuardError
-		if !errors.As(err, &guardErr) || !guardErr.Retryable {
-			return nil, err
-		}
 		if index < len(endpoints)-1 && metrics != nil {
 			metrics.IncFailover()
 		}
+		if index < len(endpoints)-1 && ctx.Err() == nil {
+			continue
+		}
+		return nil, err
 	}
 	if lastErr == nil {
 		lastErr = &GuardError{Code: ErrorCodeUnavailable}

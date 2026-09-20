@@ -74,6 +74,7 @@ func UserFromServiceAdmin(u *service.User) *AdminUser {
 		LastUsedAt:           u.LastUsedAt,
 		GroupRates:           u.GroupRates,
 		RestrictPublicGroups: u.RestrictPublicGroups,
+		PromptAuditBypass:    u.PromptAuditBypass,
 	}
 }
 
@@ -584,21 +585,23 @@ func ProxyWithAccountCountFromServiceAdmin(p *service.ProxyWithAccountCount) *Ad
 		return nil
 	}
 	return &AdminProxyWithAccountCount{
-		AdminProxy:     *admin,
-		AccountCount:   p.AccountCount,
-		LatencyMs:      p.LatencyMs,
-		LatencyStatus:  p.LatencyStatus,
-		LatencyMessage: p.LatencyMessage,
-		IPAddress:      p.IPAddress,
-		Country:        p.Country,
-		CountryCode:    p.CountryCode,
-		Region:         p.Region,
-		City:           p.City,
-		QualityStatus:  p.QualityStatus,
-		QualityScore:   p.QualityScore,
-		QualityGrade:   p.QualityGrade,
-		QualitySummary: p.QualitySummary,
-		QualityChecked: p.QualityChecked,
+		AdminProxy:         *admin,
+		AccountCount:       p.AccountCount,
+		CPACredentialCount: p.CPACredentialCount,
+		CPACredentialNames: p.CPACredentialNames,
+		LatencyMs:          p.LatencyMs,
+		LatencyStatus:      p.LatencyStatus,
+		LatencyMessage:     p.LatencyMessage,
+		IPAddress:          p.IPAddress,
+		Country:            p.Country,
+		CountryCode:        p.CountryCode,
+		Region:             p.Region,
+		City:               p.City,
+		QualityStatus:      p.QualityStatus,
+		QualityScore:       p.QualityScore,
+		QualityGrade:       p.QualityGrade,
+		QualitySummary:     p.QualitySummary,
+		QualityChecked:     p.QualityChecked,
 	}
 }
 
@@ -717,6 +720,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		NativeCompactionV2:        l.NativeCompactionV2,
 		DurationMs:                l.DurationMs,
 		FirstTokenMs:              l.FirstTokenMs,
+		PromptAuditLatencyMs:      l.PromptAuditLatencyMs,
 		ImageCount:                l.ImageCount,
 		ImageSize:                 l.ImageSize,
 		ImageInputSize:            l.ImageInputSize,

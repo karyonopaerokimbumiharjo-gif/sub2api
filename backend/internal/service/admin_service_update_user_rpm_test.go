@@ -14,18 +14,38 @@ import (
 type rpmUserRepoStub struct {
 	*userRepoStub
 	lastUpdated *User
+	lastFields  UserUpdateFields
 }
 
-func (s *rpmUserRepoStub) Update(_ context.Context, user *User, _ UserUpdateFields) error {
+func (s *rpmUserRepoStub) Update(_ context.Context, user *User, fields UserUpdateFields) error {
 	if user == nil {
 		return nil
 	}
 	clone := *user
 	s.lastUpdated = &clone
+	s.lastFields = fields
 	if s.userRepoStub != nil {
 		s.userRepoStub.user = &clone
 	}
 	return nil
+}
+
+func TestAdminService_UpdateUser_PromptAuditBypassInvalidatesAuthCache(t *testing.T) {
+	base := &userRepoStub{user: &User{ID: 42, Email: "u@example.com", PromptAuditBypass: false}}
+	repo := &rpmUserRepoStub{userRepoStub: base}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:             repo,
+		redeemCodeRepo:       &redeemRepoStub{},
+		authCacheInvalidator: invalidator,
+	}
+
+	enabled := true
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{PromptAuditBypass: &enabled})
+	require.NoError(t, err)
+	require.True(t, updated.PromptAuditBypass)
+	require.True(t, repo.lastFields.PromptAuditBypass)
+	require.Equal(t, []int64{42}, invalidator.userIDs)
 }
 
 func TestAdminService_UpdateUser_InvalidatesAuthCacheOnRPMLimitChange(t *testing.T) {

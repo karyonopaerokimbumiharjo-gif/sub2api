@@ -481,6 +481,72 @@ export async function exchangeCode(
   return data
 }
 
+export interface OpenAICPAImportResult {
+  auth_name: string
+  email: string
+  bridge_account_id: number
+  replaced_bound_auth: boolean
+}
+
+/**
+ * Persist an OpenAI OAuth identity in the private CPA pool. No direct Sub2
+ * account is created; requests and billing continue through the CPA bridge.
+ */
+export async function importCPAAuthFiles(contents: string[], runtime?: CPACredentialUpdate): Promise<CodexSessionImportResult> {
+  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/openai/import-cpa-files', { contents, runtime }, { timeout: 180000 })
+  return data
+}
+
+export interface EnsureCPAQuotaBridgeResult { created: boolean; account_id: number; auth_name: string; email: string; groups_configured: boolean }
+
+export interface CPABridgeOptions {
+ candidates: {name:string;email:string;provider:string;status:string;can_bridge:boolean;reason:string}[]
+ bridge: {account_id:number;auth_name:string;email:string;group_ids:number[]}|null
+ groups: {id:number;name:string}[]
+}
+export async function getCPABridgeOptions(): Promise<CPABridgeOptions> {
+ const {data}=await apiClient.get<CPABridgeOptions>('/admin/openai/cpa/bridge-options')
+ return data
+}
+export async function ensureCPAQuotaBridge(authName: string, groupIDs: number[]): Promise<EnsureCPAQuotaBridgeResult> {
+  const { data } = await apiClient.post<EnsureCPAQuotaBridgeResult>('/admin/openai/ensure-cpa-bridge', {auth_name:authName,group_ids:groupIDs}, { timeout: 30000 })
+  return data
+}
+
+export async function importOpenAIOAuthToCPA(
+  credentials: Record<string, unknown>,
+  runtime?: CPACredentialUpdate
+): Promise<OpenAICPAImportResult> {
+  const { data } = await apiClient.post<OpenAICPAImportResult>(
+    '/admin/openai/import-to-cpa',
+    { credentials, runtime }
+  )
+  return data
+}
+
+export interface CPACredentialUpdate {
+  name: string
+  disabled: boolean
+  proxy_id: number | null
+  priority: number
+  weight: number
+  request_retry: number
+}
+export interface CPACredentialSettings extends CPACredentialUpdate {
+  email: string
+  provider: string
+  status: string
+  proxy_configured: boolean
+}
+export async function listCPACredentials(): Promise<CPACredentialSettings[]> {
+  const { data } = await apiClient.get<CPACredentialSettings[]>('/admin/openai/cpa/credentials')
+  return data
+}
+export async function updateCPACredential(input: CPACredentialUpdate): Promise<CPACredentialSettings> {
+  const { data } = await apiClient.put<CPACredentialSettings>('/admin/openai/cpa/credentials', input)
+  return data
+}
+
 /**
  * Batch create accounts
  * @param accounts - Array of account data
@@ -950,6 +1016,10 @@ export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
   cache_persisted: boolean
 }
 
+export interface OpenAIQuotaAutoResetSettings {
+  enabled: boolean
+}
+
 /**
  * Query the upstream quota AND persist the reset-credit snapshot on the account
  * so the card can be rehydrated without an upstream round-trip. It is a POST
@@ -979,6 +1049,17 @@ export async function resetOpenAIQuota(id: number): Promise<OpenAIQuotaResetResu
     `/admin/openai/accounts/${id}/reset-quota`,
     undefined,
     { timeout: 90_000 }
+  )
+  return data
+}
+
+export async function setOpenAIQuotaAutoReset(
+  id: number,
+  enabled: boolean
+): Promise<OpenAIQuotaAutoResetSettings> {
+  const { data } = await apiClient.put<OpenAIQuotaAutoResetSettings>(
+    `/admin/openai/accounts/${id}/auto-reset`,
+    { enabled }
   )
   return data
 }
@@ -1104,6 +1185,12 @@ export const accountsAPI = {
   syncUpstreamModelsPreview,
   generateAuthUrl,
   exchangeCode,
+  importOpenAIOAuthToCPA,
+  listCPACredentials,
+  updateCPACredential,
+  importCPAAuthFiles,
+  ensureCPAQuotaBridge,
+  getCPABridgeOptions,
   refreshOpenAIToken,
   batchCreate,
   batchUpdateCredentials,

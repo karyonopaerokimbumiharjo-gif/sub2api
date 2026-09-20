@@ -439,6 +439,11 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	balanceGrants, err := h.userService.GetProfileBalanceGrants(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	type UserResponse struct {
 		userProfileResponse
@@ -450,8 +455,11 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		runMode = h.cfg.RunMode
 	}
 
+	profileResp := userProfileResponseFromService(user, identities)
+	profileResp.BalanceGrants = balanceGrants
+
 	response.Success(c, UserResponse{
-		userProfileResponse: userProfileResponseFromService(user, identities),
+		userProfileResponse: profileResp,
 		RunMode:             runMode,
 	})
 }

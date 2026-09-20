@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	"io"
 	"net/http"
 	"net/url"
@@ -122,6 +123,19 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	if targetURL == "" {
 		return nil, 0, nil, errors.New("ws url is empty")
 	}
+	parsed, parseErr := url.Parse(targetURL)
+	if parseErr != nil || parsed.Scheme != "ws" || proxyURL != "" {
+		return nil, 0, nil, cpapolicy.Required()
+	}
+	parsed.Scheme = "http"
+	if err := cpapolicy.ValidateRequest(&http.Request{URL: parsed}); err != nil {
+		return nil, 0, nil, err
+	}
+	transport := &http.Transport{ForceAttemptHTTP2: true}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	}
+	transport.Proxy = nil
 
 	wrapped := &coderOpenAIWSClientConn{}
 	opts := &coderws.DialOptions{
@@ -131,6 +145,7 @@ func (d *coderOpenAIWSClientDialer) Dial(
 			wrapped.upstreamPings.Add(1)
 			return true
 		},
+		HTTPClient: &http.Client{Transport: transport, CheckRedirect: cpapolicy.NoRedirect},
 	}
 	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
 		proxyClient, err := d.proxyHTTPClient(proxy)

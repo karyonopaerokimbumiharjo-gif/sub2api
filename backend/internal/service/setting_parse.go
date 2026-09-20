@@ -221,6 +221,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// cyber 会话屏蔽（默认关闭，TTL 默认 3600s）
 		SettingKeyCyberSessionBlockEnabled:    "false",
 		SettingKeyCyberSessionBlockTTLSeconds: "3600",
+		SettingKeyBioPromptBlockEnabled:       "false",
+		SettingKeyBioPromptBlockTTLSeconds:    "2592000",
 
 		// Claude Code version check (default: empty = disabled)
 		SettingKeyMinClaudeCodeVersion: "",

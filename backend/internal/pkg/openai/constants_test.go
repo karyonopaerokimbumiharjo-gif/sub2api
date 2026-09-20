@@ -23,9 +23,18 @@ func TestDefaultModelsIncludeGPT6Astra(t *testing.T) {
 	require.Equal(t, "GPT-6 Astra", displayName)
 }
 
-func TestDefaultModelsPreferConcreteGPT56SolForAccountTests(t *testing.T) {
+func TestDefaultModelsPreferConcreteGPT6AstraForAccountTests(t *testing.T) {
 	require.NotEmpty(t, DefaultModels)
-	require.Equal(t, "gpt-5.6-sol", DefaultModels[0].ID)
+	require.Equal(t, "gpt-6-astra", DefaultModels[0].ID)
+}
+
+func TestModelsFromIDsPreservesUpstreamCatalog(t *testing.T) {
+	models := ModelsFromIDs([]string{"gpt-6-astra", "future-upstream-model"})
+	require.Len(t, models, 2)
+	require.Equal(t, "GPT-6 Astra", models[0].DisplayName)
+	require.Equal(t, "future-upstream-model", models[1].ID)
+	require.Equal(t, "future-upstream-model", models[1].DisplayName)
+	require.Equal(t, "model", models[1].Object)
 }
 
 func TestDefaultModelsIncludeGPTImage25(t *testing.T) {

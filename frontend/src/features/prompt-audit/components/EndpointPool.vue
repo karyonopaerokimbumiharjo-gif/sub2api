@@ -24,12 +24,15 @@
 
       <div class="divide-y divide-gray-100 dark:divide-dark-800">
         <article
-          v-for="endpoint in endpoints"
+          v-for="(endpoint, index) in endpoints"
           :key="endpoint.id"
           :data-test="`endpoint-${endpoint.id}`"
           class="group grid gap-4 border-l-[3px] border-l-transparent px-4 py-4 transition-[background-color,border-color] duration-200 hover:border-l-primary-500 hover:bg-gray-50/80 dark:hover:bg-dark-800/55 sm:px-5 xl:grid-cols-[minmax(260px,1.45fr)_minmax(210px,1fr)_minmax(190px,.8fr)_minmax(230px,1.15fr)_auto] xl:items-center xl:gap-5"
         >
           <div class="flex min-w-0 items-center gap-3">
+            <span class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-primary-50 px-1.5 text-xs font-semibold text-primary-700 dark:bg-primary-950/40 dark:text-primary-300" :title="t('admin.promptAudit.pool.savedOrder')">
+              {{ index + 1 }}
+            </span>
             <button
               type="button"
               role="switch"
@@ -47,16 +50,19 @@
             <div class="min-w-0">
               <div class="flex min-w-0 items-center gap-2">
                 <p class="truncate font-semibold text-gray-950 dark:text-white">{{ endpoint.name }}</p>
+                <span v-if="endpoint.enabled" class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-700 dark:text-dark-200">
+                  {{ index === firstEnabledIndex ? t('admin.promptAudit.pool.primary') : t('admin.promptAudit.pool.fallback') }}
+                </span>
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="endpoint.enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-dark-500'" aria-hidden="true" />
               </div>
-              <p class="mt-0.5 truncate font-mono text-[11px] text-gray-500 dark:text-dark-400" :title="endpoint.base_url">{{ endpoint.base_url }}</p>
+              <p class="mt-0.5 truncate font-mono text-[11px] text-gray-500 dark:text-dark-400" :title="endpointLocation(endpoint)">{{ endpointLocation(endpoint) }}</p>
             </div>
           </div>
 
           <div class="min-w-0 xl:block">
             <p class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 xl:hidden">{{ t('admin.promptAudit.pool.model') }}</p>
             <p class="truncate text-sm font-medium text-gray-700 dark:text-dark-200" :title="endpoint.model">{{ endpoint.model }}</p>
-            <p class="mt-1 text-xs text-gray-500">{{ endpoint.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : 'Qwen3Guard · Chat Completions' }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ endpoint.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : endpoint.adapter === 'generic_llm' ? 'CPA · Chat Completions' : 'CPA · Qwen3Guard' }}</p>
           </div>
 
           <div>
@@ -71,7 +77,7 @@
             <p class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 xl:hidden">{{ t('admin.promptAudit.pool.credential') }}</p>
             <div class="flex items-center gap-1.5 text-xs font-medium" :class="credentialInvalid(endpoint) ? 'text-red-600 dark:text-red-300' : hasCredential(endpoint) ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-dark-400'">
               <span class="h-1.5 w-1.5 rounded-full" :class="credentialInvalid(endpoint) ? 'bg-red-500' : hasCredential(endpoint) ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-dark-500'" aria-hidden="true" />
-              {{ credentialInvalid(endpoint) ? t('admin.promptAudit.pool.invalid') : hasCredential(endpoint) ? t('admin.promptAudit.pool.configured') : t('admin.promptAudit.pool.missing') }}
+              {{ credentialLabel(endpoint) }}
             </div>
             <p v-if="probingIds.includes(endpoint.id)" class="mt-1.5 text-xs text-primary-600 dark:text-primary-300">
               {{ t('admin.promptAudit.pool.probeProgress') }}
@@ -83,6 +89,28 @@
           </div>
 
           <div class="flex flex-wrap items-center justify-end gap-1 border-t border-gray-100 pt-3 dark:border-dark-800 xl:flex-nowrap xl:border-0 xl:pt-0">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm px-2"
+              :disabled="index === 0"
+              :aria-label="t('admin.promptAudit.pool.moveUpNode', { name: endpoint.name })"
+              :title="t('admin.promptAudit.pool.moveUp')"
+              :data-test="`move-up-${endpoint.id}`"
+              @click="moveEndpoint(index, -1)"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm px-2"
+              :disabled="index === endpoints.length - 1"
+              :aria-label="t('admin.promptAudit.pool.moveDownNode', { name: endpoint.name })"
+              :title="t('admin.promptAudit.pool.moveDown')"
+              :data-test="`move-down-${endpoint.id}`"
+              @click="moveEndpoint(index, 1)"
+            >
+              ↓
+            </button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="probingIds.includes(endpoint.id)" @click="$emit('probe', endpoint)">
               {{ probingIds.includes(endpoint.id) ? t('admin.promptAudit.pool.probing') : t('admin.promptAudit.pool.probe') }}
             </button>
@@ -112,9 +140,20 @@
           <span>{{ t('admin.promptAudit.pool.id') }}</span>
           <input v-model="editing.id" class="input w-full" required :disabled="editingIndex >= 0" :aria-label="t('admin.promptAudit.pool.id')" />
         </label>
+        <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
+          <span>{{ t('admin.promptAudit.pool.protocol') }}</span>
+          <input class="input w-full" :value="editing.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : 'CPA'" readonly />
+        </label>
+        <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
+          <span>{{ t('admin.promptAudit.pool.adapter') }}</span>
+          <select v-model="editing.adapter" class="input w-full" :disabled="editing.protocol !== 'openai_compatible'" :aria-label="t('admin.promptAudit.pool.adapter')">
+            <option value="qwen3guard">{{ t('admin.promptAudit.pool.adapterQwen') }}</option>
+            <option value="generic_llm">{{ t('admin.promptAudit.pool.adapterGeneric') }}</option>
+          </select>
+        </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200 sm:col-span-2">
           <span>{{ t('admin.promptAudit.pool.baseUrl') }}</span>
-          <input v-model="editing.base_url" class="input w-full" required inputmode="url" :readonly="editing.protocol === 'typesafe_systemone'" :aria-label="t('admin.promptAudit.pool.baseUrl')" />
+          <input v-model="editing.base_url" class="input w-full" required inputmode="url" readonly :aria-label="t('admin.promptAudit.pool.baseUrl')" />
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200 sm:col-span-2">
           <span>{{ t('admin.promptAudit.pool.apiKey') }}</span>
@@ -149,18 +188,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import type { PromptAuditEndpointDraft, PromptProbeResult } from '../types'
+import type { PromptAuditEndpointDraft, PromptAuditOAuthAccount, PromptProbeResult } from '../types'
 import { cloneData, createDefaultEndpoint } from '../viewModel'
 import { changeAuditProvider, validateAuditEndpoint, auditEndpointError } from '../securityViewModel'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   endpoints: PromptAuditEndpointDraft[]
+  oauthAccounts?: PromptAuditOAuthAccount[]
   probeResults: Record<string, PromptProbeResult>
   probingIds: string[]
-}>()
+}>(), { oauthAccounts: () => [] })
 const emit = defineEmits<{
   (event: 'update:endpoints', value: PromptAuditEndpointDraft[]): void
   (event: 'probe', endpoint: PromptAuditEndpointDraft): void
@@ -170,6 +210,7 @@ const formRef = ref<HTMLFormElement | null>(null)
 const editorError = ref('')
 const editing = ref<PromptAuditEndpointDraft | null>(null)
 const editingIndex = ref(-1)
+const firstEnabledIndex = computed(() => props.endpoints.findIndex((endpoint) => endpoint.enabled))
 
 function openCreate() {
   editorError.value = ''
@@ -179,7 +220,7 @@ function openCreate() {
 function openEdit(endpoint: PromptAuditEndpointDraft) {
   editorError.value = ''
   editingIndex.value = props.endpoints.findIndex((item) => item.id === endpoint.id)
-  editing.value = cloneData(endpoint)
+  editing.value = { ...cloneData(endpoint), account_id: 0 }
 }
 function closeEditor() {
   editing.value = null
@@ -200,7 +241,7 @@ function saveEditor() {
   editorError.value = code ? auditEndpointError(code, locale.value) : ''
   if (code) return
   const next = props.endpoints.map((item) => cloneData(item))
-  const value = cloneData(editing.value)
+  const value = { ...cloneData(editing.value), account_id: 0 }
   if (value.token.trim()) value.clear_token = false
   if (editingIndex.value < 0) next.push(value)
   else next.splice(editingIndex.value, 1, value)
@@ -209,6 +250,14 @@ function saveEditor() {
 }
 function toggleEndpoint(id: string) {
   emit('update:endpoints', props.endpoints.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : cloneData(item)))
+}
+function moveEndpoint(index: number, offset: -1 | 1) {
+  const targetIndex = index + offset
+  if (index < 0 || index >= props.endpoints.length || targetIndex < 0 || targetIndex >= props.endpoints.length) return
+  const next = props.endpoints.map((item) => cloneData(item))
+  const [endpoint] = next.splice(index, 1)
+  next.splice(targetIndex, 0, endpoint)
+  emit('update:endpoints', next)
 }
 function removeEndpoint(endpoint: PromptAuditEndpointDraft) {
   if (!window.confirm(t('admin.promptAudit.pool.deleteConfirm', { name: endpoint.name }))) return
@@ -220,4 +269,9 @@ function hasCredential(endpoint: PromptAuditEndpointDraft): boolean {
 function credentialInvalid(endpoint: PromptAuditEndpointDraft): boolean {
   return endpoint.token_status === 'invalid' && !endpoint.token.trim() && !endpoint.clear_token
 }
+function credentialLabel(endpoint: PromptAuditEndpointDraft): string {
+  if (credentialInvalid(endpoint)) return t('admin.promptAudit.pool.invalid')
+  return hasCredential(endpoint) ? t('admin.promptAudit.pool.configured') : t('admin.promptAudit.pool.missing')
+}
+function endpointLocation(endpoint: PromptAuditEndpointDraft): string { return endpoint.base_url }
 </script>

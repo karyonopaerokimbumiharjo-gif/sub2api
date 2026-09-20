@@ -460,6 +460,16 @@ export default {
         thresholdPlaceholder: 'Enter percentage',
       },
       testConnection: 'Test Connection',
+      pelicanTest: 'Pelican Test',
+      pelicanTestTitle: 'Pelican Model Test',
+      pelicanPromptLabel: 'Pelican test prompt',
+      pelicanPromptPlaceholder: 'Create an HTML page with an SVG 2D animation of a pelican riding a bicycle.',
+      pelicanPromptDefault: 'Output only one complete, directly runnable HTML file. Do not explain, ask questions, or use Markdown code fences. The HTML must contain an inline SVG that automatically animates a pelican riding a bicycle, with complete <!doctype html>, <html>, <head>, and <body> structure and all CSS/JavaScript inline.',
+      pelicanTestHint: 'Uses this account’s selected model to generate the pelican SVG animation HTML.',
+      pelicanTestMode: 'Mode: Pelican SVG animation test',
+      pelicanPreview: 'Pelican animation preview',
+      pelicanPreviewPlaying: 'Playing',
+      pelicanPreviewUnavailable: 'The model did not return playable HTML/SVG. Retry or choose another model.',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',
@@ -907,10 +917,9 @@ export default {
 	  autoPauseDisabledHint: 'When enabled, this account is never auto-paused (even if a global default threshold is configured).',
 	  autoResetCredit: {
 	    title: 'Automatically use reset credits',
-	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
-	    threshold5h: '5h auto-reset threshold (%)',
+	    hint: 'Uses the earliest-expiring available credit only when 7-day usage reaches the threshold. Off by default; the account remains paused if no credit is available or reset fails. The 5-hour window never consumes a reset credit.',
 	    threshold7d: '7d auto-reset threshold (%)',
-	    thresholdHint: 'Each window is evaluated independently. Enter 0.1–100; both default to 100.',
+	    thresholdHint: 'Only the 7-day window is evaluated. Enter 0.1–100; the default is 100.',
 	    thresholdInvalid: 'Automatic reset-credit thresholds must be between 0.1% and 100%.'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
@@ -1115,6 +1124,13 @@ export default {
         // OpenAI specific
         openai: {
           title: 'OpenAI Account Authorization',
+          runtimeBackend: {
+            title: 'Runtime backend',
+            cpa: 'CPA backend (recommended)',
+            cpaDesc: 'Add OAuth to the CPA account pool',
+            cpaHint: 'CPA mode does not create a duplicate direct account. Requests remain billed by Sub2 and are forwarded by the existing CPA bridge. Web OAuth and manual refresh tokens are currently supported.',
+            importSuccess: 'OpenAI OAuth was added to the CPA backend',
+          },
           followSteps: 'Follow these steps to complete OpenAI account authorization:',
           step1GenerateUrl: 'Click the button below to generate the authorization URL',
           generateAuthUrl: 'Generate Auth URL',
@@ -1587,6 +1603,9 @@ export default {
         grokLastHeadersSeen: 'Headers {time}',
         passiveSampled: 'Passive',
         activeQuery: 'Query',
+        quotaUnavailable: 'Upstream did not provide this quota window',
+        quotaRefreshFailed: 'Quota refresh failed; retained values may be stale. Please retry.',
+        quotaFetchedAt: 'Quota fetched:',
         estimatedTotalCost: 'Est. total ${cost}',
         estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization'
       },
@@ -1618,6 +1637,15 @@ export default {
           noCredit: 'No credit',
           failed: 'Auto-reset failed'
         },
+        autoReset: 'Automatic reset',
+        autoResetTooltipOn: 'Automatic reset is on; consumes 1 reset credit when usage reaches 100%',
+        autoResetTooltipOff: 'Turn on to consume 1 reset credit when usage reaches 100%',
+        autoResetTooltipShadow: 'Automatic reset is unavailable for Spark shadows; configure the parent account',
+        autoResetSaving: 'Saving automatic reset setting',
+        autoResetEnabled: 'Automatic reset enabled',
+        autoResetThresholdTooltip: 'Use a reset credit when the 7-day window reaches this percentage; the 5-hour window never triggers it.',
+        autoResetThresholdSaved: '7-day automatic reset threshold saved',
+        autoResetDisabled: 'Automatic reset disabled',
         confirmTitle: 'Confirm Weekly Limit Reset',
         confirmMessage: 'This will consume 1 reset credit to immediately restore the current window ({count} remaining). This action cannot be undone. Continue?'
       },

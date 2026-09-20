@@ -63,6 +63,19 @@ describe('OpsErrorLogTable user/api-key/account columns', () => {
     expect(text).toContain('acct-A') // 账号列
   })
 
+  it('shows a merged-event badge without hiding the representative raw row', () => {
+    const wrapper = mountTable({
+      id: 42,
+      message: 'Service temporarily unavailable',
+      occurrence_count: 17,
+      first_seen_at: '2026-09-04T00:00:00Z',
+      last_seen_at: '2026-09-04T00:04:59Z',
+    })
+
+    expect(wrapper.text()).toContain('Service temporarily unavailable')
+    expect(wrapper.text()).toContain('admin.ops.errorLog.aggregatedCount')
+  })
+
   it('shows the deleted badge for a soft-deleted api key', () => {
     const wrapper = mountTable({
       api_key_id: 5,
@@ -115,10 +128,12 @@ describe('OpsErrorLogTable column order', () => {
 describe('OpsErrorLogTable i18n keys exist in the errorLog namespace', () => {
   const locales: Record<string, any> = { zh: zhLocale, en: enLocale }
   for (const [name, msgs] of Object.entries(locales)) {
-    it(`has apiKey & keyDeletedBadge for ${name}`, () => {
+    it(`has apiKey, deletion and aggregation labels for ${name}`, () => {
       const errorLog = msgs?.admin?.ops?.errorLog
       expect(errorLog?.apiKey).toBeTruthy()
       expect(errorLog?.keyDeletedBadge).toBeTruthy()
+      expect(errorLog?.aggregatedCount).toBeTruthy()
+      expect(msgs?.admin?.ops?.errorDetails?.collapseRouting).toBeTruthy()
     })
   }
 })

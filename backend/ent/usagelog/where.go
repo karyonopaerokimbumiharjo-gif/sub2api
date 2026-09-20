@@ -225,6 +225,11 @@ func FirstTokenMs(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldFirstTokenMs, v))
 }
 
+// PromptAuditLatencyMs applies equality check predicate on the "prompt_audit_latency_ms" field. It's identical to PromptAuditLatencyMsEQ.
+func PromptAuditLatencyMs(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldPromptAuditLatencyMs, v))
+}
+
 // UserAgent applies equality check predicate on the "user_agent" field. It's identical to UserAgentEQ.
 func UserAgent(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserAgent, v))
@@ -1783,6 +1788,56 @@ func FirstTokenMsIsNil() predicate.UsageLog {
 // FirstTokenMsNotNil applies the NotNil predicate on the "first_token_ms" field.
 func FirstTokenMsNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldFirstTokenMs))
+}
+
+// PromptAuditLatencyMsEQ applies the EQ predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsNEQ applies the NEQ predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsIn applies the In predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldPromptAuditLatencyMs, vs...))
+}
+
+// PromptAuditLatencyMsNotIn applies the NotIn predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldPromptAuditLatencyMs, vs...))
+}
+
+// PromptAuditLatencyMsGT applies the GT predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsGTE applies the GTE predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsLT applies the LT predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsLTE applies the LTE predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldPromptAuditLatencyMs, v))
+}
+
+// PromptAuditLatencyMsIsNil applies the IsNil predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldPromptAuditLatencyMs))
+}
+
+// PromptAuditLatencyMsNotNil applies the NotNil predicate on the "prompt_audit_latency_ms" field.
+func PromptAuditLatencyMsNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldPromptAuditLatencyMs))
 }
 
 // UserAgentEQ applies the EQ predicate on the "user_agent" field.

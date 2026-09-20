@@ -78,6 +78,8 @@ const (
 	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
 	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
 	balanceLoadTimeout        = 3 * time.Second
+	balanceGrantCleanupLimit  = 1000
+	balanceGrantCleanupEvery  = time.Minute
 )
 
 // cacheWriteTask 缓存写入任务
@@ -121,6 +123,8 @@ type BillingCacheService struct {
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
 	quotaLoadSF        singleflight.Group
+	balanceGrantStop   chan struct{}
+	balanceGrantWg     sync.WaitGroup
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
@@ -151,6 +155,7 @@ func NewBillingCacheService(
 	}
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
+	svc.startBalanceGrantCleanup()
 	return svc
 }
 
@@ -170,6 +175,10 @@ func (s *BillingCacheService) Stop() {
 			return
 		}
 		s.cacheWriteWg.Wait()
+		if s.balanceGrantStop != nil {
+			close(s.balanceGrantStop)
+			s.balanceGrantWg.Wait()
+		}
 
 		s.cacheWriteMu.Lock()
 		if s.cacheWriteChan == ch {
@@ -185,6 +194,44 @@ func (s *BillingCacheService) startCacheWriteWorkers() {
 	for i := 0; i < cacheWriteWorkerCount; i++ {
 		s.cacheWriteWg.Add(1)
 		go s.cacheWriteWorker(ch)
+	}
+}
+
+func (s *BillingCacheService) startBalanceGrantCleanup() {
+	if _, ok := s.userRepo.(BalanceGrantExpirer); !ok {
+		return
+	}
+	s.balanceGrantStop = make(chan struct{})
+	s.balanceGrantWg.Add(1)
+	go func() {
+		defer s.balanceGrantWg.Done()
+		ticker := time.NewTicker(balanceGrantCleanupEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
+				s.expireDueBalanceGrants(ctx)
+				cancel()
+			case <-s.balanceGrantStop:
+				return
+			}
+		}
+	}()
+}
+
+func (s *BillingCacheService) expireDueBalanceGrants(ctx context.Context) {
+	expirer, ok := s.userRepo.(BalanceGrantExpirer)
+	if !ok {
+		return
+	}
+	userIDs, err := expirer.ExpireDueBalanceGrants(ctx, balanceGrantCleanupLimit)
+	if err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: expire due balance grants failed: %v", err)
+		return
+	}
+	for _, userID := range userIDs {
+		_ = s.InvalidateUserBalance(ctx, userID)
 	}
 }
 
@@ -350,6 +397,11 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 
 // getUserBalanceFromDB 从数据库获取用户余额
 func (s *BillingCacheService) getUserBalanceFromDB(ctx context.Context, userID int64) (float64, error) {
+	if expirer, ok := s.userRepo.(BalanceGrantExpirer); ok {
+		if err := expirer.ExpireBalanceGrants(ctx, userID); err != nil {
+			return 0, fmt.Errorf("expire balance grants: %w", err)
+		}
+	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("get user balance: %w", err)

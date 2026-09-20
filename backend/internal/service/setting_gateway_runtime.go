@@ -146,9 +146,19 @@ type cachedCyberSessionBlockRuntime struct {
 	expiresAt int64 // unix nano
 }
 
+type cachedBioPromptBlockRuntime struct {
+	enabled   bool
+	ttl       time.Duration
+	expiresAt int64
+}
+
 const cyberSessionBlockRuntimeCacheTTL = 60 * time.Second
 const cyberSessionBlockRuntimeErrorTTL = 5 * time.Second
 const cyberSessionBlockRuntimeDBTimeout = 5 * time.Second
+
+const bioPromptBlockRuntimeCacheTTL = 60 * time.Second
+const bioPromptBlockRuntimeErrorTTL = 5 * time.Second
+const bioPromptBlockRuntimeDBTimeout = 5 * time.Second
 
 const openAIQuotaAutoPauseSettingsCacheTTL = 60 * time.Second
 const openAIQuotaAutoPauseSettingsErrorTTL = 5 * time.Second
@@ -210,6 +220,52 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 		return entry.enabled, entry.ttl
 	}
 	return false, time.Hour
+}
+
+// GetBioPromptBlockRuntime returns the independent prompt-feedback block
+// switch and TTL. It intentionally does not reuse the cyber-session TTL:
+// blocking a prompt fingerprint for a day must not lock a whole session for a
+// day. Missing/error states fail open.
+func (s *SettingService) GetBioPromptBlockRuntime(ctx context.Context) (bool, time.Duration) {
+	if s == nil || s.settingRepo == nil {
+		return false, 30 * 24 * time.Hour
+	}
+	if cached, ok := s.bioPromptBlockRuntimeCache.Load().(*cachedBioPromptBlockRuntime); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.enabled, cached.ttl
+	}
+	result, _, _ := s.bioPromptBlockRuntimeSF.Do("bio_prompt_block_runtime", func() (any, error) {
+		if cached, ok := s.bioPromptBlockRuntimeCache.Load().(*cachedBioPromptBlockRuntime); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached, nil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bioPromptBlockRuntimeDBTimeout)
+		defer cancel()
+		enabledValue, enabledErr := s.settingRepo.GetValue(dbCtx, SettingKeyBioPromptBlockEnabled)
+		ttlValue, ttlErr := s.settingRepo.GetValue(dbCtx, SettingKeyBioPromptBlockTTLSeconds)
+		if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
+			entry := &cachedBioPromptBlockRuntime{ttl: 30 * 24 * time.Hour, expiresAt: time.Now().Add(bioPromptBlockRuntimeErrorTTL).UnixNano()}
+			s.bioPromptBlockRuntimeCache.Store(entry)
+			return entry, nil
+		}
+		ttl := 30 * 24 * time.Hour
+		if ttlErr == nil {
+			if seconds, err := strconv.Atoi(strings.TrimSpace(ttlValue)); err == nil && seconds > 0 {
+				ttl = time.Duration(seconds) * time.Second
+			}
+		}
+		entry := &cachedBioPromptBlockRuntime{
+			enabled: enabledErr == nil && strings.TrimSpace(enabledValue) == "true",
+			ttl:     ttl, expiresAt: time.Now().Add(bioPromptBlockRuntimeCacheTTL).UnixNano(),
+		}
+		s.bioPromptBlockRuntimeCache.Store(entry)
+		return entry, nil
+	})
+	if entry, ok := result.(*cachedBioPromptBlockRuntime); ok && entry != nil {
+		return entry.enabled, entry.ttl
+	}
+	return false, 30 * 24 * time.Hour
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -14,9 +15,12 @@ import (
 	"go.uber.org/zap"
 )
 
-const securityAuditCompletedContextKey = "sub2api.security_audit.completed"
-const securityAuditWSTurnContextKey = "sub2api.security_audit.ws_turn"
-const securityAuditWSDedupeContextKey = "sub2api.security_audit.ws_dedupe"
+const (
+	securityAuditCompletedContextKey = "sub2api.security_audit.completed"
+	securityAuditSnapshotContextKey  = "sub2api.security_audit.snapshot"
+	securityAuditWSTurnContextKey    = "sub2api.security_audit.ws_turn"
+	securityAuditWSDedupeContextKey  = "sub2api.security_audit.ws_dedupe"
+)
 
 type securityAuditWSDedupeEntry struct {
 	stage    string
@@ -71,6 +75,18 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 	if c == nil || c.Request == nil {
 		return nil
 	}
+	// Recheck every WS turn before any per-request allow cache. Revocations
+	// survive changes to the optional upstream cyber-cooldown setting.
+	if gatewayService != nil && apiKey != nil {
+		key := gatewayService.FindSecurityAuditSessionInvalidatedForRequest(c.Request.Context(), apiKey.ID, c, body, strings.TrimSpace(ip.GetClientIP(c)), c.GetHeader("User-Agent"))
+		if key == service.SecurityAuditSessionStoreUnavailable {
+			return &securityaudit.Decision{Kind: securityaudit.DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: securityaudit.ErrorCodeUnavailable, ClientMessage: "Conversation safety state is temporarily unavailable. Please retry."}
+		}
+		if key != "" {
+			c.Set(securityAuditContextInvalidatedContextKey, true)
+			return &securityaudit.Decision{Kind: securityaudit.DecisionBlock, HTTPStatus: http.StatusForbidden, ErrorCode: securityaudit.ErrorCodeBlocked, ClientMessage: "This conversation has been invalidated by the safety policy. Start a new conversation."}
+		}
+	}
 	cacheCompletion := cachesSecurityAuditCompletion(stage)
 	if cacheCompletion {
 		if completed, exists := c.Get(securityAuditCompletedContextKey); exists && completed == true {
@@ -112,7 +128,9 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 				}
 			}
 			logSecurityAuditStart(reqLog, request, len(body), false)
+			auditStarted := time.Now()
 			decision := coordinator.Check(c.Request.Context(), request)
+			applySecurityAuditSideEffects(c, coordinator, request, decision, auditStarted)
 			switch decision.Kind {
 			case securityaudit.DecisionAllow:
 				c.Set(securityAuditWSDedupeContextKey, securityAuditWSDedupeEntry{
@@ -126,10 +144,12 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 		}
 	}
 	logSecurityAuditStart(reqLog, request, len(body), false)
+	auditStarted := time.Now()
 	decision := coordinator.Check(c.Request.Context(), request)
 	if decision.Kind == securityaudit.DecisionBlock {
 		invalidateSecurityAuditContext(c, reqLog, gatewayService, apiKey, body)
 	}
+	applySecurityAuditSideEffects(c, coordinator, request, decision, auditStarted)
 	if decision.AllowNextStage && cacheCompletion {
 		c.Set(securityAuditCompletedContextKey, true)
 	}
@@ -165,6 +185,31 @@ func invalidateSecurityAuditContext(c *gin.Context, reqLog *zap.Logger, gatewayS
 		return
 	}
 	c.Set(securityAuditContextInvalidatedContextKey, true)
+}
+
+func applySecurityAuditSideEffects(c *gin.Context, coordinator *securityaudit.Coordinator, request securityaudit.Request, decision securityaudit.Decision, auditStarted time.Time) {
+	if decision.Prompt != nil && decision.Prompt.Result != nil {
+		c.Request = c.Request.WithContext(service.WithPromptAuditLatency(c.Request.Context(), int(time.Since(auditStarted).Milliseconds())))
+	}
+	if decision.Prompt != nil && decision.Prompt.Snapshot != nil {
+		snapshot := *decision.Prompt.Snapshot
+		c.Set(securityAuditSnapshotContextKey, snapshot)
+	}
+	if decision.AllowNextStage {
+		installSecurityAuditOutputCapture(c, coordinator, request, decision.Kind)
+	}
+}
+
+func securityAuditSnapshot(c *gin.Context) (securityaudit.PromptSnapshot, bool) {
+	if c == nil {
+		return securityaudit.PromptSnapshot{}, false
+	}
+	value, ok := c.Get(securityAuditSnapshotContextKey)
+	if !ok {
+		return securityaudit.PromptSnapshot{}, false
+	}
+	snapshot, ok := value.(securityaudit.PromptSnapshot)
+	return snapshot, ok && strings.TrimSpace(snapshot.PromptHash) != ""
 }
 
 func logSecurityAuditStart(reqLog *zap.Logger, request securityaudit.Request, bodyBytes int, cached bool) {
@@ -209,6 +254,7 @@ func buildSecurityAuditRequest(c *gin.Context, apiKey *service.APIKey, subject m
 	}
 	if apiKey != nil && apiKey.User != nil {
 		request.Username = apiKey.User.Username
+		request.PromptAuditBypass = apiKey.User.PromptAuditBypass
 		if request.UserEmail == "" {
 			request.UserEmail = apiKey.User.Email
 		}

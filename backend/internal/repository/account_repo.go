@@ -140,6 +140,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
+	if err := service.ValidateCPAAccount(account); err != nil {
+		return err
+	}
 
 	builder := client.Account.Create().
 		SetName(account.Name).
@@ -466,6 +469,9 @@ func (r *accountRepository) updateAccount(
 ) error {
 	if account == nil {
 		return nil
+	}
+	if err := service.ValidateCPAAccount(account); err != nil {
+		return err
 	}
 
 	baseCtx := ctx
@@ -810,6 +816,14 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 }
 
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
+	account, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	account.Credentials = credentials
+	if err := service.ValidateCPAAccount(account); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
 		return err
@@ -2938,6 +2952,25 @@ func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
+	}
+	// Metadata-only updates cannot change the mandatory CPA destination. Avoid
+	// loading every account and its relations unless routing credentials change;
+	// runtime scheduling independently rejects stale non-CPA accounts.
+	if len(updates.Credentials) > 0 || updates.ProxyID != nil {
+		accounts, err := r.GetByIDs(ctx, ids)
+		if err != nil {
+			return 0, err
+		}
+		for _, account := range accounts {
+			candidate := *account
+			candidate.Credentials = service.MergePreservingSensitiveCreds(account.Credentials, updates.Credentials)
+			if updates.ProxyID != nil {
+				candidate.ProxyID = updates.ProxyID
+			}
+			if err := service.ValidateCPAAccount(&candidate); err != nil {
+				return 0, err
+			}
+		}
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
 

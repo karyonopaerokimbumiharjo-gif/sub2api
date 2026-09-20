@@ -98,6 +98,8 @@
       </div>
     </section>
 
+    <ProfileBalanceGrantsCard :grants="user?.balance_grants" />
+
     <div class="space-y-6">
       <div data-testid="profile-main-column" class="space-y-6">
         <section
@@ -184,6 +186,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import ProfileAvatarCard from '@/components/user/profile/ProfileAvatarCard.vue'
+import ProfileBalanceGrantsCard from '@/components/user/profile/ProfileBalanceGrantsCard.vue'
 import ProfileEditForm from '@/components/user/profile/ProfileEditForm.vue'
 import ProfileIdentityBindingsSection from '@/components/user/profile/ProfileIdentityBindingsSection.vue'
 import type { User, UserAuthBindingStatus, UserAuthProvider, UserProfileSourceContext } from '@/types'

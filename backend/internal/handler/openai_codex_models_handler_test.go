@@ -22,6 +22,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CPA uses its fixed private HTTP origin in this deployment.
+func codexModelsTestConfig() *config.Config {
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	return cfg
+}
+
 type codexModelsFailoverAccountRepo struct {
 	service.AccountRepository
 	accounts []service.Account
@@ -146,7 +153,7 @@ func TestCodexModelsAppliesLocalFiltersBeforeClientETag(t *testing.T) {
 			Concurrency: 1,
 			Credentials: map[string]any{
 				"api_key":  "sk-test",
-				"base_url": "https://upstream.example/v1",
+				"base_url": "http://cpa:8317/v1",
 			},
 		},
 	}}
@@ -155,7 +162,7 @@ func TestCodexModelsAppliesLocalFiltersBeforeClientETag(t *testing.T) {
 	}
 	gatewayService := service.NewOpenAIGatewayService(
 		repo,
-		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, codexModelsTestConfig(), nil, nil, nil, nil, nil,
 		upstream,
 		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -215,7 +222,7 @@ func TestCodexModelsAPIKeyCacheDoesNotLeakGroupFilters(t *testing.T) {
 			Concurrency: 1,
 			Credentials: map[string]any{
 				"api_key":  "sk-shared",
-				"base_url": "https://upstream.example/v1",
+				"base_url": "http://cpa:8317/v1",
 			},
 		},
 	}}
@@ -224,7 +231,7 @@ func TestCodexModelsAPIKeyCacheDoesNotLeakGroupFilters(t *testing.T) {
 	}
 	gatewayService := service.NewOpenAIGatewayService(
 		repo,
-		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, codexModelsTestConfig(), nil, nil, nil, nil, nil,
 		upstream,
 		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -330,7 +337,7 @@ func TestCodexModelsSupplementsConfiguredModelsWithUnmappedAccountDefaults(t *te
 	upstream := &codexModelsFailoverHTTPUpstream{firstStatus: http.StatusNotFound}
 	gatewayService := service.NewOpenAIGatewayService(
 		repo,
-		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, codexModelsTestConfig(), nil, nil, nil, nil, nil,
 		upstream,
 		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -379,7 +386,7 @@ func TestCodexModelsUnmappedParentAndSparkShadowHonorCustomListAndETag(t *testin
 	upstream := &codexModelsFailoverHTTPUpstream{firstStatus: http.StatusNotFound}
 	gatewayService := service.NewOpenAIGatewayService(
 		repo,
-		nil, nil, nil, nil, nil, nil, &config.Config{RunMode: config.RunModeSimple}, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, codexModelsTestConfig(), nil, nil, nil, nil, nil,
 		upstream,
 		nil, nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -588,12 +595,12 @@ func newCodexModelsFailoverTestHandlerWithAccountCount(firstStatus, accountCount
 			Concurrency: 1,
 			Credentials: map[string]any{
 				"api_key":  fmt.Sprintf("sk-%d", i),
-				"base_url": fmt.Sprintf("https://upstream-%d.example/v1", i),
+				"base_url": "http://cpa:8317/v1",
 			},
 		})
 	}
 	upstream := &codexModelsFailoverHTTPUpstream{firstStatus: firstStatus}
-	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg := codexModelsTestConfig()
 	gatewayService := service.NewOpenAIGatewayService(
 		codexModelsFailoverAccountRepo{accounts: accounts},
 		nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil,
@@ -744,7 +751,7 @@ func newPinnedCodexAccount(id int64, status string, schedulable bool, rateLimite
 		Concurrency: 1,
 		Credentials: map[string]any{
 			"api_key":  fmt.Sprintf("sk-pinned-%d", id),
-			"base_url": fmt.Sprintf("https://pinned-%d.example/v1", id),
+			"base_url": "http://cpa:8317/v1",
 		},
 	}
 	if rateLimited {
@@ -756,7 +763,7 @@ func newPinnedCodexAccount(id int64, status string, schedulable bool, rateLimite
 
 func newPinnedCodexTestHandler(accounts []service.Account, upstream *codexModelsPinnedHTTPUpstream, maxSwitches int) *OpenAIGatewayHandler {
 	gin.SetMode(gin.TestMode)
-	cfg := &config.Config{RunMode: config.RunModeSimple}
+	cfg := codexModelsTestConfig()
 	gatewayService := service.NewOpenAIGatewayService(
 		codexModelsFailoverAccountRepo{accounts: accounts},
 		nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil,

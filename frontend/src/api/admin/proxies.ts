@@ -204,6 +204,7 @@ export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[
  */
 export async function batchCreate(
   proxies: Array<{
+    name?: string
     protocol: string
     host: string
     port: number

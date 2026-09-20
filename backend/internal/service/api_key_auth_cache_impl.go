@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 24 // v24: group model_allowlist field (renamed from models_list_config, enforcing semantics)
+const apiKeyAuthSnapshotVersion = 25 // v25: group allowlist plus per-user audit bypass and Fast projections
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -366,6 +366,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			BalanceNotifyExtraEmails:   apiKey.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
+			PromptAuditBypass:          apiKey.User.PromptAuditBypass,
 		},
 	}
 
@@ -475,6 +476,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			BalanceNotifyExtraEmails:   snapshot.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
+			PromptAuditBypass:          snapshot.User.PromptAuditBypass,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
 		},
 	}

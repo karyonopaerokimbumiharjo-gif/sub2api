@@ -7,6 +7,26 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func TestOpsErrorLogsCollapseCTE_TargetsOnlyPropagatedRoutingErrors(t *testing.T) {
+	query := opsErrorLogsCollapseCTE("WHERE e.created_at >= $1")
+
+	for _, want := range []string{
+		"e.error_phase = 'routing'",
+		"e.error_type = 'api_error'",
+		"e.error_source, '') = 'gateway'",
+		"e.account_id IS NULL",
+		"Service temporarily unavailable",
+		"date_bin('5 minutes'",
+		"COUNT(*) OVER",
+		"ROW_NUMBER() OVER",
+		"WHERE e.created_at >= $1",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("collapse query missing %q: %s", want, query)
+		}
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns(t *testing.T) {
 	filter := &service.OpsErrorLogFilter{
 		Query: "ACCESS_DENIED",

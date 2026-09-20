@@ -88,6 +88,22 @@ type OpenAIEndpointCapability string
 
 const openAILongContextBillingEnabledKey = "openai_long_context_billing_enabled"
 
+// OpenAIQuotaViaCompatibleUpstreamExtraKey opts an OpenAI-compatible API key
+// account into Codex quota-window probing through its configured upstream.
+//
+// This is intentionally explicit: ordinary OpenAI API key accounts do not
+// expose ChatGPT subscription windows and must not be treated as quota bridges.
+const OpenAIQuotaViaCompatibleUpstreamExtraKey = "openai_quota_via_compatible_upstream"
+
+// OpenAIQuotaBridgeAuthNameExtraKey and OpenAIQuotaBridgeAuthEmailExtraKey bind
+// a compatible quota bridge account to one concrete CPA Codex OAuth identity.
+// The bridge lookup verifies both values before it is allowed to make a quota
+// request, so a reordered CPA account pool cannot silently change identities.
+const (
+	OpenAIQuotaBridgeAuthNameExtraKey  = "openai_quota_bridge_auth_name"
+	OpenAIQuotaBridgeAuthEmailExtraKey = "openai_quota_bridge_auth_email"
+)
+
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
 	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
@@ -179,6 +195,9 @@ func (a *Account) EffectiveLoadFactor() int {
 }
 
 func (a *Account) IsSchedulable() bool {
+	if ValidateCPAAccount(a) != nil {
+		return false
+	}
 	if !a.IsActive() || !a.Schedulable {
 		return false
 	}
@@ -214,6 +233,9 @@ func (a *Account) IsSchedulable() bool {
 // 手动 Schedulable 开关:spark 影子拥有独立 spark 配额窗口,母账号 global 429(走 RateLimitResetAt)
 // 不应连坐 spark(否则重新耦合影子架构本应解耦的两条 429 道)。nil receiver 返回 false。
 func (a *Account) IsCredentialUsableForShadow() bool {
+	if ValidateCPAAccount(a) != nil {
+		return false
+	}
 	if a == nil || !a.IsActive() {
 		return false
 	}
@@ -1347,6 +1369,17 @@ func (a *Account) IsOpenAIPersonalAccessToken() bool {
 
 func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
+}
+
+// IsOpenAICompatibleQuotaBridge reports whether this API key account is an
+// explicitly configured OpenAI-compatible bridge (for example CPA) that
+// forwards Codex quota headers from its backing OAuth account.
+func (a *Account) IsOpenAICompatibleQuotaBridge() bool {
+	if a == nil || !a.IsOpenAIApiKey() || !a.getExtraBool(OpenAIQuotaViaCompatibleUpstreamExtraKey) {
+		return false
+	}
+	return strings.TrimSpace(a.GetCredential("base_url")) != "" &&
+		strings.TrimSpace(a.GetOpenAIApiKey()) != ""
 }
 
 // GetOpenAIBaseURL 解析 OpenAI 协议族账号的上游 base_url。

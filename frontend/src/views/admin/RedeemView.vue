@@ -311,9 +311,9 @@
                 {{ t('admin.redeem.invitationHint') }}
               </p>
             </div>
-            <!-- 订阅类型：显示分组选择和有效天数 -->
-            <template v-if="generateForm.type === 'subscription'">
-              <div>
+            <!-- 余额和订阅类型：显示兑换后额度有效天数 -->
+            <template v-if="generateForm.type === 'subscription' || generateForm.type === 'balance'">
+              <div v-if="generateForm.type === 'subscription'">
                 <label class="input-label">{{ t('admin.redeem.selectGroup') }}</label>
                 <Select
                   v-model="generateForm.group_id"
@@ -1045,7 +1045,9 @@ const handleGenerateCodes = async () => {
       generateForm.type,
       generateForm.value,
       generateForm.type === 'subscription' ? generateForm.group_id : undefined,
-      generateForm.type === 'subscription' ? generateForm.validity_days : undefined,
+      generateForm.type === 'subscription' || generateForm.type === 'balance'
+        ? generateForm.validity_days
+        : undefined,
       expiresInDays
     )
     showGenerateDialog.value = false

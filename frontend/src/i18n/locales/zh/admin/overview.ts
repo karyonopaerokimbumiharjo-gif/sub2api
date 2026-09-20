@@ -589,7 +589,9 @@ export default {
         concurrencyPlaceholder: '0 表示不限制',
         concurrencyHint: '该用户的最大并发请求数，0 = 不限制',
         rpmLimitPlaceholder: '0 表示不限制',
-        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效'
+        rpmLimitHint: '该用户每分钟最大请求数，0 = 不限制；仅在所用分组未设置 rpm_limit 时作为兜底生效',
+        promptAuditBypass: '安全审核直接放行',
+        promptAuditBypassHint: '开启后，该用户所有请求跳过前置审核、后台审核、内容审核、风险指纹和输出观察；系统仍记录一条“用户放行”追溯事件。仅对完全可信用户开启。'
       },
       adjustBalance: '调整余额',
       adjustConcurrency: '调整并发数',

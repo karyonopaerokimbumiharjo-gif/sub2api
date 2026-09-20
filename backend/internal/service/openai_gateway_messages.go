@@ -516,6 +516,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		return nil, handleErr
 	}
+	if GetOpsBioPolicy(c) != nil {
+		if handleErr == nil {
+			handleErr = errOpenAIBioPolicyForwarded
+		}
+		return nil, handleErr
+	}
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
 	if handleErr == nil && result != nil {
@@ -628,6 +634,11 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			}
 			writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
+		}
+		if hit, msg := markOpenAIBioPolicy(c, payload, http.StatusOK, usage.InputTokens, usage.OutputTokens); hit {
+			MarkResponseCommitted(c)
+			writeAnthropicError(c, http.StatusForbidden, "invalid_request_error", OpenAIBioPolicyClientMessage)
+			return nil, fmt.Errorf("openai bio_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
@@ -1057,6 +1068,17 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 						}
 						clientDisconnected = true
 					}
+					return true
+				}
+				if hit, msg := markOpenAIBioPolicy(c, payloadBytes, http.StatusOK, usage.InputTokens, usage.OutputTokens); hit {
+					if !clientDisconnected {
+						writeStreamHeaders()
+						if _, err := fmt.Fprint(c.Writer, buildAnthropicStreamErrorSSE("invalid_request_error", OpenAIBioPolicyClientMessage)); err == nil {
+							c.Writer.Flush()
+						}
+						clientDisconnected = true
+					}
+					streamNonFailoverErr = fmt.Errorf("openai bio_policy: %s", msg)
 					return true
 				}
 				message := extractOpenAISSEErrorMessage(payloadBytes)

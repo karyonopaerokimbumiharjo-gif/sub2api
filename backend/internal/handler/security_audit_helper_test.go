@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -161,6 +162,35 @@ func TestRunSecurityAuditLogsWebSocketChecksAndCacheHits(t *testing.T) {
 	require.Equal(t, int64(1), engine.evaluates.Load())
 }
 
+func TestRunSecurityAuditStoresBlockingPromptAuditLatencyOnRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := &turnCountingEngine{mode: securityaudit.ModeBlocking}
+	coordinator := securityaudit.NewCoordinator(nil, engine)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	decision := runSecurityAudit(c, nil, coordinator, nil, nil, nil, middleware2.AuthSubject{UserID: 7},
+		"openai_responses", "gpt-test", []byte(`{"input":"benign"}`), "http")
+	require.NotNil(t, decision)
+	require.True(t, decision.AllowNextStage)
+	latency := service.PromptAuditLatencyFromContext(c.Request.Context())
+	require.NotNil(t, latency)
+	require.GreaterOrEqual(t, *latency, 0)
+}
+
+func TestBuildSecurityAuditRequestUsesServerSideUserBypass(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	apiKey := &service.APIKey{ID: 9, UserID: 7, User: &service.User{
+		ID: 7, Email: "trusted@example.test", PromptAuditBypass: true,
+	}}
+
+	request := buildSecurityAuditRequest(c, apiKey, middleware2.AuthSubject{UserID: 7}, "openai_responses", "gpt-test", []byte(`{"input":"hello"}`), "http")
+	require.True(t, request.PromptAuditBypass)
+	require.Equal(t, "trusted@example.test", request.UserEmail)
+}
+
 type turnCountingEngine struct {
 	mode      securityaudit.Mode
 	enqueues  atomic.Int64
@@ -178,5 +208,5 @@ func (e *turnCountingEngine) Evaluate(context.Context, securityaudit.Request) (*
 	if int(call) <= len(e.decisions) {
 		return e.decisions[call-1], nil
 	}
-	return &securityaudit.PromptDecision{Kind: securityaudit.DecisionAllow, AllowNextStage: true}, nil
+	return &securityaudit.PromptDecision{Kind: securityaudit.DecisionAllow, AllowNextStage: true, Result: &securityaudit.NormalizedResult{Decision: securityaudit.EventPass, Action: securityaudit.ActionAllow}}, nil
 }

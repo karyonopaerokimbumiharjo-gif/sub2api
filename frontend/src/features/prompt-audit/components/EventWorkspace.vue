@@ -50,6 +50,10 @@
         <span>{{ t('admin.promptAudit.events.endAt') }}</span>
         <input v-model="localFilters.end_at" type="datetime-local" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.endAt')" @change="filtersChanged" />
       </label>
+      <label class="flex items-end gap-2 pb-2 text-xs text-gray-600 dark:text-dark-200">
+        <input v-model="localFilters.aggregate" type="checkbox" @change="filtersChanged" />
+        <span>{{ t('admin.promptAudit.events.aggregateTasks') }}</span>
+      </label>
       <div class="flex items-end gap-2 sm:col-span-2">
         <button type="submit" class="btn btn-primary btn-sm">{{ t('common.search') }}</button>
         <button type="button" class="btn btn-ghost btn-sm" @click="resetFilters">{{ t('common.reset') }}</button>
@@ -87,8 +91,15 @@
               <p class="mt-1 text-xs text-gray-500">{{ event.snapshot.model }} · {{ event.snapshot.protocol }} · {{ event.snapshot.stage || 'http' }}</p>
             </td>
             <td class="px-3 py-3">
-              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="decisionClass(event.decision)">{{ formatDecisionRisk(event.decision, event.risk_level) }}</span>
-              <p class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.categories)">{{ formatCategories(event.categories) }}</p>
+              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : decisionClass(event.decision)">
+                {{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : formatDecisionRisk(event.decision, event.risk_level) }}
+              </span>
+              <span v-if="(event.duplicate_count || 0) > 1" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-dark-700 dark:text-dark-200">
+                {{ t('admin.promptAudit.events.duplicateCount', { count: event.duplicate_count }) }}
+              </span>
+              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass'" class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.intent_categories || event.categories)">{{ t('admin.promptAudit.events.intentShort') }} · {{ formatCategories(event.intent_categories || event.categories) }}</p>
+              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.content_categories?.length" class="mt-1 max-w-48 truncate text-xs text-gray-500" :title="formatContentCategories(event.content_categories)">{{ t('admin.promptAudit.events.contentShort') }} · {{ formatContentCategories(event.content_categories) }}</p>
+              <p class="mt-1 text-xs text-gray-400">{{ policySourceLabel(event.policy_source) }}</p>
             </td>
             <td class="max-w-xs px-3 py-3"><p class="line-clamp-2 break-words text-gray-600 dark:text-dark-300">{{ event.snapshot.redacted_preview || '—' }}</p></td>
             <td class="whitespace-nowrap px-3 py-3 text-right">
@@ -108,7 +119,7 @@ import { computed, defineComponent, h, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Pagination from '@/components/common/Pagination.vue'
 import type { PromptAuditEvent, PromptEventFilters } from '../types'
-import { cloneData, emptyEventFilters, SCANNER_CATALOG } from '../viewModel'
+import { cloneData, CONTENT_CATEGORY_CATALOG, emptyEventFilters, SCANNER_CATALOG } from '../viewModel'
 
 const props = defineProps<{
   events: PromptAuditEvent[]; total: number; page: number; pageSize: number
@@ -188,6 +199,11 @@ function decisionClass(decision: string): string {
   if (decision === 'flag') return 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
   return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
 }
+function policySourceLabel(source?: string): string {
+  const key = `admin.promptAudit.events.policySources.${source || 'local_audit'}`
+  const value = t(key)
+  return value === key ? source || '—' : value
+}
 const DECISIONS = new Set(['pass', 'flag', 'critical'])
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical'])
 
@@ -208,5 +224,11 @@ function formatDecisionRisk(decision: string, riskLevel: string): string {
 function formatCategories(categories: string[]): string {
   if (!categories.length) return '—'
   return categories.map(translateCategory).join(', ')
+}
+function formatContentCategories(categories: string[]): string {
+  if (!categories.length) return '—'
+  return categories.map((category) => CONTENT_CATEGORY_CATALOG.includes(category as (typeof CONTENT_CATEGORY_CATALOG)[number])
+    ? t(`admin.promptAudit.contentCategories.${category}`)
+    : category).join(', ')
 }
 </script>

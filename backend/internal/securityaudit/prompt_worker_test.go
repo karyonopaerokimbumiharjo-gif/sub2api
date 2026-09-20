@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +51,12 @@ func (s *fakeConfigStore) EffectiveMode() Mode {
 func (s *fakeConfigStore) BlockingActivationDegraded() bool { return false }
 func (s *fakeConfigStore) Public() (PublicConfig, error)    { return PublicConfig{}, nil }
 func (s *fakeConfigStore) Save(context.Context, UpdateConfigRequest, int64) (PublicConfig, error) {
+	return PublicConfig{}, nil
+}
+func (s *fakeConfigStore) ListPolicyVersions(context.Context, int) ([]PromptPolicyVersion, error) {
+	return nil, nil
+}
+func (s *fakeConfigStore) RollbackPolicy(context.Context, int64, int64, int64) (PublicConfig, error) {
 	return PublicConfig{}, nil
 }
 func (s *fakeConfigStore) RuntimeState() (int64, int64, *time.Time, string) {
@@ -252,7 +259,9 @@ func TestEnqueuerStagingPayloadPublishProtocolAndFailureCleanup(t *testing.T) {
 		require.NoError(t, enqueuer.Enqueue(context.Background(), asyncRequest()))
 		require.Equal(t, []string{"create_staging", "payload_set", "publish_queued"}, trace)
 		require.Empty(t, repo.createdSnapshot.ScanText)
-		require.Equal(t, "payload canary text", payload.values[41])
+		queued := decodeQueuedPromptPayload(payload.values[41])
+		require.Equal(t, "payload canary text", queued.ScanText)
+		require.Equal(t, "payload canary text", queued.FullPrompt)
 		require.Equal(t, DefaultPayloadTTL, payload.setTTL)
 	})
 
@@ -287,6 +296,22 @@ func TestEnqueuerStagingPayloadPublishProtocolAndFailureCleanup(t *testing.T) {
 		require.Equal(t, "queue_publish_failed", repo.markedCode)
 		require.NotContains(t, payload.values, int64(43))
 	})
+}
+
+func TestEnqueuerUsesConfiguredBackgroundScopeInsteadOfAlwaysFull(t *testing.T) {
+	cfg := asyncConfig()
+	cfg.BackgroundAuditMode = BlockingAuditModeFastLatest
+	repo := &fakeJobRepository{createJob: &Job{ID: 45}}
+	payload := &fakePayloadStore{values: map[int64]string{}}
+	req := Request{RequestID: "background-fast", Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"system","content":"OLD_SYSTEM_CONTEXT"},{"role":"assistant","content":"nearest assistant output"},{"role":"user","content":"latest user request"}]}`)}
+
+	require.NoError(t, NewEnqueuer(&fakeConfigStore{cfg: cfg, active: true}, repo, payload).Enqueue(context.Background(), req))
+	queued := decodeQueuedPromptPayload(payload.values[45])
+	require.Equal(t, BlockingAuditModeFastLatest, queued.AuditMode)
+	require.Contains(t, queued.FullPrompt, "OLD_SYSTEM_CONTEXT")
+	require.NotContains(t, queued.AuditedPrompt, "OLD_SYSTEM_CONTEXT")
+	require.Contains(t, queued.AuditedPrompt, "latest user request")
+	require.Contains(t, queued.AuditedPrompt, "nearest assistant output")
 }
 
 func TestEnqueuerSkipsOffOutOfScopeAndNoText(t *testing.T) {
@@ -367,16 +392,16 @@ func workerJob(attempts, maxAttempts int) *Job {
 func TestWorkerCompletesPassWithoutEventRefreshesEveryChunkAndDeletesPayload(t *testing.T) {
 	repo := &fakeJobRepository{}
 	payload := &fakePayloadStore{values: map[int64]string{51: "abcdef"}}
-	scannerCalls := 0
+	var scannerCalls atomic.Int32
 	scanner := PromptScannerFunc(func(_ context.Context, endpoint ActiveEndpoint, chunk string, _ []string) (*NormalizedResult, error) {
-		scannerCalls++
+		scannerCalls.Add(1)
 		return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, Safety: "Safe", Categories: []string{}, MatchedScanners: []string{}, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}, GuardEndpointID: endpoint.ID}, nil
 	})
 	metrics := NewAtomicMetrics()
 	runner := NewRunner(&fakeConfigStore{cfg: asyncConfig(), active: true}, repo, payload, scanner, metrics)
 	runner.clock = fixedClock{now: time.Unix(100, 0).UTC()}
 	require.NoError(t, runner.processJob(context.Background(), 0, asyncConfig(), workerJob(1, 3)))
-	require.Equal(t, 2, scannerCalls)
+	require.Equal(t, int32(2), scannerCalls.Load())
 	require.Equal(t, 2, repo.refreshes)
 	require.NotNil(t, repo.completedResult)
 	require.Equal(t, EventPass, repo.completedResult.Decision)
@@ -384,6 +409,38 @@ func TestWorkerCompletesPassWithoutEventRefreshesEveryChunkAndDeletesPayload(t *
 	require.Equal(t, []int64{51}, payload.deleted)
 	require.Equal(t, int64(1), metrics.Snapshot().Total)
 	require.Equal(t, int64(1), metrics.Snapshot().Allowed)
+}
+
+func TestWorkerFeedsCompletedAsyncAuditIntoAdaptivePipeline(t *testing.T) {
+	repo := &fakeJobRepository{}
+	payload := &fakePayloadStore{values: map[int64]string{51: "abcdef"}}
+	runner := NewRunner(
+		&fakeConfigStore{cfg: asyncConfig(), active: true},
+		repo,
+		payload,
+		PromptScannerFunc(func(_ context.Context, endpoint ActiveEndpoint, _ string, _ []string) (*NormalizedResult, error) {
+			return &NormalizedResult{
+				Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow,
+				Safety: "Safe", Categories: []string{}, IntentCategories: []string{}, ContentCategories: []string{},
+				MatchedScanners: []string{}, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{},
+				GuardEndpointID: endpoint.ID,
+			}, nil
+		}),
+		NewAtomicMetrics(),
+	)
+	var adaptiveSnapshot PromptSnapshot
+	var adaptiveDecision *PromptDecision
+	runner.adaptiveReview = func(_ ActiveConfig, snapshot PromptSnapshot, decision *PromptDecision) {
+		adaptiveSnapshot = snapshot
+		adaptiveDecision = decision
+	}
+
+	require.NoError(t, runner.processJob(context.Background(), 0, asyncConfig(), workerJob(1, 3)))
+	require.Equal(t, "abcdef", adaptiveSnapshot.ScanText)
+	require.Equal(t, "abcdef", adaptiveSnapshot.FullPrompt)
+	require.Equal(t, "abcdef", adaptiveSnapshot.AuditedPrompt)
+	require.NotNil(t, adaptiveDecision)
+	require.Equal(t, DecisionAllow, adaptiveDecision.Kind)
 }
 
 func TestWorkerRetryBackoffTerminalFailureAndFailover(t *testing.T) {
@@ -436,7 +493,7 @@ func TestWorkerRetryBackoffTerminalFailureAndFailover(t *testing.T) {
 	metrics := NewAtomicMetrics()
 	scanner := PromptScannerFunc(func(_ context.Context, endpoint ActiveEndpoint, _ string, _ []string) (*NormalizedResult, error) {
 		if endpoint.ID == "first" {
-			return nil, &GuardError{Code: ErrorCodeUnavailable, Retryable: true}
+			return nil, &GuardError{Code: ErrorCodeInvalidResponse, Retryable: false}
 		}
 		return integrationResult(EventPass), nil
 	})
@@ -457,7 +514,7 @@ func TestWorkerPanicLeaseLossAndLifecycleAreContained(t *testing.T) {
 		require.NotPanics(t, func() { runner.processSafely(context.Background(), 0, asyncConfig(), workerJob(1, 3)) })
 		_, _, failed, _, _, code, message := runner.Snapshot()
 		require.Equal(t, int64(1), failed)
-		require.Equal(t, "worker_panic", code)
+		require.Equal(t, ErrorCodeUnavailable, code)
 		require.NotContains(t, message, "canary")
 		require.Equal(t, 1, repo.failed)
 	})

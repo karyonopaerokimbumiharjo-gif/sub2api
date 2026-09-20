@@ -131,4 +131,21 @@ describe('errorDetailResponse', () => {
       upstream_error_message: 'fallback message'
     }))).toBe('fallback message')
   })
+
+  it('hides echoed instructions for provider policy failures and shows both statuses', () => {
+    const detail = makeDetail({
+      type: 'bio_policy',
+      status_code: 403,
+      upstream_status_code: 200,
+      error_source: 'upstream_http',
+      upstream_error_message: 'This content was flagged for possible biological risk.',
+      error_body: '{"type":"response.failed","response":{"error":{"code":"bio_policy"},"instructions":"secret system prompt and Anti-Patterns"'
+    })
+
+    const resolved = resolvePrimaryResponseBody(detail, 'request')
+    expect(resolved).toContain('"semantic_status":403')
+    expect(resolved).toContain('"upstream_transport_status":200')
+    expect(resolved).not.toContain('instructions')
+    expect(resolved).not.toContain('Anti-Patterns')
+  })
 })

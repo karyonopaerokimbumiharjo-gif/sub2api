@@ -544,6 +544,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
+				_, _ = markOpenAIBioPolicy(c, dataBytes, http.StatusOK, usage.InputTokens, usage.OutputTokens)
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {

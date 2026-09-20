@@ -8,13 +8,17 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
 type prefixEncryptor struct{}
+
+func promptChunkConcurrencyPtr(value int) *int { return &value }
 
 func (prefixEncryptor) Encrypt(value string) (string, error) { return "enc:" + value, nil }
 func (prefixEncryptor) Decrypt(value string) (string, error) {
@@ -35,6 +39,8 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, storage.Enabled)
 	require.False(t, storage.BlockingLatestTurnOnly)
+	require.Equal(t, BlockingAuditModeFull, storage.BlockingAuditMode)
+	require.Equal(t, DefaultPromptChunkConcurrency, storage.PromptChunkConcurrency)
 	active, err := ActiveFromStorage(storage, true, prefixEncryptor{})
 	require.NoError(t, err)
 	require.Equal(t, ModeOff, active.EffectiveMode())
@@ -43,28 +49,179 @@ func TestDefaultConfigIsOff(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(publicJSON), `"group_ids":[]`)
 	require.Contains(t, string(publicJSON), `"endpoints":[]`)
+	require.Contains(t, string(publicJSON), `"whitelist_emails":[]`)
+}
+
+func TestPromptAuditWhitelistNormalizesAndMatchesExactEmail(t *testing.T) {
+	emails := []string{" Trusted@Example.COM ", "trusted@example.com", "second@example.test"}
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	req := promptAuditUpdateRequest(1, 1, "")
+	req.WhitelistEmails = &emails
+	next, err := manager.buildNextStorage(DefaultStorageConfig(), req, 9)
+	require.NoError(t, err)
+	require.Equal(t, []string{"second@example.test", "trusted@example.com"}, next.WhitelistEmails)
+
+	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.True(t, active.IncludesWhitelistEmail("TRUSTED@example.com"))
+	require.False(t, active.IncludesWhitelistEmail("other@example.com"))
+	require.Contains(t, changeSummary(next), `"whitelist_count":2`)
+}
+
+func TestPromptAuditWhitelistRejectsInvalidEmail(t *testing.T) {
+	emails := []string{"*@example.com"}
+	req := promptAuditUpdateRequest(1, 1, "")
+	req.WhitelistEmails = &emails
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	_, err := manager.buildNextStorage(DefaultStorageConfig(), req, 9)
+	require.Equal(t, "prompt_audit_invalid_whitelist_email", infraerrors.Reason(err))
+}
+
+func TestParseStorageConfigMigratesAsyncBackgroundScope(t *testing.T) {
+	raw := `{"enabled":true,"blocking_enabled":false,"blocking_audit_mode":"fast_latest","strategy":"priority","worker_count":1,"prompt_chunk_concurrency":4,"queue_capacity":8,"scanners":["pii"],"all_groups":true,"endpoints":[{"id":"guard","name":"Guard","protocol":"openai_compatible","base_url":"http://cpa:8317","adapter":"generic_llm","model":"gpt-test","timeout_ms":1000,"input_limit":4000,"enabled":true}],"config_version":77}`
+	cfg, err := ParseStorageConfig(raw)
+	require.NoError(t, err)
+	require.Equal(t, BlockingAuditModeFastLatest, cfg.BackgroundAuditMode)
+	active, err := ActiveFromStorage(cfg, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.Equal(t, ModeAsync, active.EffectiveMode())
+	require.Equal(t, BlockingAuditModeFastLatest, active.EffectiveBackgroundAuditMode())
+}
+
+func TestUpdateRejectsNoGateWithoutBackgroundAudit(t *testing.T) {
+	req := promptAuditUpdateRequest(1, 1, "")
+	req.Enabled = true
+	req.BlockingEnabled = false
+	req.BackgroundAuditMode = BackgroundAuditModeOff
+	require.Equal(t, "prompt_audit_background_required", infraerrors.Reason(validateUpdateConfigRequest(req)))
 }
 
 func TestBlockingLatestTurnOnlyConfigRoundTrip(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
 	request := UpdateConfigRequest{
 		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true, BlockingLatestTurnOnly: true,
-		Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
+		Strategy: "priority", WorkerCount: 1, PromptChunkConcurrency: promptChunkConcurrencyPtr(12), QueueCapacity: 10, Scanners: []string{"pii"}, AllGroups: true,
 		Endpoints: []UpdateEndpoint{{
-			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080",
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible", BaseURL: "http://cpa:8317",
 			Model: DefaultGuardModel, TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
 		}},
 	}
 	next, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
 	require.NoError(t, err)
 	require.True(t, next.BlockingLatestTurnOnly)
+	require.Equal(t, BlockingAuditModeIncrementalFull, next.BlockingAuditMode)
+	require.Equal(t, 12, next.PromptChunkConcurrency)
 	require.Contains(t, changeSummary(next), `"blocking_latest_turn_only":true`)
+	require.Contains(t, changeSummary(next), `"prompt_chunk_concurrency":12`)
 
 	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
 	require.NoError(t, err)
 	require.True(t, active.BlockingLatestTurnOnly)
+	require.Equal(t, 12, active.PromptChunkConcurrency)
 	public := PublicFromStorage(next, true, nil)
 	require.True(t, public.BlockingLatestTurnOnly)
+	require.Equal(t, BlockingAuditModeIncrementalFull, public.BlockingAuditMode)
+	require.Equal(t, 12, public.PromptChunkConcurrency)
+}
+
+func TestBlockingAuditModeFastRoundTrip(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	request := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, Enabled: true, BlockingEnabled: true,
+		BlockingAuditMode: BlockingAuditModeFastLatest,
+		Strategy:          "priority", WorkerCount: 1, PromptChunkConcurrency: promptChunkConcurrencyPtr(4), QueueCapacity: 10,
+		Scanners: []string{"pii"}, AllGroups: true,
+		Endpoints: []UpdateEndpoint{{
+			ID: "guard-1", Name: "Guard", Protocol: "openai_compatible", BaseURL: "http://cpa:8317",
+			Model: DefaultGuardModel, TimeoutMS: 1000, InputLimit: 1000, Enabled: true,
+		}},
+	}
+	next, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.NoError(t, err)
+	require.Equal(t, BlockingAuditModeFastLatest, next.BlockingAuditMode)
+	require.True(t, next.BlockingLatestTurnOnly)
+	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.Equal(t, BlockingAuditModeFastLatest, active.EffectiveBlockingAuditMode())
+	require.Equal(t, BlockingAuditModeFastLatest, PublicFromStorage(next, true, nil).BlockingAuditMode)
+}
+
+func TestOpenAIInternalAccountBindingRejectedByCPAPolicy(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	request := promptAuditUpdateRequest(1, 1, "")
+	request.Endpoints[0] = UpdateEndpoint{
+		ID: "luna-audit", Name: "Luna", Protocol: EndpointProtocolOpenAIInternal,
+		Adapter: EndpointAdapterGenericLLM, Model: "gpt-5.6-luna", AccountID: 24,
+		TimeoutMS: 1000, InputLimit: 4000, Enabled: true,
+	}
+	_, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.Equal(t, "CPA_BACKEND_REQUIRED", infraerrors.Reason(err))
+}
+
+func TestConfigPreservesSavedEndpointOrder(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	request := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, Enabled: true, Strategy: "priority", WorkerCount: 4,
+		PromptChunkConcurrency: promptChunkConcurrencyPtr(4), QueueCapacity: 100,
+		Scanners: []string{"pii"}, AllGroups: true,
+		Endpoints: []UpdateEndpoint{
+			{ID: "third-model", Name: "Third", Protocol: EndpointProtocolOpenAICompatible, BaseURL: "http://cpa:8317", Adapter: EndpointAdapterGenericLLM, Model: "gpt-third", TimeoutMS: 1000, InputLimit: 4000, Enabled: true},
+			{ID: "first-model", Name: "First", Protocol: EndpointProtocolOpenAICompatible, BaseURL: "http://cpa:8317", Adapter: EndpointAdapterGenericLLM, Model: "gpt-first", TimeoutMS: 1000, InputLimit: 4000, Enabled: true},
+			{ID: "second-model", Name: "Second", Protocol: EndpointProtocolOpenAICompatible, BaseURL: "http://cpa:8317", Adapter: EndpointAdapterGenericLLM, Model: "gpt-second", TimeoutMS: 1000, InputLimit: 4000, Enabled: true},
+		},
+	}
+	next, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.NoError(t, err)
+	require.Equal(t, []string{"third-model", "first-model", "second-model"}, []string{next.Endpoints[0].ID, next.Endpoints[1].ID, next.Endpoints[2].ID})
+
+	active, err := ActiveFromStorage(next, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"third-model", "first-model", "second-model"}, []string{active.EnabledEndpoints()[0].ID, active.EnabledEndpoints()[1].ID, active.EnabledEndpoints()[2].ID})
+	public := PublicFromStorage(next, true, nil)
+	require.Equal(t, []string{"third-model", "first-model", "second-model"}, []string{public.Endpoints[0].ID, public.Endpoints[1].ID, public.Endpoints[2].ID})
+}
+
+func TestRollbackPolicyRestoresSnapshotOrderAsNewVersion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	endpoint := func(id string) StorageEndpoint {
+		return StorageEndpoint{ID: id, Name: id, Protocol: EndpointProtocolOpenAICompatible, BaseURL: "http://cpa:8317", Adapter: EndpointAdapterGenericLLM, Model: "gpt-test", TimeoutMS: 1000, InputLimit: 4000, Enabled: true}
+	}
+	current := DefaultStorageConfig()
+	current.Enabled = true
+	current.ConfigVersion = 3
+	current.Endpoints = []StorageEndpoint{endpoint("luna"), endpoint("spark")}
+	target := cloneStorageConfig(current)
+	target.ConfigVersion = 2
+	target.Endpoints = []StorageEndpoint{endpoint("spark"), endpoint("luna")}
+	currentRaw, err := json.Marshal(current)
+	require.NoError(t, err)
+	targetRaw, err := json.Marshal(target)
+	require.NoError(t, err)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT value FROM settings").WithArgs(SettingKeyPromptAuditConfig).
+		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(string(currentRaw)))
+	mock.ExpectQuery("SELECT config_snapshot::text").WithArgs(int64(2)).
+		WillReturnRows(sqlmock.NewRows([]string{"config_snapshot"}).AddRow(string(targetRaw)))
+	mock.ExpectExec("INSERT INTO settings").WithArgs(SettingKeyPromptAuditConfig, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO prompt_audit_policy_versions").
+		WithArgs(int64(4), sqlmock.AnyArg(), `["spark","luna"]`, int64(42)).
+		WillReturnResult(sqlmock.NewResult(4, 1))
+	mock.ExpectCommit()
+
+	manager := NewConfigManager(db, staticSettingRepository{values: map[string]string{SettingKeyRiskControl: "true"}}, nil, prefixEncryptor{}, testTotpKeyConfig())
+	manager.clock = fixedClock{now: time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)}
+	public, err := manager.RollbackPolicy(context.Background(), 2, 3, 42)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), public.ConfigVersion)
+	require.Equal(t, []string{"spark", "luna"}, []string{public.Endpoints[0].ID, public.Endpoints[1].ID})
+	require.Contains(t, public.ChangeSummary, `"rollback_target_config_version":2`)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestConfigRejectsBlockingWithoutAudit(t *testing.T) {
@@ -75,7 +232,7 @@ func TestConfigRejectsBlockingWithoutAudit(t *testing.T) {
 
 func TestPublicConfigNeverMarshalsToken(t *testing.T) {
 	storage := DefaultStorageConfig()
-	storage.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "GUARD_TOKEN_CANARY_SECRET", TimeoutMS: 1000, InputLimit: 1000, Enabled: true}}
+	storage.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://cpa:8317", Model: DefaultGuardModel, TokenCiphertext: "GUARD_TOKEN_CANARY_SECRET", TimeoutMS: 1000, InputLimit: 1000, Enabled: true}}
 	public := PublicFromStorage(storage, true, nil)
 	raw, err := json.Marshal(public)
 	require.NoError(t, err)
@@ -153,7 +310,7 @@ func TestConfigManagerPublicRequiresSuccessfullyLoadedSnapshot(t *testing.T) {
 // default v1 config that makes every save fail the CAS version check.
 func TestConfigManagerUndecryptableTokenKeepsConfigVisibleAndRecoverable(t *testing.T) {
 	const canary = "persisted-token-canary"
-	persisted := `{"enabled":true,"blocking_enabled":false,"config_version":9,"endpoints":[{"id":"g1","name":"Guard","protocol":"openai_compatible","base_url":"http://127.0.0.1:8080","model":"m","token_ciphertext":"` + canary + `","timeout_ms":1000,"input_limit":1000,"enabled":true}]}`
+	persisted := `{"enabled":true,"blocking_enabled":false,"config_version":9,"endpoints":[{"id":"g1","name":"Guard","protocol":"openai_compatible","base_url":"http://cpa:8317","model":"m","token_ciphertext":"` + canary + `","timeout_ms":1000,"input_limit":1000,"enabled":true}]}`
 	manager := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
 		SettingKeyPromptAuditConfig: persisted,
 		SettingKeyRiskControl:       "true",
@@ -185,7 +342,7 @@ func TestConfigManagerUndecryptableTokenKeepsConfigVisibleAndRecoverable(t *test
 }
 
 func TestConfigManagerUndecryptableTokenStillFailsClosedForBlockingIntent(t *testing.T) {
-	persisted := `{"enabled":true,"blocking_enabled":true,"config_version":9,"endpoints":[{"id":"g1","name":"Guard","protocol":"openai_compatible","base_url":"http://127.0.0.1:8080","model":"m","token_ciphertext":"undecryptable","timeout_ms":1000,"input_limit":1000,"enabled":true}]}`
+	persisted := `{"enabled":true,"blocking_enabled":true,"config_version":9,"endpoints":[{"id":"g1","name":"Guard","protocol":"openai_compatible","base_url":"http://cpa:8317","model":"m","token_ciphertext":"undecryptable","timeout_ms":1000,"input_limit":1000,"enabled":true}]}`
 	manager := NewConfigManager(nil, staticSettingRepository{values: map[string]string{
 		SettingKeyPromptAuditConfig: persisted,
 		SettingKeyRiskControl:       "true",
@@ -208,9 +365,9 @@ func TestConfigManagerUndecryptableTokenStillFailsClosedForBlockingIntent(t *tes
 func TestBuildNextStoragePreserveReplaceAndClearToken(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
 	current := DefaultStorageConfig()
-	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
+	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://cpa:8317", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
 	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000}}}
+		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://cpa:8317", TimeoutMS: 1000, InputLimit: 1000}}}
 	preserved, err := manager.buildNextStorage(current, base, 9)
 	require.NoError(t, err)
 	require.Equal(t, "enc:old", preserved.Endpoints[0].TokenCiphertext)
@@ -228,6 +385,27 @@ func TestBuildNextStoragePreserveReplaceAndClearToken(t *testing.T) {
 	require.Empty(t, cleared.Endpoints[0].TokenCiphertext)
 }
 
+func TestBuildNextStorageInternalAntigravityRejectedByCPAPolicy(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}}
+	current := DefaultStorageConfig()
+	current.Endpoints = []StorageEndpoint{{
+		ID: "primary", Name: "Old HTTP", Protocol: EndpointProtocolOpenAICompatible,
+		BaseURL: "http://cpa:8317", Model: DefaultGuardModel,
+		TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000,
+	}}
+	req := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10,
+		Scanners: []string{"pii"}, AllGroups: true,
+		Endpoints: []UpdateEndpoint{{
+			ID: "primary", Name: "Gemini Primary", Protocol: EndpointProtocolAntigravityInternal,
+			Adapter: EndpointAdapterGenericLLM, Model: DefaultAntigravityAuditModel,
+			Token: "must-not-be-stored", TimeoutMS: 3000, InputLimit: 4000, Enabled: true,
+		}},
+	}
+	_, err := manager.buildNextStorage(current, req, 9)
+	require.Equal(t, "CPA_BACKEND_REQUIRED", infraerrors.Reason(err))
+}
+
 // Without a fixed encryption key the per-boot auto-generated key would make a
 // freshly saved token undecryptable after the next restart (issue #4887), so
 // saving a new token must be rejected with an actionable error. Preserving or
@@ -236,9 +414,9 @@ func TestBuildNextStoragePreserveReplaceAndClearToken(t *testing.T) {
 func TestBuildNextStorageRejectsNewTokenWithoutConfiguredEncryptionKey(t *testing.T) {
 	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: false}
 	current := DefaultStorageConfig()
-	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
+	current.Endpoints = []StorageEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://cpa:8317", Model: DefaultGuardModel, TokenCiphertext: "enc:old", TimeoutMS: 1000, InputLimit: 1000}}
 	base := UpdateConfigRequest{ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10, Scanners: []string{"PII"}, AllGroups: true,
-		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000}}}
+		Endpoints: []UpdateEndpoint{{ID: "one", Name: "One", Protocol: "openai_compatible", BaseURL: "http://cpa:8317", TimeoutMS: 1000, InputLimit: 1000}}}
 
 	newTokenReq := base
 	newTokenReq.Endpoints = append([]UpdateEndpoint(nil), base.Endpoints...)
@@ -416,6 +594,7 @@ func TestParseLegacyConfigDefaultsMissingFieldsWithoutEnablingBlocking(t *testin
 	require.False(t, storage.BlockingEnabled)
 	require.Equal(t, "priority", storage.Strategy)
 	require.Equal(t, DefaultWorkerCount, storage.WorkerCount)
+	require.Equal(t, DefaultPromptChunkConcurrency, storage.PromptChunkConcurrency)
 	require.Equal(t, DefaultQueueCapacity, storage.QueueCapacity)
 	require.Equal(t, AllScannerIDs, storage.Scanners)
 	require.True(t, storage.AllGroups)
@@ -433,6 +612,12 @@ func TestUpdateConfigStrictBoundsAndKnownValues(t *testing.T) {
 		{name: "strategy", mutate: func(req *UpdateConfigRequest) { req.Strategy = "round_robin" }, reason: "prompt_audit_invalid_strategy"},
 		{name: "worker low", mutate: func(req *UpdateConfigRequest) { req.WorkerCount = 0 }, reason: "prompt_audit_invalid_worker_count"},
 		{name: "worker high", mutate: func(req *UpdateConfigRequest) { req.WorkerCount = MaxWorkerCount + 1 }, reason: "prompt_audit_invalid_worker_count"},
+		{name: "chunk concurrency low", mutate: func(req *UpdateConfigRequest) {
+			req.PromptChunkConcurrency = promptChunkConcurrencyPtr(MinPromptChunkConcurrency - 1)
+		}, reason: "prompt_audit_invalid_chunk_concurrency"},
+		{name: "chunk concurrency high", mutate: func(req *UpdateConfigRequest) {
+			req.PromptChunkConcurrency = promptChunkConcurrencyPtr(MaxPromptChunkConcurrency + 1)
+		}, reason: "prompt_audit_invalid_chunk_concurrency"},
 		{name: "capacity low", mutate: func(req *UpdateConfigRequest) { req.QueueCapacity = 0 }, reason: "prompt_audit_invalid_queue_capacity"},
 		{name: "capacity high", mutate: func(req *UpdateConfigRequest) { req.QueueCapacity = MaxQueueCapacity + 1 }, reason: "prompt_audit_invalid_queue_capacity"},
 		{name: "unknown scanner", mutate: func(req *UpdateConfigRequest) { req.Scanners = []string{"made_up"} }, reason: "prompt_audit_invalid_scanner"},

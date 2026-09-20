@@ -20,9 +20,10 @@ import (
 )
 
 type userHandlerRepoStub struct {
-	user       *service.User
-	identities []service.UserAuthIdentityRecord
-	unbound    []string
+	user          *service.User
+	identities    []service.UserAuthIdentityRecord
+	balanceGrants []service.UserBalanceGrant
+	unbound       []string
 }
 
 func (s *userHandlerRepoStub) Create(context.Context, *service.User) error { return nil }
@@ -141,6 +142,11 @@ func (s *userHandlerRepoStub) GetByIDIncludeDeleted(ctx context.Context, id int6
 func (s *userHandlerRepoStub) ListUserAuthIdentities(context.Context, int64) ([]service.UserAuthIdentityRecord, error) {
 	out := make([]service.UserAuthIdentityRecord, len(s.identities))
 	copy(out, s.identities)
+	return out, nil
+}
+func (s *userHandlerRepoStub) ListActiveBalanceGrants(context.Context, int64, int) ([]service.UserBalanceGrant, error) {
+	out := make([]service.UserBalanceGrant, len(s.balanceGrants))
+	copy(out, s.balanceGrants)
 	return out, nil
 }
 func (s *userHandlerRepoStub) UnbindUserAuthProvider(_ context.Context, _ int64, provider string) error {

@@ -43,6 +43,9 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	if dsn := os.Getenv("SUB2API_TEST_DATABASE_DSN"); dsn != "" {
+		os.Exit(runUpgradeIntegration(m, dsn))
+	}
 	ctx := context.Background()
 
 	if err := timezone.Init("UTC"); err != nil {
@@ -422,4 +425,42 @@ func (s *IntegrationDBSuite) SetupTest() {
 func (s *IntegrationDBSuite) RequireNoError(err error, msgAndArgs ...any) {
 	s.T().Helper()
 	require.NoError(s.T(), err, msgAndArgs...)
+}
+
+// runUpgradeIntegration exercises a schema-only production clone. It refuses
+// any database outside the explicit upgrade-test namespace.
+func runUpgradeIntegration(m *testing.M, dsn string) int {
+	ctx := context.Background()
+	if err := timezone.Init("UTC"); err != nil {
+		panic(err)
+	}
+	var err error
+	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
+	if err != nil {
+		panic("cannot open isolated upgrade test database")
+	}
+	defer integrationDB.Close()
+	var database string
+	if err := integrationDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&database); err != nil {
+		panic(err)
+	}
+	if !strings.HasPrefix(database, "sub2api_upgrade_test_") {
+		panic("refusing non-test database")
+	}
+	if err := ApplyMigrations(ctx, integrationDB); err != nil {
+		panic(err)
+	}
+	drv := entsql.OpenDB(dialect.Postgres, integrationDB)
+	integrationEntClient = dbent.NewClient(dbent.Driver(drv))
+	defer integrationEntClient.Close()
+	addr := os.Getenv("SUB2API_TEST_REDIS_ADDR")
+	if addr == "" {
+		panic("isolated redis address is required")
+	}
+	integrationRedis = redisclient.NewClient(&redisclient.Options{Addr: addr})
+	defer integrationRedis.Close()
+	if err := integrationRedis.Ping(ctx).Err(); err != nil {
+		panic(err)
+	}
+	return m.Run()
 }

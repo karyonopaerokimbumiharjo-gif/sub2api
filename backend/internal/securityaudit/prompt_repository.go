@@ -41,26 +41,33 @@ type Job struct {
 }
 
 type Event struct {
-	ID              int64              `json:"id"`
-	JobID           int64              `json:"job_id"`
-	Snapshot        PromptSnapshot     `json:"snapshot"`
-	Decision        EventDecision      `json:"decision"`
-	RiskLevel       RiskLevel          `json:"risk_level"`
-	Action          Action             `json:"action"`
-	Categories      []string           `json:"categories"`
-	MatchedScanners []string           `json:"matched_scanners"`
-	ScannerScores   map[string]float64 `json:"scanner_scores"`
-	ScannerEvidence map[string]string  `json:"scanner_evidence"`
-	ScannerBackend  string             `json:"scanner_backend"`
-	ScannerVersion  string             `json:"scanner_version"`
-	GuardEndpointID string             `json:"guard_endpoint_id"`
-	PolicyID        string             `json:"policy_id"`
-	PolicyVersion   int                `json:"policy_version"`
-	ConfigVersion   int64              `json:"config_version"`
-	ChunkTotal      int                `json:"chunk_total"`
-	LatencyMS       int                `json:"latency_ms"`
-	IssueSummaries  []IssueSummary     `json:"issue_summaries"`
-	CreatedAt       time.Time          `json:"created_at"`
+	ID                int64              `json:"id"`
+	JobID             int64              `json:"job_id"`
+	Snapshot          PromptSnapshot     `json:"snapshot"`
+	AuditStatus       string             `json:"audit_status"`
+	Decision          EventDecision      `json:"decision"`
+	RiskLevel         RiskLevel          `json:"risk_level"`
+	Action            Action             `json:"action"`
+	Categories        []string           `json:"categories"`
+	IntentCategories  []string           `json:"intent_categories"`
+	ContentCategories []string           `json:"content_categories"`
+	MatchedScanners   []string           `json:"matched_scanners"`
+	ScannerScores     map[string]float64 `json:"scanner_scores"`
+	ScannerEvidence   map[string]string  `json:"scanner_evidence"`
+	ScannerBackend    string             `json:"scanner_backend"`
+	ScannerVersion    string             `json:"scanner_version"`
+	GuardEndpointID   string             `json:"guard_endpoint_id"`
+	PolicyID          string             `json:"policy_id"`
+	PolicyVersion     int                `json:"policy_version"`
+	ConfigVersion     int64              `json:"config_version"`
+	ChunkTotal        int                `json:"chunk_total"`
+	LatencyMS         int                `json:"latency_ms"`
+	IssueSummaries    []IssueSummary     `json:"issue_summaries"`
+	DuplicateCount    int                `json:"duplicate_count"`
+	PolicySource      string             `json:"policy_source"`
+	PolicyCode        string             `json:"policy_code"`
+	ReviewStatus      string             `json:"review_status"`
+	CreatedAt         time.Time          `json:"created_at"`
 }
 
 type JobRepository interface {
@@ -304,6 +311,67 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 	return event, nil
 }
 
+// RecordAuditGap stores the complete received prompt without classifying it.
+// It is a historical boundary marker, not an Allow verdict, and is never
+// backfilled automatically when auditing is enabled again.
+func (r *PostgreSQLRepository) RecordAuditGap(ctx context.Context, snapshot PromptSnapshot, configVersion int64) (*Event, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("prompt audit database unavailable")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	job, err := insertJob(ctx, tx, snapshot.Redacted(), ModeAsync, configVersion, "done", 1)
+	if err != nil {
+		return nil, err
+	}
+	result := &NormalizedResult{
+		Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, Safety: "NotAudited",
+		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{},
+		ScannerBackend: "not-audited", ScannerVersion: "gap-v1", PolicyID: "prompt-audit-gap", PolicyVersion: 1,
+	}
+	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result, "gap")
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return event, nil
+}
+
+// RecordUserBypass stores an explicit NotAudited marker. It does not
+// classify the prompt and cannot create any block or risk-cache state.
+func (r *PostgreSQLRepository) RecordUserBypass(ctx context.Context, snapshot PromptSnapshot, configVersion int64) (*Event, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("prompt audit database unavailable")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	job, err := insertJob(ctx, tx, snapshot.Redacted(), ModeOff, configVersion, "done", 1)
+	if err != nil {
+		return nil, err
+	}
+	result := &NormalizedResult{
+		Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, Safety: "NotAudited",
+		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{"user_bypass": "administrator_user_release"},
+		ScannerBackend: "prompt-audit-user-bypass", ScannerVersion: "v1", PolicyID: "prompt-audit-user-bypass", PolicyVersion: 1,
+	}
+	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result, "bypass")
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return event, nil
+}
+
 // shouldStorePromptAuditEvent keeps store_pass_events scoped to safe results.
 // Risk events are always persisted while prompt auditing itself is enabled.
 func shouldStorePromptAuditEvent(decision EventDecision, storePassEvents bool) bool {
@@ -322,21 +390,27 @@ func insertJob(ctx context.Context, queryer sqlQueryer, snapshot PromptSnapshot,
 	row := queryer.QueryRowContext(ctx, `
 		INSERT INTO prompt_audit_jobs (
 			request_id,user_id,username_snapshot,user_email_snapshot,api_key_id,api_key_name_snapshot,
-			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,redacted_preview,
+			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,task_fingerprint,audit_subject,redacted_preview,
 			prompt_length,message_count,stage,execution_mode,config_version,status,max_attempts,processed_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,`+processedExpr+`)
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,`+processedExpr+`)
 		RETURNING `+jobColumns("prompt_audit_jobs"),
 		snapshot.RequestID, nullableID(snapshot.UserID), snapshot.UsernameSnapshot, snapshot.UserEmailSnapshot,
 		nullableID(snapshot.APIKeyID), snapshot.APIKeyNameSnapshot, snapshot.GroupID, snapshot.GroupName,
 		snapshot.Provider, snapshot.Endpoint, snapshot.Protocol, snapshot.Model, snapshot.PromptHash,
-		snapshot.RedactedPreview, snapshot.PromptLength, snapshot.MessageCount, normalizeStage(snapshot.Stage),
+		snapshot.TaskFingerprint, snapshot.AuditSubject, snapshot.RedactedPreview, snapshot.PromptLength, snapshot.MessageCount, normalizeStage(snapshot.Stage),
 		string(mode), configVersion, status, maxAttempts)
 	return scanJob(row)
 }
 
 func insertEvent(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult) (*Event, error) {
-	categories, _ := json.Marshal(result.Categories)
-	matched, _ := json.Marshal(result.MatchedScanners)
+	return insertEventWithAuditStatus(ctx, queryer, jobID, snapshot, configVersion, result, "audited")
+}
+
+func insertEventWithAuditStatus(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, auditStatus string) (*Event, error) {
+	categories := marshalStringJSONArray(result.Categories)
+	intentCategories := marshalStringJSONArray(result.IntentCategories)
+	contentCategories := marshalStringJSONArray(result.ContentCategories)
+	matched := marshalStringJSONArray(result.MatchedScanners)
 	scores, _ := json.Marshal(result.ScannerScores)
 	evidence := make(map[string]string, len(result.ScannerEvidence))
 	for key, value := range result.ScannerEvidence {
@@ -346,21 +420,29 @@ func insertEvent(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot 
 	row := queryer.QueryRowContext(ctx, `
 		INSERT INTO prompt_audit_events (
 			job_id,request_id,user_id,username_snapshot,user_email_snapshot,api_key_id,api_key_name_snapshot,
-			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,redacted_preview,stage,
-			decision,risk_level,action,categories,matched_scanners,scanner_scores,scanner_evidence,
+			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,task_fingerprint,audit_subject,redacted_preview,stage,
+			decision,risk_level,action,categories,intent_categories,content_categories,matched_scanners,scanner_scores,scanner_evidence,
 			scanner_backend,scanner_version,guard_endpoint_id,policy_id,policy_version,config_version,chunk_total,latency_ms,
-			full_prompt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-			$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+			full_prompt,audited_prompt,audit_status
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+			$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
 		RETURNING `+eventDetailColumns("prompt_audit_events"),
 		jobID, snapshot.RequestID, nullableID(snapshot.UserID), snapshot.UsernameSnapshot, snapshot.UserEmailSnapshot,
 		nullableID(snapshot.APIKeyID), snapshot.APIKeyNameSnapshot, snapshot.GroupID, snapshot.GroupName,
 		snapshot.Provider, snapshot.Endpoint, snapshot.Protocol, snapshot.Model, snapshot.PromptHash,
-		snapshot.RedactedPreview, normalizeStage(snapshot.Stage), string(result.Decision), string(result.RiskLevel),
-		string(result.Action), categories, matched, scores, evidenceJSON, result.ScannerBackend, result.ScannerVersion,
+		snapshot.TaskFingerprint, snapshot.AuditSubject, snapshot.RedactedPreview, normalizeStage(snapshot.Stage), string(result.Decision), string(result.RiskLevel),
+		string(result.Action), categories, intentCategories, contentCategories, matched, scores, evidenceJSON, result.ScannerBackend, result.ScannerVersion,
 		result.GuardEndpointID, result.PolicyID, result.PolicyVersion, configVersion, result.ChunkTotal, result.LatencyMS,
-		snapshot.FullPrompt)
+		snapshot.FullPrompt, snapshot.AuditedPrompt, auditStatus)
 	return scanEvent(row, true)
+}
+
+func marshalStringJSONArray(values []string) []byte {
+	if values == nil {
+		return []byte("[]")
+	}
+	raw, _ := json.Marshal(values)
+	return raw
 }
 
 type rowScanner interface{ Scan(...any) error }
@@ -373,7 +455,7 @@ func scanJob(row rowScanner) (*Job, error) {
 		&job.ID, &job.Snapshot.RequestID, &userID, &job.Snapshot.UsernameSnapshot, &job.Snapshot.UserEmailSnapshot,
 		&apiKeyID, &job.Snapshot.APIKeyNameSnapshot, &groupID, &job.Snapshot.GroupName, &job.Snapshot.Provider,
 		&job.Snapshot.Endpoint, &job.Snapshot.Protocol, &job.Snapshot.Model, &job.Snapshot.PromptHash,
-		&job.Snapshot.RedactedPreview, &job.Snapshot.PromptLength, &job.Snapshot.MessageCount, &job.Snapshot.Stage,
+		&job.Snapshot.TaskFingerprint, &job.Snapshot.AuditSubject, &job.Snapshot.RedactedPreview, &job.Snapshot.PromptLength, &job.Snapshot.MessageCount, &job.Snapshot.Stage,
 		&job.ExecutionMode, &job.ConfigVersion, &job.Status, &job.Attempts, &job.MaxAttempts, &job.ClaimVersion,
 		&job.NextAttemptAt, &processingStarted, &processed, &job.LastErrorCode, &job.LastErrorMessage,
 		&job.CreatedAt, &job.UpdatedAt,
@@ -398,7 +480,7 @@ func scanJob(row rowScanner) (*Job, error) {
 func jobColumns(alias string) string {
 	return fmt.Sprintf(`%[1]s.id,%[1]s.request_id,%[1]s.user_id,%[1]s.username_snapshot,%[1]s.user_email_snapshot,
 		%[1]s.api_key_id,%[1]s.api_key_name_snapshot,%[1]s.group_id,%[1]s.group_name,%[1]s.provider,
-		%[1]s.endpoint,%[1]s.protocol,%[1]s.model,%[1]s.prompt_hash,%[1]s.redacted_preview,
+		%[1]s.endpoint,%[1]s.protocol,%[1]s.model,%[1]s.prompt_hash,%[1]s.task_fingerprint,%[1]s.audit_subject,%[1]s.redacted_preview,
 		%[1]s.prompt_length,%[1]s.message_count,%[1]s.stage,%[1]s.execution_mode,%[1]s.config_version,%[1]s.status,
 		%[1]s.attempts,%[1]s.max_attempts,%[1]s.claim_version,%[1]s.next_attempt_at,
 		%[1]s.processing_started_at,%[1]s.processed_at,%[1]s.last_error_code,%[1]s.last_error_message,

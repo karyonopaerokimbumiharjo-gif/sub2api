@@ -189,7 +189,7 @@ describe('AccountUsageCell', () => {
     expect(updatedAccount?.ollama_cloud_usage?.auto_refresh_enabled).toBe(false)
   })
 
-  it.each(['kimi', 'zhipu', 'deepseek', 'minimax'] as const)(
+  it.each(['kimi', 'zhipu', 'deepseek'] as const)(
     '%s apikey 账号 Ollama Cloud eligible 时渲染 Ollama 用量单元格并跳过 CN 子单元格',
     async (platform) => {
       const wrapper = mount(AccountUsageCell, {
@@ -474,6 +474,100 @@ describe('AccountUsageCell', () => {
     // 单一数据源：始终使用 /usage API 返回值，忽略 codex 快照
     expect(wrapper.text()).toContain('5h|18|900')
     expect(wrapper.text()).toContain('7d|36|900')
+  })
+
+  it('显式 CPA quota bridge 使用旧 OpenAI 用量窗口并显示完整重置控件', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: {
+        utilization: 3,
+        resets_at: '2099-08-24T05:00:00Z',
+        remaining_seconds: 3600,
+        window_stats: {
+          requests: 478,
+          tokens: 62700000,
+          cost: 84.08,
+          standard_cost: 84.08,
+          user_cost: 16.82
+        }
+      },
+      seven_day: {
+        utilization: 22,
+        resets_at: '2099-08-30T05:00:00Z',
+        remaining_seconds: 3600,
+        window_stats: {
+          requests: 4000,
+          tokens: 477200000,
+          cost: 574.52,
+          standard_cost: 574.52,
+          user_cost: 114.9
+        }
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 3030,
+          platform: 'openai',
+          type: 'apikey',
+          extra: {
+            openai_quota_via_compatible_upstream: true
+          }
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'windowStats', 'color'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ windowStats?.requests }}|{{ windowStats?.tokens }}|{{ windowStats?.standard_cost }}|{{ windowStats?.user_cost }}</div>'
+          },
+          AccountQuotaInfo: true,
+          OpenAIQuotaResetCell: {
+            template: '<div data-test="oauth-reset-control"><slot name="pre-actions" />oauth reset</div>'
+          }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(3030)
+    expect(wrapper.text()).toContain('5h|3|478|62700000|84.08|16.82')
+    expect(wrapper.text()).toContain('7d|22|4000|477200000|574.52|114.9')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.activeQuery')
+    expect(wrapper.find('[data-test="oauth-reset-control"]').exists()).toBe(true)
+  })
+
+  it('CPA query failures are visible and a retry replaces the stale quota', async () => {
+    getUsage.mockResolvedValue({
+      five_hour: null, seven_day: { utilization: 11, resets_at: null },
+      quota_updated_at: '2026-08-31T03:46:06+08:00',
+      error_code: 'quota_refresh_failed', error: 'cached values may be stale'
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ platform: 'openai', type: 'apikey', extra: { openai_quota_via_compatible_upstream: true } }) },
+      global: { stubs: {
+        UsageProgressBar: { props: ['utilization'], template: '<span>{{ utilization }}%</span>' },
+        AccountQuotaInfo: true,
+        OpenAIQuotaResetCell: { template: '<div><slot name="pre-actions" /></div>' }
+      } }
+    })
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('quotaRefreshFailed')
+    expect(wrapper.text()).toContain('11%')
+    const queryButton = wrapper.findAll('button').find(b => b.text().includes('activeQuery'))!
+    getUsage.mockRejectedValueOnce(new Error('network unavailable'))
+    await queryButton.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('quotaRefreshFailed')
+    getUsage.mockResolvedValueOnce({ five_hour: null, seven_day: { utilization: 66, resets_at: null }, quota_updated_at: '2026-09-05T17:00:00+08:00' })
+    await queryButton.trigger('click')
+    await flushPromises()
+    expect(getUsage).toHaveBeenLastCalledWith(1, 'active', true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('66%')
+    expect(wrapper.text()).not.toContain('11%')
+    wrapper.unmount()
   })
 
   it('仅为 OpenAI OAuth 7d 窗口计算预计总费用', async () => {

@@ -446,6 +446,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		return nil, handleErr
 	}
+	if GetOpsBioPolicy(c) != nil {
+		if handleErr == nil {
+			handleErr = errOpenAIBioPolicyForwarded
+		}
+		return nil, handleErr
+	}
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing.
 	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
@@ -575,6 +581,11 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			}
 			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", clientMsg)
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
+		}
+		if hit, msg := markOpenAIBioPolicy(c, payload, http.StatusOK, usage.InputTokens, usage.OutputTokens); hit {
+			MarkResponseCommitted(c)
+			writeChatCompletionsError(c, http.StatusForbidden, "invalid_request_error", OpenAIBioPolicyClientMessage)
+			return nil, fmt.Errorf("openai bio_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
 		if openAIStreamFailedEventShouldFailover(payload, message) {
@@ -828,6 +839,20 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					// finalizeStream 的 [DONE] 同样发不出去，统一抑制。
 					clientDisconnected = true
 				}
+				return true
+			}
+			if hit, msg := markOpenAIBioPolicy(c, payloadBytes, http.StatusOK, usage.InputTokens, usage.OutputTokens); hit {
+				if !clientDisconnected {
+					writeStreamHeaders()
+					if _, err := fmt.Fprint(c.Writer, buildChatStreamErrorSSE("bio_policy", OpenAIBioPolicyClientMessage)); err == nil {
+						_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+						if flusher, ok := c.Writer.(http.Flusher); ok {
+							flusher.Flush()
+						}
+					}
+					clientDisconnected = true
+				}
+				streamNonFailoverErr = fmt.Errorf("openai bio_policy: %s", msg)
 				return true
 			}
 			shouldFailover := openAIStreamFailedEventShouldFailover(payloadBytes, message)

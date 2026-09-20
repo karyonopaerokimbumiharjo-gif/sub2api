@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -39,30 +40,32 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 		"prepared args must match the arg-type table length")
 
 	// created_at is last; native_compaction_v2 is penultimate; session_id precedes it.
-	sessionArg := prepared.args[len(prepared.args)-3]
+	sessionArg := prepared.args[len(prepared.args)-4]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.True(t, ns.Valid)
 	require.Equal(t, sessionID, ns.String)
 
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3],
+	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4],
 		"session_id arg type must be text")
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2],
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3],
 		"native_compaction_v2 arg type must be boolean")
+	require.Equal(t, "integer", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2],
+		"prompt audit latency arg type must be integer")
 }
 
 // TestPrepareUsageLogInsert_SessionIDNullWhenAbsent proves an absent session id is
 // persisted as SQL NULL rather than an empty string.
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
-	sessionArg := prepared.args[len(prepared.args)-3]
+	sessionArg := prepared.args[len(prepared.args)-4]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.False(t, ns.Valid, "absent session id must be NULL, not empty string")
 
 	empty := ""
 	preparedEmpty := prepareUsageLogInsert(newSessionIDUsageLog(&empty))
-	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-3].(sql.NullString)
+	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-4].(sql.NullString)
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 
@@ -95,6 +98,24 @@ func TestPrepareUsageLogInsert_RequestedReasoningEffortArgWiring(t *testing.T) {
 	require.Equal(t, requested, requestedArg.String)
 }
 
+func TestPrepareUsageLogInsert_PromptAuditLatencyWiring(t *testing.T) {
+	latencyMS := 432
+	log := newSessionIDUsageLog(nil)
+	attachPromptAuditLatency(service.WithPromptAuditLatency(context.Background(), latencyMS), log)
+	require.NotNil(t, log.PromptAuditLatencyMs)
+	require.Equal(t, latencyMS, *log.PromptAuditLatencyMs)
+
+	prepared := prepareUsageLogInsert(log)
+	auditArg, ok := prepared.args[len(prepared.args)-2].(sql.NullInt64)
+	require.True(t, ok)
+	require.True(t, auditArg.Valid)
+	require.Equal(t, int64(latencyMS), auditArg.Int64)
+
+	historical := newSessionIDUsageLog(nil)
+	attachPromptAuditLatency(context.Background(), historical)
+	require.Nil(t, historical.PromptAuditLatencyMs)
+}
+
 // TestUsageLogInsertQueries_IncludeSessionID guards that every generated INSERT path
 // and the SELECT column list reference session_id.
 func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
@@ -102,6 +123,10 @@ func TestUsageLogInsertQueries_IncludeSessionID(t *testing.T) {
 		"SELECT column list must include requested_reasoning_effort")
 	require.Contains(t, usageLogSelectColumns, "session_id",
 		"SELECT column list must include session_id")
+	require.Contains(t, usageLogSelectColumns, "prompt_audit_latency_ms",
+		"SELECT column list must include prompt_audit_latency_ms")
+	require.Contains(t, usageLogSelectColumns, "prompt_audit_events",
+		"SELECT column list must recover asynchronously completed audit latency")
 
 	sessionID := "sess-in-query"
 	log := newSessionIDUsageLog(&sessionID)

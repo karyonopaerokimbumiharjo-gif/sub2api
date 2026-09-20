@@ -254,6 +254,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if promptAuditLatencyMS := service.PromptAuditLatencyFromContext(parent); promptAuditLatencyMS != nil {
+		base = service.WithPromptAuditLatency(base, *promptAuditLatencyMS)
+	}
 	return base
 }
 
@@ -551,6 +554,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.openAISecurityAuditError(c, decision)
 		return
 	}
+	if h.rejectIfBioPromptBlocked(c, apiKey, reqModel, cyberBlockFormatResponses) {
+		return
+	}
 
 	if gpt6jMode.Enabled && gpt6jMode.EnhancedCompaction {
 		if legacyCompact || nativeV2 {
@@ -825,6 +831,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			cyberBlockBodyHTTP = sessionHashBody
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordBioPolicyIfMarked(c, apiKey, account, reqModel)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -1254,6 +1261,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicSecurityAuditError(c, decision)
 		return
 	}
+	if h.rejectIfBioPromptBlocked(c, apiKey, reqModel, cyberBlockFormatAnthropic) {
+		return
+	}
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -1406,6 +1416,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			cyberBlockBodyMsg = body
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyMsg, clientRequestedUsageFields(c, channelMappingMsg, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordBioPolicyIfMarked(c, apiKey, account, reqModel)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -4284,6 +4295,11 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			gwSvc.MarkCyberSessionBlocked(blockCtx, plan.scopeKey, plan.keys)
 			cancel()
 		}
+	}
+	if snapshot, ok := securityAuditSnapshot(c); ok && h.securityAuditCoordinator != nil {
+		blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		_ = h.securityAuditCoordinator.RecordUpstreamPolicyFeedback(blockCtx, snapshot, "cyber_policy", mark.Message)
+		cancel()
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

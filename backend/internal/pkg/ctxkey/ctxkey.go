@@ -8,6 +8,10 @@ const (
 	// ForcePlatform 强制平台（用于 /antigravity 路由），由 middleware.ForcePlatform 设置
 	ForcePlatform Key = "ctx_force_platform"
 
+	// InternalAccountPool 标识受信任的内部服务调用可从指定平台的全部可调度账号中选择。
+	// 该标记不得由用户请求设置；它仅绕过账号分组归属过滤，其他模型、配额和限流检查仍然生效。
+	InternalAccountPool Key = "ctx_internal_account_pool"
+
 	// ResolvedTargetPlatform 是 composite 分组按请求模型解析出的真实目标平台。
 	ResolvedTargetPlatform Key = "ctx_resolved_target_platform"
 
@@ -40,6 +44,10 @@ const (
 
 	// AccountSwitchCount 表示请求过程中发生的账号切换次数
 	AccountSwitchCount Key = "ctx_account_switch_count"
+
+	// PromptAuditLatencyMS records the wall-clock latency added by the synchronous
+	// prompt-audit gate before an allowed request is dispatched upstream.
+	PromptAuditLatencyMS Key = "ctx_prompt_audit_latency_ms"
 
 	// IsClaudeCodeClient 标识当前请求是否来自 Claude Code 客户端
 	IsClaudeCodeClient Key = "ctx_is_claude_code_client"

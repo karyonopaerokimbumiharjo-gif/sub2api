@@ -69,12 +69,13 @@ func setupSyncUpstreamModelsRouter(adminSvc service.AdminService, upstream servi
 		nil,
 		nil,
 		upstream,
-		&config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+		&config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false, AllowInsecureHTTP: true}}},
 		nil,
 	)
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, accountTestSvc, nil, nil, nil, nil, nil)
 	router.POST("/api/v1/admin/accounts/:id/models/sync-upstream", handler.SyncUpstreamModels)
 	router.POST("/api/v1/admin/accounts/models/sync-upstream-preview", handler.SyncUpstreamModelsPreview)
+	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
 	return router
 }
 
@@ -220,7 +221,7 @@ func TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefau
 	require.NotEqual(t, "gpt-5", resp.Data[0].ID)
 }
 
-func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyDefaultsToConcreteGPT56Sol(t *testing.T) {
+func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyFallbackIncludesGPT6Astra(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
 		account: service.Account{
@@ -249,7 +250,54 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyDefaultsToConcreteGPT56Sol
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.Data)
-	require.Equal(t, "gpt-5.6-sol", resp.Data[0].ID)
+	require.Equal(t, "gpt-6-astra", resp.Data[0].ID)
+}
+
+func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUsesLiveCatalog(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mapping map[string]any
+		status  int
+		want    []string
+	}{
+		{name: "new upstream models appear automatically", status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model"}},
+		{name: "explicit whitelist stays authoritative", mapping: map[string]any{"public-alias": "gpt-6-astra"}, status: http.StatusOK, want: []string{"public-alias"}},
+		{name: "failed refresh is visible", status: http.StatusBadGateway},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credentials := map[string]any{"api_key": "test-key", "base_url": "http://cpa:8317/v1"}
+			if test.mapping != nil {
+				credentials["model_mapping"] = test.mapping
+			}
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account:          service.Account{ID: 30, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: credentials},
+			}
+			upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+				StatusCode: test.status,
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gpt-6-astra"},{"id":"future-upstream-model"}]}`)),
+			}}
+			router := setupSyncUpstreamModelsRouter(svc, upstream)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/30/models", nil))
+			require.Equal(t, test.status, rec.Code)
+			if test.status != http.StatusOK {
+				require.Contains(t, rec.Body.String(), "Failed to fetch current upstream model list")
+				return
+			}
+			var response struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+			ids := make([]string, 0, len(response.Data))
+			for _, model := range response.Data {
+				ids = append(ids, model.ID)
+			}
+			require.ElementsMatch(t, test.want, ids)
+		})
+	}
 }
 
 func TestAccountHandlerGetAvailableModels_OpenAISparkShadowReturnsMappingModels(t *testing.T) {

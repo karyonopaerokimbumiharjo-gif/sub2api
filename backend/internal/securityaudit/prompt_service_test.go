@@ -15,6 +15,30 @@ type staticSettingRepository struct {
 	values map[string]string
 }
 
+type fakePromptSegmentAllowCache struct {
+	known map[string]struct{}
+}
+
+func (c *fakePromptSegmentAllowCache) KnownAllowed(_ context.Context, _ Request, _ int64, fingerprints []string) (map[string]struct{}, error) {
+	result := make(map[string]struct{}, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		if _, ok := c.known[fingerprint]; ok {
+			result[fingerprint] = struct{}{}
+		}
+	}
+	return result, nil
+}
+
+func (c *fakePromptSegmentAllowCache) RememberAllowed(_ context.Context, _ Request, _ int64, fingerprints []string) error {
+	if c.known == nil {
+		c.known = map[string]struct{}{}
+	}
+	for _, fingerprint := range fingerprints {
+		c.known[fingerprint] = struct{}{}
+	}
+	return nil
+}
+
 func (r staticSettingRepository) Get(context.Context, string) (*service.Setting, error) {
 	return nil, service.ErrSettingNotFound
 }
@@ -68,23 +92,60 @@ func TestPromptServiceStartReportsDependencyFailureWithoutPanic(t *testing.T) {
 	require.NoError(t, service.Shutdown(ctx))
 }
 
-func TestPromptServiceBlockingLatestTurnOnlyUsesNarrowSnapshot(t *testing.T) {
-	seen := make([]string, 0, 2)
-	evaluator := newGuardEvaluator(PromptScannerFunc(func(_ context.Context, _ ActiveEndpoint, chunk string, _ []string) (*NormalizedResult, error) {
+func TestPromptServiceIncrementalAuditScansContextOnceThenReusesAllow(t *testing.T) {
+	seen := make([]string, 0, 4)
+	evaluator := newGuardEvaluatorWithChunkConcurrency(PromptScannerFunc(func(_ context.Context, _ ActiveEndpoint, chunk string, _ []string) (*NormalizedResult, error) {
 		seen = append(seen, chunk)
 		return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}}, nil
-	}), nil, NewAtomicMetrics(), 2, 2)
+	}), nil, NewAtomicMetrics(), 2, 2, 1)
+	cache := &fakePromptSegmentAllowCache{known: map[string]struct{}{}}
 	service := &PromptService{
 		config: &fakeConfigStore{active: true, cfg: ActiveConfig{
 			RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, BlockingLatestTurnOnly: true, AllGroups: true,
 			Scanners: AllScannerIDs, Endpoints: []ActiveEndpoint{{ID: "guard-1", Enabled: true, TimeoutMS: 1000, InputLimit: 4096}},
 		}},
-		evaluator: evaluator,
+		evaluator: evaluator, segmentCache: cache,
 	}
-	decision, err := service.Evaluate(context.Background(), Request{Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"system","content":"system instruction"},{"role":"user","content":"older user input"},{"role":"assistant","content":"previous output"},{"role":"user","content":"latest user input"}]}`)})
+	req := Request{RequestID: "incremental-1", Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"system","content":"system instruction"},{"role":"user","content":"older user input"},{"role":"assistant","content":"previous output"},{"role":"user","content":"latest user input"}]}`)}
+	decision, err := service.Evaluate(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, DecisionAllow, decision.Kind)
+	require.Len(t, seen, 2)
+	require.Equal(t, "latest user input", seen[0])
+	require.Contains(t, seen[1], "previous output")
+	require.Contains(t, seen[1], "system instruction")
+	require.Contains(t, seen[1], "older user input")
+
+	seen = seen[:0]
+	req.RequestID = "incremental-2"
+	decision, err = service.Evaluate(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, DecisionAllow, decision.Kind)
 	require.Equal(t, []string{"latest user input", "previous output"}, seen)
+}
+
+func TestPromptServiceFastAuditUsesLegacyLatestScope(t *testing.T) {
+	seen := ""
+	evaluator := newGuardEvaluatorWithChunkConcurrency(PromptScannerFunc(func(_ context.Context, _ ActiveEndpoint, chunk string, _ []string) (*NormalizedResult, error) {
+		seen += chunk
+		return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}}, nil
+	}), nil, NewAtomicMetrics(), 2, 2, 1)
+	service := &PromptService{
+		config: &fakeConfigStore{active: true, cfg: ActiveConfig{
+			RiskControlEnabled: true, Enabled: true, BlockingEnabled: true,
+			BlockingAuditMode: BlockingAuditModeFastLatest, AllGroups: true,
+			Scanners: AllScannerIDs, Endpoints: []ActiveEndpoint{{ID: "guard-1", Enabled: true, TimeoutMS: 1000, InputLimit: 4096}},
+		}},
+		evaluator: evaluator,
+	}
+	req := Request{RequestID: "fast-1", Protocol: "openai_chat_completions", Body: []byte(`{"messages":[{"role":"system","content":"system instruction"},{"role":"user","content":"older user input"},{"role":"assistant","content":"previous output"},{"role":"user","content":"latest user input"}]}`)}
+	decision, err := service.Evaluate(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, DecisionAllow, decision.Kind)
+	require.Contains(t, seen, "latest user input")
+	require.Contains(t, seen, "previous output")
+	require.NotContains(t, seen, "system instruction")
+	require.NotContains(t, seen, "older user input")
 }
 
 func TestPromptServiceRejectsInvalidDeleteConfirmationClaims(t *testing.T) {

@@ -13,17 +13,26 @@ import {
 const config = (): PromptAuditConfig => ({
   enabled: true,
   blocking_enabled: false,
+  blocking_audit_mode: 'full',
   blocking_latest_turn_only: false,
   store_pass_events: false,
+  adaptive_enabled: false,
+  adaptive_collect_when_disabled: true,
+  adaptive_allow_sample_rate: 5,
+  adaptive_risk_sample_rate: 100,
+  output_audit_enabled: false,
+  output_allow_sample_rate: 5,
+  output_risk_sample_rate: 100,
   effective_mode: 'async_audit',
   strategy: 'priority',
   worker_count: 4,
+  prompt_chunk_concurrency: 4,
   queue_capacity: 100,
   scanners: SCANNER_CATALOG.map((item) => item.id),
   all_groups: true,
   group_ids: [],
   endpoints: [{
-    id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', base_url: 'http://127.0.0.1:8000',
+    id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', adapter: 'qwen3guard', base_url: 'http://127.0.0.1:8000',
     model: 'sileader/qwen3guard:0.6b', timeout_ms: 3000, input_limit: 4000, enabled: true,
     has_token: true, token_status: 'configured',
   }],
@@ -35,12 +44,12 @@ const config = (): PromptAuditConfig => ({
 
 describe('Prompt Audit view model', () => {
   it('normalizes legacy null collections from the public config', () => {
-    const legacy = { ...config(), group_ids: null, scanners: null, endpoints: null } as unknown as PromptAuditConfig
-    expect(configToDraft(legacy)).toMatchObject({ group_ids: [], scanners: [], endpoints: [] })
+    const legacy = { ...config(), prompt_chunk_concurrency: undefined, group_ids: null, scanners: null, endpoints: null } as unknown as PromptAuditConfig
+    expect(configToDraft(legacy)).toMatchObject({ prompt_chunk_concurrency: 4, group_ids: [], scanners: [], endpoints: [] })
   })
 
   it('models all nine official input scanners', () => {
-    expect(SCANNER_CATALOG).toHaveLength(9)
+    expect(SCANNER_CATALOG).toHaveLength(10)
     expect(SCANNER_CATALOG.map((item) => item.id)).toContain('suicide_and_self_harm')
   })
 
@@ -59,8 +68,46 @@ describe('Prompt Audit view model', () => {
 
   it('includes the optional narrow blocking scope in the update payload', () => {
     const draft = configToDraft(config())
-    draft.blocking_latest_turn_only = true
-    expect(buildUpdateRequest(draft)).toMatchObject({ blocking_latest_turn_only: true })
+    draft.blocking_audit_mode = 'incremental_full'
+    draft.prompt_chunk_concurrency = 12
+    expect(buildUpdateRequest(draft)).toMatchObject({ blocking_audit_mode: 'incremental_full', blocking_latest_turn_only: true, prompt_chunk_concurrency: 12 })
+  })
+
+  it('normalizes and deduplicates whitelist emails in the update payload', () => {
+    const draft = configToDraft(config())
+    draft.whitelist_emails = [' Trusted@Example.com ', 'trusted@example.com', 'second@example.test']
+    expect(buildUpdateRequest(draft).whitelist_emails).toEqual(['second@example.test', 'trusted@example.com'])
+  })
+
+  it('preserves the exact endpoint array order in the update payload', () => {
+    const draft = configToDraft(config())
+    draft.endpoints = [
+      { ...draft.endpoints[0], id: 'node-z', name: 'Z' },
+      { ...draft.endpoints[0], id: 'node-a', name: 'A' },
+      { ...draft.endpoints[0], id: 'node-m', name: 'M' },
+    ]
+    expect(buildUpdateRequest(draft).endpoints.map((item) => item.id)).toEqual(['node-z', 'node-a', 'node-m'])
+  })
+
+  it('uses the Spark audit model for internal OpenAI endpoints', () => {
+    const draft = configToDraft(config())
+    draft.endpoints[0] = {
+      ...draft.endpoints[0],
+      protocol: 'openai_internal',
+      adapter: 'generic_llm',
+      base_url: '',
+      model: '',
+      token: '',
+      has_token: false,
+      token_status: 'not_required',
+    }
+    expect(buildUpdateRequest(draft).endpoints[0]).toMatchObject({
+      protocol: 'openai_internal',
+      adapter: 'generic_llm',
+      base_url: '',
+      model: 'gpt-5.3-codex-spark',
+      token: undefined,
+    })
   })
 
   it('tracks dirty state from the full normalized save payload', () => {

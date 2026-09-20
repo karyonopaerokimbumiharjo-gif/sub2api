@@ -167,45 +167,26 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
-  it('全部目标为 Grok OAuth 时，官方主机 base_url 作为手动端点切换正常提交', async () => {
-    const wrapper = mountModal({
-      selectedPlatforms: ['grok'],
-      selectedTypes: ['oauth']
-    })
+  it.each([
+    { name: 'Grok OAuth', selectedPlatforms: ['grok'], selectedTypes: ['oauth'] },
+    { name: 'Grok mixed types', selectedPlatforms: ['grok'], selectedTypes: ['apikey', 'oauth'] },
+    { name: 'CPA API Key', selectedPlatforms: ['openai'], selectedTypes: ['apikey'] },
+    { name: 'mixed platforms', selectedPlatforms: ['openai', 'grok'], selectedTypes: ['apikey'] }
+  ])('CPA-only bulk editing hides direct endpoints and preserves metadata updates: $name', async ({ selectedPlatforms, selectedTypes }) => {
+    const wrapper = mountModal({ selectedPlatforms, selectedTypes })
 
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-base-url').setValue('https://api.x.ai/v1')
+    expect(wrapper.find('#bulk-edit-base-url-enabled').exists()).toBe(false)
+    expect(wrapper.find('#bulk-edit-base-url').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="grok-base-url-preset"]')).toHaveLength(0)
+
+    await wrapper.get('#bulk-edit-priority-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-priority').setValue(3)
     await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      credentials: {
-        base_url: 'https://api.x.ai/v1'
-      }
-    })
-  })
-
-  it('所选全为 grok 时展示快捷端点，点击后填入并自动勾选 base_url', async () => {
-    const wrapper = mountModal({
-      selectedPlatforms: ['grok'],
-      selectedTypes: ['oauth']
-    })
-
-    const presets = wrapper.findAll('[data-testid="grok-base-url-preset"]')
-    expect(presets.length).toBe(5)
-
-    // 第三个预设为区域 API (us-east-1.api.x.ai/v1)
-    await presets[2].trigger('click')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      credentials: {
-        base_url: 'https://us-east-1.api.x.ai/v1'
-      }
-    })
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { priority: 3 })
+    wrapper.unmount()
   })
 
   it('所选含非 grok 平台时不展示快捷端点', async () => {
@@ -233,44 +214,6 @@ describe('BulkEditAccountModal', () => {
     })
 
     expect(wrapper.find('#bulk-edit-header-override-enabled').exists()).toBe(false)
-  })
-
-  it('全部目标为 Grok OAuth 时，第三方 base_url 正常提交', async () => {
-    const wrapper = mountModal({
-      selectedPlatforms: ['grok'],
-      selectedTypes: ['oauth']
-    })
-
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-base-url').setValue('https://relay.example.com/v1')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      credentials: {
-        base_url: 'https://relay.example.com/v1'
-      }
-    })
-  })
-
-  it('混合类型选择（含 apikey）时官方主机 base_url 不拦截', async () => {
-    const wrapper = mountModal({
-      selectedPlatforms: ['grok'],
-      selectedTypes: ['apikey', 'oauth']
-    })
-
-    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
-    await wrapper.get('#bulk-edit-base-url').setValue('https://api.x.ai/v1')
-    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
-    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-      credentials: {
-        base_url: 'https://api.x.ai/v1'
-      }
-    })
   })
 
   it('OpenAI 账号批量编辑可开启自动透传', async () => {

@@ -149,6 +149,32 @@
 
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
+      <!-- External Recharge -->
+      <button
+        @click="openRecharge"
+        class="sidebar-link mb-2 w-full"
+        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+        :title="sidebarCollapsed ? t('nav.recharge') : undefined"
+      >
+        <CreditCardIcon class="h-5 w-5 flex-shrink-0" />
+        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+          {{ t('nav.recharge') }}
+        </span>
+      </button>
+
+      <!-- External Speed Test -->
+      <button
+        @click="openSpeedTest"
+        class="sidebar-link mb-2 w-full"
+        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+        :title="sidebarCollapsed ? t('nav.speedTest') : undefined"
+      >
+        <SpeedTestIcon class="h-5 w-5 flex-shrink-0" />
+        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
+          {{ t('nav.speedTest') }}
+        </span>
+      </button>
+
       <!-- Theme Toggle -->
       <button
         @click="toggleTheme"
@@ -251,6 +277,7 @@ const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const rechargeUrl = 'https://pay.ldxp.cn/shop/3FIALG8K'
 
 const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
 
@@ -327,6 +354,21 @@ const ChartIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z'
+        })
+      ]
+    )
+}
+
+const SpeedTestIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M4.5 19.5a7.5 7.5 0 1115 0M8.25 19.5a3.75 3.75 0 117.5 0M12 15.75l3.75-7.5M6.75 6.75l1.5 1.5M17.25 6.75l-1.5 1.5M12 4.5v2.25'
         })
       ]
     )
@@ -803,7 +845,6 @@ const adminNavItems = computed((): NavItem[] => {
       expandOnly: true,
       featureFlag: flagRiskControl,
       children: [
-        { path: '/admin/risk-control', label: t('nav.contentModeration'), icon: ShieldIcon },
         { path: '/admin/prompt-audit', label: t('nav.promptAudit'), icon: ShieldIcon },
       ],
     },
@@ -867,6 +908,18 @@ function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+}
+
+function openRecharge() {
+  window.open(rechargeUrl, '_blank', 'noopener,noreferrer')
+  closeMobile()
+}
+
+function openSpeedTest() {
+  const targetUrl = window.location.origin || 'https://sub2api.pegasusailabs.com'
+  const speedTestUrl = `https://www.tcptest.cn/http/${encodeURIComponent(targetUrl)}`
+  window.open(speedTestUrl, '_blank', 'noopener,noreferrer')
+  closeMobile()
 }
 
 function closeMobile() {

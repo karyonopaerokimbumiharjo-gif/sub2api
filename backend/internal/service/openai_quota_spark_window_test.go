@@ -41,6 +41,27 @@ func (r *stubQuotaAccountRepo) GetByID(_ context.Context, id int64) (*Account, e
 	return acc, nil
 }
 
+func (r *stubQuotaAccountRepo) ListByPlatform(_ context.Context, platform string) ([]Account, error) {
+	accounts := make([]Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account != nil && account.Platform == platform {
+			accounts = append(accounts, *account)
+		}
+	}
+	return accounts, nil
+}
+
+func (r *stubQuotaAccountRepo) ListAllWithFilters(_ context.Context, platform, accountType, status, search string, groupID int64, privacyMode string) ([]Account, error) {
+	accounts := make([]Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account != nil && (platform == "" || account.Platform == platform) &&
+			(accountType == "" || account.Type == accountType) && (status == "" || account.Status == status) {
+			accounts = append(accounts, *account)
+		}
+	}
+	return accounts, nil
+}
+
 func (r *stubQuotaAccountRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	acc, ok := r.accounts[id]
 	if !ok {

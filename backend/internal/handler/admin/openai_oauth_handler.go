@@ -21,6 +21,9 @@ type OpenAIOAuthHandler struct {
 	openaiOAuthService *service.OpenAIOAuthService
 	adminService       service.AdminService
 	quotaService       openAIQuotaService
+	cpaImportService   openAICPAImportService
+	cpaRuntimeService  *service.OpenAIQuotaService
+	cpaBridgeService   cpaBridgeProvisioner
 	rateLimitService   openAIAccountStateRecoverer
 }
 
@@ -29,10 +32,16 @@ type openAIQuotaService interface {
 	CacheResetCreditsSnapshot(ctx context.Context, accountID int64, credits *service.OpenAIRateLimitResetCredits) error
 	CachePostResetSnapshot(ctx context.Context, accountID int64, usage *service.OpenAIQuotaUsage) error
 	ResetCredit(ctx context.Context, accountID int64) (*service.OpenAIQuotaResetResult, error)
+	SetAutoReset(ctx context.Context, accountID int64, enabled bool) (*service.OpenAIQuotaAutoResetSettings, error)
 }
 
 type openAIAccountStateRecoverer interface {
 	RecoverAccountState(ctx context.Context, accountID int64, options service.AccountRecoveryOptions) (*service.SuccessfulTestRecoveryResult, error)
+}
+
+type openAICPAImportService interface {
+	ImportOAuthCredentialsToCPA(ctx context.Context, credentials map[string]any) (*service.OpenAICPAImportResult, error)
+	ImportCPAAuthFile(ctx context.Context, credentials map[string]any) (*service.OpenAICPAImportResult, error)
 }
 
 // openAIQuotaResetPostProcessTimeout bounds the work performed AFTER the
@@ -92,11 +101,52 @@ func NewOpenAIOAuthHandler(
 	// `== nil` capability guards below and panic instead of returning 400.
 	if quotaService != nil {
 		h.quotaService = quotaService
+		h.cpaImportService = quotaService
+		h.cpaRuntimeService = quotaService
+		h.cpaBridgeService = quotaService
 	}
 	if rateLimitService != nil {
 		h.rateLimitService = rateLimitService
 	}
 	return h
+}
+
+type openAICPAImportRequest struct {
+	Credentials map[string]any               `json:"credentials" binding:"required"`
+	Runtime     *service.CPACredentialUpdate `json:"runtime,omitempty"`
+}
+
+// ImportOAuthToCPA persists a completed OpenAI OAuth authorization in the
+// private CPA auth store. It intentionally does not create a second schedulable
+// Sub2 account: production routing and billing continue through the existing
+// CPA bridge account.
+// POST /api/v1/admin/openai/import-to-cpa
+func (h *OpenAIOAuthHandler) ImportOAuthToCPA(c *gin.Context) {
+	if h.cpaImportService == nil {
+		response.BadRequest(c, "CPA OAuth import is not configured")
+		return
+	}
+	var req openAICPAImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	var result *service.OpenAICPAImportResult
+	var err error
+	if req.Runtime != nil {
+		if h.cpaRuntimeService == nil {
+			response.BadRequest(c, "CPA settings service is unavailable")
+			return
+		}
+		result, err = h.cpaRuntimeService.ImportOAuthCredentialsToCPAWithRuntime(c.Request.Context(), req.Credentials, req.Runtime)
+	} else {
+		result, err = h.cpaImportService.ImportOAuthCredentialsToCPA(c.Request.Context(), req.Credentials)
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 // OpenAIGenerateAuthURLRequest represents the request for generating OpenAI auth URL
@@ -612,4 +662,34 @@ func (h *OpenAIOAuthHandler) ResetQuota(c *gin.Context) {
 		resetResponse.Account = dto.AccountFromService(postResult.Account)
 	}
 	response.Success(c, resetResponse)
+}
+
+type UpdateOpenAIQuotaAutoResetRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// UpdateQuotaAutoReset persists the automatic reset switch for an OpenAI account.
+// PUT /api/v1/admin/openai/accounts/:id/auto-reset
+func (h *OpenAIOAuthHandler) UpdateQuotaAutoReset(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.quotaService == nil {
+		response.BadRequest(c, "openai quota service is not enabled")
+		return
+	}
+
+	var req UpdateOpenAIQuotaAutoResetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	settings, err := h.quotaService.SetAutoReset(c.Request.Context(), accountID, req.Enabled)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, settings)
 }

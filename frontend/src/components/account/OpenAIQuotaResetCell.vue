@@ -61,6 +61,47 @@
         </svg>
         {{ t('admin.accounts.openaiQuotaReset.reset') }}
       </button>
+
+      <button
+        type="button"
+        role="switch"
+        data-testid="openai-quota-auto-reset-toggle"
+        :aria-checked="autoResetEnabled"
+        :aria-label="t('admin.accounts.openaiQuotaReset.autoReset')"
+        :title="autoResetButtonTitle"
+        :disabled="autoResetSaving || isShadow"
+        :class="[
+          'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-40',
+          autoResetEnabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-dark-600'
+        ]"
+        @click="toggleAutoReset"
+      >
+        <span
+          :class="[
+            'block h-3 w-3 rounded-full bg-white shadow-sm transition-transform',
+            autoResetEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
+          ]"
+        />
+      </button>
+      <label
+        v-if="account.type === 'oauth'"
+        class="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400"
+        :title="t('admin.accounts.openaiQuotaReset.autoResetThresholdTooltip')"
+      >
+        <span>7d</span>
+        <input
+          v-model.number="autoResetThresholdPercent"
+          type="number"
+          min="0.1"
+          max="100"
+          step="0.1"
+          class="h-5 w-14 rounded border border-gray-200 bg-white px-1 text-[10px] text-gray-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200"
+          :disabled="autoResetSaving || isShadow"
+          @blur="saveAutoResetThreshold"
+          @keydown.enter.prevent="saveAutoResetThreshold"
+        />
+        <span>%</span>
+      </label>
     </div>
 
     <div
@@ -170,6 +211,8 @@ import type { Account } from '@/types'
 import {
   refreshOpenAIQuota,
   resetOpenAIQuota,
+  setOpenAIQuotaAutoReset,
+  update as updateAccount,
   type OpenAIQuotaUsage,
   type OpenAIQuotaResetResult
 } from '@/api/admin/accounts'
@@ -185,8 +228,19 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-// Visible only for OpenAI OAuth accounts.
-const visible = computed(() => props.account.platform === 'openai' && props.account.type === 'oauth')
+// Visible for native OAuth accounts and for explicitly configured CPA quota
+// bridges. Ordinary OpenAI API-key accounts still have no subscription reset
+// credits and must not see these controls.
+const visible = computed(() =>
+  props.account.platform === 'openai' &&
+  (
+    props.account.type === 'oauth' ||
+    (
+      props.account.type === 'apikey' &&
+      props.account.extra?.openai_quota_via_compatible_upstream === true
+    )
+  )
+)
 
 const loading = ref(false)
 const resetting = ref(false)
@@ -197,6 +251,14 @@ const resetMessage = ref<string | null>(null)
 const resetWarning = ref<string | null>(null)
 const showResetConfirm = ref(false)
 const showResetCreditDetails = ref(false)
+const autoResetEnabled = ref(false)
+const autoResetSaving = ref(false)
+const autoResetThresholdPercent = ref(100)
+
+const normalizeAutoResetThreshold = (value: number): number => {
+  if (!Number.isFinite(value)) return 100
+  return Math.min(100, Math.max(0.1, Math.round(value * 10) / 10))
+}
 
 type AutoResetCreditState = NonNullable<NonNullable<Account['extra']>['codex_auto_reset_credit_state']>
 const validAutoResetStatuses = new Set(['checking', 'available', 'resetting', 'success', 'no_credit', 'failed'])
@@ -296,6 +358,14 @@ const resetCreditExpirations = computed(() =>
 const primaryResetCreditExpiry = computed(() => resetCreditExpirations.value[0] ?? '')
 const hiddenResetCreditCount = computed(() => Math.max(resetCreditExpirations.value.length - 1, 0))
 const canReset = computed(() => availableResetCount.value > 0 && !isShadow.value)
+
+const autoResetButtonTitle = computed(() => {
+  if (isShadow.value) return t('admin.accounts.openaiQuotaReset.autoResetTooltipShadow')
+  if (autoResetSaving.value) return t('admin.accounts.openaiQuotaReset.autoResetSaving')
+  return autoResetEnabled.value
+    ? t('admin.accounts.openaiQuotaReset.autoResetTooltipOn')
+    : t('admin.accounts.openaiQuotaReset.autoResetTooltipOff')
+})
 
 const resetCreditDetailsTitle = computed(() =>
   resetCreditExpirations.value
@@ -459,6 +529,64 @@ const confirmReset = async () => {
   }
 }
 
+const toggleAutoReset = async () => {
+  if (autoResetSaving.value || isShadow.value) return
+  const nextValue = !autoResetEnabled.value
+  autoResetSaving.value = true
+  error.value = null
+  resetMessage.value = null
+  try {
+    if (props.account.type === 'oauth') {
+      const threshold = normalizeAutoResetThreshold(autoResetThresholdPercent.value)
+      autoResetThresholdPercent.value = threshold
+      const updated = await updateAccount(props.account.id, {
+        extra: {
+          auto_reset_credit_enabled: nextValue,
+          auto_reset_credit_7d_threshold: threshold / 100,
+          // Ensure the legacy all-window worker cannot override the 7d-only setting.
+          openai_quota_auto_reset_enabled: false
+        }
+      })
+      autoResetEnabled.value = updated.extra?.auto_reset_credit_enabled === true
+      emit('account-updated', updated)
+    } else {
+      const settings = await setOpenAIQuotaAutoReset(props.account.id, nextValue)
+      autoResetEnabled.value = settings.enabled
+    }
+    resetMessage.value = autoResetEnabled.value
+      ? t('admin.accounts.openaiQuotaReset.autoResetEnabled')
+      : t('admin.accounts.openaiQuotaReset.autoResetDisabled')
+  } catch (e) {
+    error.value = extractErrorMessage(e)
+  } finally {
+    autoResetSaving.value = false
+    autoResetThresholdPercent.value = normalizeAutoResetThreshold(
+      typeof props.account.extra?.auto_reset_credit_7d_threshold === 'number'
+        ? props.account.extra.auto_reset_credit_7d_threshold * 100
+        : 100
+    )
+  }
+}
+
+const saveAutoResetThreshold = async () => {
+  if (props.account.type !== 'oauth' || autoResetSaving.value || isShadow.value) return
+  const threshold = normalizeAutoResetThreshold(autoResetThresholdPercent.value)
+  autoResetThresholdPercent.value = threshold
+  autoResetSaving.value = true
+  error.value = null
+  try {
+    const updated = await updateAccount(props.account.id, {
+      extra: { auto_reset_credit_7d_threshold: threshold / 100 }
+    })
+    emit('account-updated', updated)
+    resetMessage.value = t('admin.accounts.openaiQuotaReset.autoResetThresholdSaved')
+  } catch (e) {
+    error.value = extractErrorMessage(e)
+  } finally {
+    autoResetSaving.value = false
+  }
+}
+
 watch(
   () => props.account.id,
   () => {
@@ -470,9 +598,38 @@ watch(
     resetWarning.value = null
     loading.value = false
     resetting.value = false
+    autoResetSaving.value = false
     showResetConfirm.value = false
     showResetCreditDetails.value = false
   }
+)
+
+watch(
+  () => props.account.extra?.openai_quota_auto_reset_enabled,
+  (enabled) => {
+    autoResetEnabled.value = enabled === true
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.account.extra?.auto_reset_credit_enabled,
+  (enabled) => {
+    if (props.account.type === 'oauth') autoResetEnabled.value = enabled === true
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.account.extra?.auto_reset_credit_7d_threshold,
+  (threshold) => {
+    if (props.account.type === 'oauth') {
+      autoResetThresholdPercent.value = normalizeAutoResetThreshold(
+        typeof threshold === 'number' ? threshold * 100 : 100
+      )
+    }
+  },
+  { immediate: true }
 )
 
 watch(

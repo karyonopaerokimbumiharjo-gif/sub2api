@@ -218,6 +218,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	oldStatus := user.Status
 	oldRole := user.Role
 	oldRPMLimit := user.RPMLimit
+	oldPromptAuditBypass := user.PromptAuditBypass
 	oldAllowedGroups := append([]int64(nil), user.AllowedGroups...)
 
 	// fields 与下面的 input.X 判空条件一一对应：管理员没提交的列不写回，
@@ -276,6 +277,11 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		fields.RPMLimit = true
 	}
 
+	if input.PromptAuditBypass != nil {
+		user.PromptAuditBypass = *input.PromptAuditBypass
+		fields.PromptAuditBypass = true
+	}
+
 	if input.AllowedGroups != nil {
 		user.AllowedGroups = *input.AllowedGroups
 		fields.AllowedGroups = true
@@ -307,7 +313,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	if s.authCacheInvalidator != nil {
 		// RPMLimit 直接参与 billing_cache_service.checkRPM 的三级级联，
 		// allowed_groups 参与 API Key 专属分组授权判断；不失效缓存会让修改在一个 L2 TTL 内失去效果。
-		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || user.RestrictPublicGroups != oldRestrictPublicGroups || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
+		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || user.RestrictPublicGroups != oldRestrictPublicGroups || user.PromptAuditBypass != oldPromptAuditBypass || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
 		}
 	}
@@ -1257,6 +1263,11 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		return nil, ErrRedeemCodeExpired
 	}
 
+	validityDays := input.ValidityDays
+	if input.Type == RedeemTypeBalance && input.Value > 0 && validityDays <= 0 {
+		validityDays = DefaultBalanceRedeemValidityDays
+	}
+
 	// 如果是订阅类型，验证必须有 GroupID
 	if input.Type == RedeemTypeSubscription {
 		if input.GroupID == nil {
@@ -1288,10 +1299,13 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		// 订阅类型专用字段
 		if input.Type == RedeemTypeSubscription {
 			code.GroupID = input.GroupID
-			code.ValidityDays = input.ValidityDays
+			code.ValidityDays = validityDays
 			if code.ValidityDays <= 0 {
 				code.ValidityDays = 30 // 默认30天
 			}
+		}
+		if input.Type == RedeemTypeBalance {
+			code.ValidityDays = validityDays
 		}
 		if err := s.redeemCodeRepo.Create(ctx, &code); err != nil {
 			return nil, err

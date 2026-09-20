@@ -76,6 +76,9 @@
             <button @click="showImportData = true" class="btn btn-secondary">
               {{ t('admin.proxies.dataImport') }}
             </button>
+            <button @click="showClashImport = true" class="btn btn-secondary">
+              {{ t('admin.proxies.clashImport') }}
+            </button>
             <button @click="showExportDataDialog = true" class="btn btn-secondary">
               {{ selectedCount > 0 ? t('admin.proxies.dataExportSelected') : t('admin.proxies.dataExport') }}
             </button>
@@ -199,20 +202,32 @@
           </template>
 
           <template #cell-account_count="{ row, value }">
-            <button
-              v-if="(value || 0) > 0"
-              type="button"
-              class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-primary-700 hover:bg-gray-200 dark:bg-dark-600 dark:text-primary-300 dark:hover:bg-dark-500"
-              @click="openAccountsModal(row)"
-            >
-              {{ t('admin.groups.accountsCount', { count: value || 0 }) }}
-            </button>
-            <span
-              v-else
-              class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
-            >
-              {{ t('admin.groups.accountsCount', { count: 0 }) }}
-            </span>
+            <div class="flex flex-col items-start gap-1">
+              <button
+                v-if="(value || 0) > 0"
+                type="button"
+                class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-primary-700 hover:bg-gray-200 dark:bg-dark-600 dark:text-primary-300 dark:hover:bg-dark-500"
+                @click="openAccountsModal(row)"
+              >
+                {{ t('admin.proxies.sub2AccountsCount', { count: value || 0 }) }}
+              </button>
+              <span
+                v-else
+                class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800 dark:bg-dark-600 dark:text-gray-300"
+              >
+                {{ t('admin.proxies.sub2AccountsCount', { count: 0 }) }}
+              </span>
+              <span
+                v-if="row.cpa_credential_count !== undefined"
+                class="inline-flex items-center rounded bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300"
+                :title="row.cpa_credential_names?.join('\n') || undefined"
+              >
+                {{ t('admin.proxies.cpaCredentialsCount', { count: row.cpa_credential_count }) }}
+              </span>
+              <span v-else class="text-xs text-amber-600 dark:text-amber-400">
+                {{ t('admin.proxies.cpaBindingsUnknown') }}
+              </span>
+            </div>
           </template>
 
           <template #cell-latency="{ row }">
@@ -840,6 +855,12 @@
       @imported="handleDataImported"
     />
 
+    <ClashImportModal
+      :show="showClashImport"
+      @close="showClashImport = false"
+      @imported="handleClashImported"
+    />
+
     <BaseDialog
       :show="showQualityReportDialog"
       :title="t('admin.proxies.qualityReportTitle')"
@@ -978,6 +999,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ImportDataModal from '@/components/admin/proxy/ImportDataModal.vue'
+import ClashImportModal from '@/components/admin/proxy/ClashImportModal.vue'
 import Select from '@/components/common/Select.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1000,7 +1022,7 @@ const columns = computed<Column[]>(() => [
   { key: 'address', label: t('admin.proxies.columns.address'), sortable: false },
   { key: 'auth', label: t('admin.proxies.columns.auth'), sortable: false },
   { key: 'location', label: t('admin.proxies.columns.location'), sortable: false },
-  { key: 'account_count', label: t('admin.proxies.columns.accounts'), sortable: true },
+  { key: 'account_count', label: t('admin.proxies.columns.bindings'), sortable: false },
   { key: 'latency', label: t('admin.proxies.columns.latency'), sortable: false },
   { key: 'expiry', label: t('admin.proxies.columns.expiry'), sortable: true },
   { key: 'created_at', label: t('admin.proxies.columns.createdAt'), sortable: true },
@@ -1063,6 +1085,7 @@ const showEditModal = ref(false)
 const editPasswordVisible = ref(false)
 const editPasswordDirty = ref(false)
 const showImportData = ref(false)
+const showClashImport = ref(false)
 const showDeleteDialog = ref(false)
 const showBatchDeleteDialog = ref(false)
 const showExportDataDialog = ref(false)
@@ -1280,6 +1303,11 @@ const handleDataImported = () => {
   loadProxies()
 }
 
+const handleClashImported = () => {
+  showClashImport.value = false
+  loadProxies()
+}
+
 // Parse proxy URL: protocol://user:pass@host:port or protocol://host:port
 // Host may be a domain, IPv4, or bracketed IPv6 ([2001:db8::1]).
 const parseProxyUrl = (
@@ -1479,7 +1507,7 @@ const handleUpdateProxy = async () => {
     closeEditModal()
     loadProxies()
   } catch (error: any) {
-    appStore.showError(error.response?.data?.detail || t('admin.proxies.failedToUpdate'))
+    appStore.showError(error.response?.data?.message || error.response?.data?.detail || t('admin.proxies.failedToUpdate'))
     console.error('Error updating proxy:', error)
   } finally {
     submitting.value = false
@@ -1949,7 +1977,7 @@ const handleExportData = async () => {
 }
 
 const handleDelete = (proxy: Proxy) => {
-  if ((proxy.account_count || 0) > 0) {
+  if ((proxy.account_count || 0) > 0 || (proxy.cpa_credential_count || 0) > 0) {
     appStore.showError(t('admin.proxies.deleteBlockedInUse'))
     return
   }

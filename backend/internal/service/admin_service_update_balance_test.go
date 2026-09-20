@@ -13,6 +13,7 @@ import (
 type balanceUserRepoStub struct {
 	*userRepoStub
 	adjustErr error
+	updateErr error
 	// changes 记录每次原子余额变更，顺序与调用顺序一致。
 	changes []BalanceChange
 }
@@ -40,6 +41,20 @@ func (s *balanceUserRepoStub) apply(next func(current float64) float64) (Balance
 	s.userRepoStub.user.Balance = change.New
 	s.changes = append(s.changes, change)
 	return change, nil
+}
+
+func (s *balanceUserRepoStub) UpdateBalance(ctx context.Context, userID int64, amount float64) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	if s.userRepoStub == nil || s.userRepoStub.user == nil {
+		return nil
+	}
+	clone := *s.userRepoStub.user
+	clone.Balance += amount
+	s.updated = append(s.updated, &clone)
+	s.userRepoStub.user = &clone
+	return nil
 }
 
 type balanceRedeemRepoStub struct {
@@ -260,4 +275,37 @@ func TestAdminService_UpdateUserBalance_AffiliateFailureDoesNotRollbackRecharge(
 	require.Equal(t, 15.0, user.Balance)
 	require.Equal(t, []adminRechargeAffiliateAccrual{{userID: 7, amount: 5}}, affiliate.calls)
 	require.Len(t, redeemRepo.created, 1)
+}
+
+func TestAdminService_GenerateRedeemCodes_BalanceDefaultsValidityDays(t *testing.T) {
+	redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
+	svc := &adminServiceImpl{redeemCodeRepo: redeemRepo}
+
+	codes, err := svc.GenerateRedeemCodes(context.Background(), &GenerateRedeemCodesInput{
+		Count: 1,
+		Type:  RedeemTypeBalance,
+		Value: 2,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, codes, 1)
+	require.Len(t, redeemRepo.created, 1)
+	require.Equal(t, DefaultBalanceRedeemValidityDays, redeemRepo.created[0].ValidityDays)
+	require.Equal(t, DefaultBalanceRedeemValidityDays, codes[0].ValidityDays)
+}
+
+func TestAdminService_GenerateRedeemCodes_NegativeBalanceDoesNotDefaultValidityDays(t *testing.T) {
+	redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
+	svc := &adminServiceImpl{redeemCodeRepo: redeemRepo}
+
+	codes, err := svc.GenerateRedeemCodes(context.Background(), &GenerateRedeemCodesInput{
+		Count: 1,
+		Type:  RedeemTypeBalance,
+		Value: -2,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, codes, 1)
+	require.Equal(t, 0, redeemRepo.created[0].ValidityDays)
+	require.Equal(t, 0, codes[0].ValidityDays)
 }

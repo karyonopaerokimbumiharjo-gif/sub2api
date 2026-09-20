@@ -121,6 +121,11 @@ type OpenAIQuotaService struct {
 	privacyClientFactory PrivacyClientFactory
 	agentIdentityTaskMu  sync.Mutex
 	agentIdentityWS      agentIdentityWSConnectionInvalidator
+	autoResetMu          sync.Mutex
+	autoResetCancel      context.CancelFunc
+	autoResetDone        chan struct{}
+	autoResetQueryUsage  func(context.Context, int64) (*OpenAIQuotaUsage, error)
+	autoResetResetCredit func(context.Context, int64) (*OpenAIQuotaResetResult, error)
 }
 
 // NewOpenAIQuotaService constructs a quota service. token provider is required —
@@ -144,6 +149,19 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	if s != nil && s.accountRepo != nil {
+		account, loadErr := s.accountRepo.GetByID(ctx, accountID)
+		if loadErr != nil {
+			return nil, infraerrors.Newf(http.StatusNotFound, "OPENAI_QUOTA_ACCOUNT_NOT_FOUND", "account not found: %v", loadErr)
+		}
+		if account == nil {
+			return nil, infraerrors.New(http.StatusNotFound, "OPENAI_QUOTA_ACCOUNT_NOT_FOUND", "account not found")
+		}
+		if account.IsOpenAICompatibleQuotaBridge() {
+			return s.queryUsageViaOpenAIQuotaBridge(ctx, account)
+		}
+	}
+
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -333,6 +351,9 @@ func (s *OpenAIQuotaService) resetCredit(ctx context.Context, accountID int64, c
 		}
 		if acc.IsShadow() {
 			return nil, ErrSparkShadowResetNotSupported
+		}
+		if acc.IsOpenAICompatibleQuotaBridge() {
+			return s.resetCreditViaOpenAIQuotaBridge(ctx, acc)
 		}
 	}
 

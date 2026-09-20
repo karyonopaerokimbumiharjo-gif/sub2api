@@ -26,6 +26,7 @@ type EventFilter struct {
 	Keyword    string     `json:"keyword,omitempty"`
 	StartAt    *time.Time `json:"start_at,omitempty"`
 	EndAt      *time.Time `json:"end_at,omitempty"`
+	Aggregate  bool       `json:"aggregate,omitempty"`
 }
 
 type EventPage struct {
@@ -72,21 +73,45 @@ func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilte
 	}
 	where, args := buildEventWhere(filter, 1)
 	var total int64
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_events e`+where, args...).Scan(&total); err != nil {
+	if filter.Aggregate {
+		countSQL := `SELECT COUNT(*) FROM (
+			SELECT 1 FROM prompt_audit_events e` + where + ` GROUP BY ` + promptAuditEventGroupBy("e") + `
+		) grouped`
+		if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+			return nil, err
+		}
+	} else if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_events e`+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 	queryArgs := append([]any(nil), args...)
 	limitIndex := len(queryArgs) + 1
 	queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
-	rows, err := r.db.QueryContext(ctx, `SELECT `+eventColumns("e")+` FROM prompt_audit_events e`+where+
-		fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1), queryArgs...)
+	query := `SELECT ` + eventColumns("e") + ` FROM prompt_audit_events e` + where +
+		fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1)
+	if filter.Aggregate {
+		query = `WITH grouped AS (
+			SELECT (array_agg(e.id ORDER BY e.created_at DESC, e.id DESC))[1] AS id,
+				COUNT(*)::int AS duplicate_count
+			FROM prompt_audit_events e` + where + `
+			GROUP BY ` + promptAuditEventGroupBy("e") + `
+		)
+		SELECT ` + eventColumns("e") + `,g.duplicate_count
+		FROM grouped g JOIN prompt_audit_events e ON e.id=g.id` +
+			fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1)
+	}
+	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	items := make([]*Event, 0, pageSize)
 	for rows.Next() {
-		event, err := scanEvent(rows)
+		var event *Event
+		if filter.Aggregate {
+			event, err = scanAggregatedEvent(rows)
+		} else {
+			event, err = scanEvent(rows)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -313,8 +338,8 @@ func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
 func eventColumns(alias string) string {
 	return fmt.Sprintf(`%[1]s.id,%[1]s.job_id,%[1]s.request_id,%[1]s.user_id,%[1]s.username_snapshot,
 		%[1]s.user_email_snapshot,%[1]s.api_key_id,%[1]s.api_key_name_snapshot,%[1]s.group_id,%[1]s.group_name,
-		%[1]s.provider,%[1]s.endpoint,%[1]s.protocol,%[1]s.model,%[1]s.prompt_hash,%[1]s.redacted_preview,
-		%[1]s.stage,%[1]s.decision,%[1]s.risk_level,%[1]s.action,%[1]s.categories,%[1]s.matched_scanners,
+		%[1]s.provider,%[1]s.endpoint,%[1]s.protocol,%[1]s.model,%[1]s.prompt_hash,%[1]s.task_fingerprint,%[1]s.audit_subject,%[1]s.redacted_preview,
+		%[1]s.stage,%[1]s.audit_status,%[1]s.decision,%[1]s.risk_level,%[1]s.action,%[1]s.categories,%[1]s.intent_categories,%[1]s.content_categories,%[1]s.matched_scanners,
 		%[1]s.scanner_scores,%[1]s.scanner_evidence,%[1]s.scanner_backend,%[1]s.scanner_version,
 		%[1]s.guard_endpoint_id,%[1]s.policy_id,%[1]s.policy_version,%[1]s.config_version,
 		%[1]s.chunk_total,%[1]s.latency_ms,%[1]s.created_at`, alias)
@@ -323,23 +348,35 @@ func eventColumns(alias string) string {
 // eventDetailColumns adds the full prompt, which can be large, so it is only
 // loaded for single-event detail reads and never for list pages.
 func eventDetailColumns(alias string) string {
-	return eventColumns(alias) + fmt.Sprintf(",%[1]s.full_prompt", alias)
+	return eventColumns(alias) + fmt.Sprintf(",%[1]s.full_prompt,%[1]s.audited_prompt", alias)
 }
 
 func scanEvent(row rowScanner, withFullPrompt ...bool) (*Event, error) {
+	return scanPromptAuditEvent(row, len(withFullPrompt) > 0 && withFullPrompt[0], false)
+}
+
+func scanAggregatedEvent(row rowScanner) (*Event, error) {
+	return scanPromptAuditEvent(row, false, true)
+}
+
+func scanPromptAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount bool) (*Event, error) {
 	event := &Event{}
 	var userID, apiKeyID, groupID sql.NullInt64
-	var categories, matched, scores, evidence []byte
+	var categories, intentCategories, contentCategories, matched, scores, evidence []byte
 	dest := []any{&event.ID, &event.JobID, &event.Snapshot.RequestID, &userID,
 		&event.Snapshot.UsernameSnapshot, &event.Snapshot.UserEmailSnapshot, &apiKeyID,
 		&event.Snapshot.APIKeyNameSnapshot, &groupID, &event.Snapshot.GroupName,
 		&event.Snapshot.Provider, &event.Snapshot.Endpoint, &event.Snapshot.Protocol, &event.Snapshot.Model,
-		&event.Snapshot.PromptHash, &event.Snapshot.RedactedPreview, &event.Snapshot.Stage, &event.Decision,
-		&event.RiskLevel, &event.Action, &categories, &matched, &scores, &evidence, &event.ScannerBackend,
+		&event.Snapshot.PromptHash, &event.Snapshot.TaskFingerprint, &event.Snapshot.AuditSubject,
+		&event.Snapshot.RedactedPreview, &event.Snapshot.Stage, &event.AuditStatus, &event.Decision,
+		&event.RiskLevel, &event.Action, &categories, &intentCategories, &contentCategories, &matched, &scores, &evidence, &event.ScannerBackend,
 		&event.ScannerVersion, &event.GuardEndpointID, &event.PolicyID, &event.PolicyVersion,
 		&event.ConfigVersion, &event.ChunkTotal, &event.LatencyMS, &event.CreatedAt}
-	if len(withFullPrompt) > 0 && withFullPrompt[0] {
-		dest = append(dest, &event.Snapshot.FullPrompt)
+	if withFullPrompt {
+		dest = append(dest, &event.Snapshot.FullPrompt, &event.Snapshot.AuditedPrompt)
+	}
+	if withDuplicateCount {
+		dest = append(dest, &event.DuplicateCount)
 	}
 	err := row.Scan(dest...)
 	if err != nil {
@@ -349,14 +386,55 @@ func scanEvent(row rowScanner, withFullPrompt ...bool) (*Event, error) {
 	event.Snapshot.APIKeyID = nullableInt64Value(apiKeyID)
 	event.Snapshot.GroupID = nullableInt64Ptr(groupID)
 	_ = json.Unmarshal(categories, &event.Categories)
+	_ = json.Unmarshal(intentCategories, &event.IntentCategories)
+	_ = json.Unmarshal(contentCategories, &event.ContentCategories)
 	_ = json.Unmarshal(matched, &event.MatchedScanners)
 	_ = json.Unmarshal(scores, &event.ScannerScores)
 	_ = json.Unmarshal(evidence, &event.ScannerEvidence)
 	result := NormalizedResult{Decision: event.Decision, RiskLevel: event.RiskLevel, Action: event.Action,
-		Categories: event.Categories, MatchedScanners: event.MatchedScanners, ScannerScores: event.ScannerScores,
+		Categories: event.Categories, IntentCategories: event.IntentCategories, ContentCategories: event.ContentCategories,
+		MatchedScanners: event.MatchedScanners, ScannerScores: event.ScannerScores,
 		ScannerEvidence: event.ScannerEvidence}
 	event.IssueSummaries = BuildIssueSummaries(result)
+	decoratePromptAuditEvent(event)
 	return event, nil
+}
+
+func promptAuditEventGroupBy(alias string) string {
+	return fmt.Sprintf(`COALESCE(NULLIF(%[1]s.task_fingerprint,''),%[1]s.prompt_hash),
+		COALESCE(%[1]s.user_id,0),%[1]s.audit_status,%[1]s.decision,%[1]s.risk_level,%[1]s.action,%[1]s.categories::text,
+		%[1]s.intent_categories::text,%[1]s.content_categories::text,
+		CASE
+			WHEN %[1]s.stage='upstream_feedback' THEN 'upstream_policy'
+			WHEN %[1]s.stage='local_policy_cache' THEN 'local_cache'
+			ELSE 'local_audit'
+		END`, alias)
+}
+
+func decoratePromptAuditEvent(event *Event) {
+	if event == nil {
+		return
+	}
+	if event.DuplicateCount < 1 {
+		event.DuplicateCount = 1
+	}
+	event.ReviewStatus = "unreviewed"
+	switch strings.TrimSpace(event.Snapshot.Stage) {
+	case "audit_gap":
+		event.PolicySource = "audit_gap"
+		event.PolicyCode = "not_audited"
+	case "upstream_feedback":
+		event.PolicySource = "openai_upstream"
+		event.PolicyCode = strings.TrimSpace(event.ScannerVersion)
+	case "local_policy_cache":
+		event.PolicySource = "local_cache"
+		event.PolicyCode = strings.TrimSpace(event.ScannerVersion)
+	default:
+		event.PolicySource = "local_audit"
+		if len(event.Categories) > 0 {
+			event.PolicyCode = event.Categories[0]
+		}
+	}
 }
 
 func scanReturnedJobIDs(rows *sql.Rows) ([]int64, error) {

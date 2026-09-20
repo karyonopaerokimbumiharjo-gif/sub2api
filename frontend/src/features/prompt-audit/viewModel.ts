@@ -9,10 +9,18 @@ import type {
 import { JEV_BASE_URL, JEV_MODEL, JEV_PROTOCOL } from './securityViewModel'
 
 export const DEFAULT_GUARD_MODEL = 'sileader/qwen3guard:0.6b'
+export const DEFAULT_ANTIGRAVITY_AUDIT_MODEL = 'gemini-3.6-flash-low'
+export const DEFAULT_OPENAI_INTERNAL_AUDIT_MODEL = 'gpt-5.3-codex-spark'
+export const DEFAULT_PROMPT_CHUNK_CONCURRENCY = 4
+export const DEFAULT_ADAPTIVE_ALLOW_SAMPLE_RATE = 5
+export const DEFAULT_ADAPTIVE_RISK_SAMPLE_RATE = 100
+export const DEFAULT_OUTPUT_ALLOW_SAMPLE_RATE = 5
+export const DEFAULT_OUTPUT_RISK_SAMPLE_RATE = 100
 
 export const SCANNER_CATALOG = [
   { id: 'violent', label: 'Violent' },
   { id: 'non_violent_illegal_acts', label: 'Non-violent Illegal Acts' },
+  { id: 'biological_risk', label: 'Biological Risk' },
   { id: 'sexual_content_or_sexual_acts', label: 'Sexual Content or Sexual Acts' },
   { id: 'pii', label: 'PII' },
   { id: 'suicide_and_self_harm', label: 'Suicide & Self-Harm' },
@@ -20,6 +28,12 @@ export const SCANNER_CATALOG = [
   { id: 'politically_sensitive_topics', label: 'Politically Sensitive Topics' },
   { id: 'copyright_violation', label: 'Copyright Violation' },
   { id: 'jailbreak', label: 'Jailbreak' },
+] as const
+
+export const CONTENT_CATEGORY_CATALOG = [
+  'harassment', 'harassment_threatening', 'hate', 'hate_threatening',
+  'illicit', 'illicit_violent', 'self_harm', 'self_harm_intent',
+  'self_harm_instructions', 'sexual', 'sexual_minors', 'violence', 'violence_graphic',
 ] as const
 
 // Vue props/refs are proxies and cannot be passed to structuredClone in every
@@ -32,13 +46,30 @@ export function cloneData<T>(value: T): T {
 export function configToDraft(config: PromptAuditConfig): PromptAuditDraft {
   return {
     ...cloneData(config),
+	blocking_audit_mode: config.blocking_audit_mode ?? (config.blocking_latest_turn_only ? 'incremental_full' : 'full'),
+	background_audit_mode: config.background_audit_mode ?? (config.blocking_enabled ? 'off' : (config.blocking_audit_mode ?? 'full')),
+	adaptive_enabled: config.adaptive_enabled ?? false,
+	adaptive_collect_when_disabled: config.adaptive_collect_when_disabled ?? true,
+	adaptive_allow_sample_rate: Number.isFinite(Number(config.adaptive_allow_sample_rate)) ? Number(config.adaptive_allow_sample_rate) : DEFAULT_ADAPTIVE_ALLOW_SAMPLE_RATE,
+	adaptive_risk_sample_rate: Number.isFinite(Number(config.adaptive_risk_sample_rate)) ? Number(config.adaptive_risk_sample_rate) : DEFAULT_ADAPTIVE_RISK_SAMPLE_RATE,
+	output_audit_enabled: config.output_audit_enabled ?? false,
+	output_allow_sample_rate: Number.isFinite(Number(config.output_allow_sample_rate)) ? Number(config.output_allow_sample_rate) : DEFAULT_OUTPUT_ALLOW_SAMPLE_RATE,
+	output_risk_sample_rate: Number.isFinite(Number(config.output_risk_sample_rate)) ? Number(config.output_risk_sample_rate) : DEFAULT_OUTPUT_RISK_SAMPLE_RATE,
+    whitelist_emails: [...(config.whitelist_emails ?? [])],
+    prompt_chunk_concurrency: Number(config.prompt_chunk_concurrency) || DEFAULT_PROMPT_CHUNK_CONCURRENCY,
     group_ids: [...(config.group_ids ?? [])],
     scanners: [...(config.scanners ?? [])],
-    endpoints: (config.endpoints ?? []).map((endpoint) => ({
-      ...endpoint,
-      token: '',
-      clear_token: false,
-    })),
+    endpoints: (config.endpoints ?? []).map((endpoint) => {
+      const protocol = endpoint.protocol ?? 'openai_compatible'
+      return {
+        ...endpoint,
+        protocol,
+        adapter: endpoint.adapter ?? (protocol === 'openai_compatible' ? 'qwen3guard' : 'generic_llm'),
+        account_id: Number(endpoint.account_id) || 0,
+        token: '',
+        clear_token: false,
+      }
+    }),
   }
 }
 
@@ -50,6 +81,8 @@ export function createDefaultEndpoint(index = 1): PromptAuditEndpointDraft {
     base_url: JEV_BASE_URL,
     model: JEV_MODEL,
     timeout_ms: 3000,
+    adapter: 'generic_llm',
+    account_id: 0,
     input_limit: 4000,
     enabled: false,
     has_token: false,
@@ -64,20 +97,39 @@ export function buildUpdateRequest(draft: PromptAuditDraft): PromptAuditUpdateRe
     expected_config_version: draft.config_version,
     enabled: draft.enabled,
     blocking_enabled: draft.enabled && draft.blocking_enabled,
-    blocking_latest_turn_only: draft.blocking_latest_turn_only,
+    blocking_audit_mode: draft.blocking_audit_mode,
+    background_audit_mode: draft.background_audit_mode,
+    blocking_latest_turn_only: draft.blocking_audit_mode !== 'full',
     store_pass_events: draft.store_pass_events,
+	adaptive_enabled: draft.adaptive_enabled,
+	adaptive_collect_when_disabled: draft.adaptive_collect_when_disabled,
+	adaptive_allow_sample_rate: Number(draft.adaptive_allow_sample_rate),
+	adaptive_risk_sample_rate: Number(draft.adaptive_risk_sample_rate),
+	output_audit_enabled: draft.output_audit_enabled,
+	output_allow_sample_rate: Number(draft.output_allow_sample_rate),
+	output_risk_sample_rate: Number(draft.output_risk_sample_rate),
     strategy: 'priority',
     worker_count: Number(draft.worker_count),
+    prompt_chunk_concurrency: Number(draft.prompt_chunk_concurrency),
     queue_capacity: Number(draft.queue_capacity),
     scanners: [...draft.scanners],
     all_groups: draft.all_groups,
     group_ids: draft.all_groups ? [] : [...draft.group_ids].sort((a, b) => a - b),
+    whitelist_emails: [...new Set(draft.whitelist_emails.map((email) => email.trim().toLowerCase()).filter(Boolean))].sort(),
     endpoints: draft.endpoints.map((endpoint) => ({
       id: endpoint.id.trim(),
       name: endpoint.name.trim(),
       protocol: endpoint.protocol,
+      adapter: endpoint.adapter,
       base_url: endpoint.base_url.trim(),
-      model: endpoint.model.trim() || (endpoint.protocol === JEV_PROTOCOL ? JEV_MODEL : DEFAULT_GUARD_MODEL),
+      model: endpoint.model.trim() || (
+        endpoint.protocol === JEV_PROTOCOL ? JEV_MODEL : endpoint.protocol === 'antigravity_internal'
+          ? DEFAULT_ANTIGRAVITY_AUDIT_MODEL
+          : endpoint.protocol === 'openai_internal'
+            ? DEFAULT_OPENAI_INTERNAL_AUDIT_MODEL
+            : DEFAULT_GUARD_MODEL
+      ),
+      account_id: endpoint.protocol === 'openai_internal' ? Number(endpoint.account_id) || 0 : 0,
       token: endpoint.token.trim() || undefined,
       clear_token: endpoint.clear_token,
       timeout_ms: Number(endpoint.timeout_ms),
@@ -94,6 +146,7 @@ export function draftFingerprint(draft: PromptAuditDraft | null): string {
 
 export function emptyEventFilters(): PromptEventFilters {
   return {
+    aggregate: true,
     decision: '',
     risk_level: '',
     endpoint: '',
@@ -114,8 +167,8 @@ function toISO(value: string): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
-export function eventQueryParams(filters: PromptEventFilters): Record<string, string | number> {
-  const result: Record<string, string | number> = {}
+export function eventQueryParams(filters: PromptEventFilters): Record<string, string | number | boolean> {
+  const result: Record<string, string | number | boolean> = { aggregate: filters.aggregate !== false }
   for (const key of ['decision', 'risk_level', 'endpoint', 'request_id', 'prompt_hash', 'keyword'] as const) {
     const value = filters[key].trim()
     if (value) result[key] = value
@@ -132,7 +185,9 @@ export function eventQueryParams(filters: PromptEventFilters): Record<string, st
 }
 
 export function eventFilterPayload(filters: PromptEventFilters): Record<string, unknown> {
-  return eventQueryParams(filters)
+  const payload = eventQueryParams(filters)
+  delete payload.aggregate
+  return payload
 }
 
 export function hasExplicitDeleteRange(filters: PromptEventFilters): boolean {

@@ -241,6 +241,9 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 }
 
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
+	if _, err := tx.ExecContext(ctx, `SELECT public.consume_user_balance_grants($1, $2::numeric)`, userID, amount); err != nil {
+		return 0, false, err
+	}
 	var newBalance float64
 	err := tx.QueryRowContext(ctx, `
 		UPDATE users

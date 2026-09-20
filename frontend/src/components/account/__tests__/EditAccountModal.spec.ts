@@ -1660,12 +1660,12 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
   })
 
-  it('仅对 OpenAI OAuth 母账号显示，默认关闭且阈值为 100/100', () => {
+  it('仅对 OpenAI OAuth 母账号显示，默认关闭且每周阈值为 100', () => {
     const parent = mountModal(buildOpenAIOAuthParentAccount())
     expect(parent.find('[data-testid="auto-reset-credit-settings"]').exists()).toBe(true)
-    expect((parent.get('[data-testid="auto-reset-credit-5h-threshold"]').element as HTMLInputElement).value).toBe('100')
+    expect(parent.find('[data-testid="auto-reset-credit-5h-threshold"]').exists()).toBe(false)
     expect((parent.get('[data-testid="auto-reset-credit-7d-threshold"]').element as HTMLInputElement).value).toBe('100')
-    expect(parent.get('[data-testid="auto-reset-credit-5h-threshold"]').attributes('disabled')).toBeDefined()
+    expect(parent.get('[data-testid="auto-reset-credit-7d-threshold"]').attributes('disabled')).toBeDefined()
     parent.unmount()
 
     for (const account of [buildAccount(), buildOpenAISetupTokenAccount(), buildOpenAISparkShadowAccount()]) {
@@ -1675,7 +1675,7 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     }
   })
 
-  it('独立保存两个阈值，并禁止把运行态回写到管理请求', async () => {
+  it('保存每周阈值，并禁止把运行态回写到管理请求', async () => {
     const account = buildOpenAIOAuthParentAccount()
     account.extra = {
       codex_auto_reset_credit_state: {
@@ -1688,7 +1688,6 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     const wrapper = mountModal(account)
 
     await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
-    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('75.5')
     await wrapper.get('[data-testid="auto-reset-credit-7d-threshold"]').setValue('92')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -1696,17 +1695,17 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
     expect(extra).toMatchObject({
       auto_reset_credit_enabled: true,
-      auto_reset_credit_5h_threshold: 0.755,
       auto_reset_credit_7d_threshold: 0.92
     })
     expect(extra).not.toHaveProperty('codex_auto_reset_credit_state')
+    expect(extra).not.toHaveProperty('auto_reset_credit_5h_threshold')
     wrapper.unmount()
   })
 
-  it('开启后拒绝超出 0.1–100 范围的任一阈值', async () => {
+  it('开启后拒绝超出 0.1–100 范围的每周阈值', async () => {
     const wrapper = mountModal(buildOpenAIOAuthParentAccount())
     await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
-    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('0')
+    await wrapper.get('[data-testid="auto-reset-credit-7d-threshold"]').setValue('0')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()

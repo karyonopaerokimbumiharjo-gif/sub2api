@@ -10,28 +10,50 @@
 
       <!-- Fixed panel height so switching tabs does not resize the dialog -->
       <div class="mt-5 h-[min(62vh,36rem)] overflow-y-auto" data-test="event-detail-tab-panel">
+        <div v-if="event.audit_status === 'gap'" class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-dark-700 dark:bg-dark-800">
+          <p class="text-sm font-medium text-slate-800 dark:text-dark-100">{{ t('admin.promptAudit.events.auditGap') }}</p>
+          <p class="mt-1 text-xs text-slate-600 dark:text-dark-300">{{ t('admin.promptAudit.events.auditGapHint') }}</p>
+        </div>
+        <div v-if="event.audit_status === 'bypass'" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+          <p class="text-sm font-medium text-amber-900 dark:text-amber-200">{{ t('admin.promptAudit.events.whitelistBypass') }}</p>
+          <p class="mt-1 text-xs text-amber-800 dark:text-amber-300">{{ t('admin.promptAudit.events.whitelistBypassHint') }}</p>
+        </div>
         <div v-show="activeTab === 'summary'" class="grid gap-5 lg:grid-cols-2" role="tabpanel">
           <div>
-            <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.promptFull') }}</h4>
-            <pre class="mt-2 max-h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="summary-prompt-full">{{ displayPrompt(event) }}</pre>
+            <section>
+              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.requestPromptFull') }}</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.requestPromptFullHint') }}</p>
+              <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="summary-prompt-full">{{ displayFullRequest(event) }}</pre>
+            </section>
+            <section v-if="!isNotAudited(event)" class="mt-4">
+              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.auditedPrompt') }}</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.auditedPromptHint') }}</p>
+              <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="summary-audited-prompt">{{ displayAuditedPrompt(event) }}</pre>
+            </section>
           </div>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ formatDecisionAction(event.decision, event.action) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : formatDecisionAction(event.decision, event.action) }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.user') }}</dt><dd>{{ event.snapshot.username || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.email') }}</dt><dd>{{ event.snapshot.user_email || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.apiKey') }}</dt><dd>{{ event.snapshot.api_key_name || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.group') }}</dt><dd>{{ event.snapshot.group_name || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.model') }}</dt><dd>{{ event.snapshot.model || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.categories') }}</dt><dd>{{ formatCategories(event.categories) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.intentCategories') }}</dt><dd>{{ formatCategories(event.intent_categories || []) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.contentCategories') }}</dt><dd>{{ formatContentCategories(event.content_categories || []) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.policySource') }}</dt><dd>{{ eventLabel('policySources', event.policy_source || '') }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.reviewStatus') }}</dt><dd>{{ eventLabel('reviewStatuses', event.review_status || '') }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.auditSubject') }}</dt><dd>{{ eventLabel('auditSubjects', event.snapshot.audit_subject || '') }}</dd>
+            <dt v-if="(event.duplicate_count || 0) > 1" class="text-gray-500">{{ t('admin.promptAudit.events.relatedAlerts') }}</dt><dd v-if="(event.duplicate_count || 0) > 1">{{ event.duplicate_count }}</dd>
           </dl>
         </div>
 
         <div v-show="activeTab === 'risks'" class="space-y-5" role="tabpanel">
           <div class="grid gap-4 lg:grid-cols-2">
             <section data-test="risk-prompt-preview">
-              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.promptFull') }}</h4>
-              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.promptFullHint') }}</p>
-              <pre class="mt-2 h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="risk-prompt-full">{{ displayPrompt(event) }}</pre>
+              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.auditedPrompt') }}</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.auditedPromptHint') }}</p>
+              <pre class="mt-2 h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="risk-prompt-full">{{ displayAuditedPrompt(event) }}</pre>
             </section>
             <section data-test="risk-guard-return">
               <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.guardReturn') }}</h4>
@@ -61,6 +83,8 @@
         <dl v-show="activeTab === 'technical'" class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm" role="tabpanel">
           <dt class="text-gray-500">{{ t('admin.promptAudit.events.requestId') }}</dt><dd class="break-all font-mono">{{ event.snapshot.request_id || '—' }}</dd>
           <dt class="text-gray-500">{{ t('admin.promptAudit.events.promptHash') }}</dt><dd class="break-all font-mono">{{ event.snapshot.prompt_hash }}</dd>
+          <dt class="text-gray-500">{{ t('admin.promptAudit.events.taskFingerprint') }}</dt><dd class="break-all font-mono">{{ event.snapshot.task_fingerprint || '—' }}</dd>
+          <dt class="text-gray-500">{{ t('admin.promptAudit.events.policyCode') }}</dt><dd>{{ event.policy_code || '—' }}</dd>
           <dt class="text-gray-500">{{ t('admin.promptAudit.events.technical.scanner') }}</dt><dd>{{ event.scanner_backend }} · {{ event.scanner_version }}</dd>
           <dt class="text-gray-500">{{ t('admin.promptAudit.events.technical.policy') }}</dt><dd>{{ event.policy_id }} · v{{ event.policy_version }}</dd>
           <dt class="text-gray-500">{{ t('admin.promptAudit.events.technical.guardEndpoint') }}</dt><dd>{{ event.guard_endpoint_id }}</dd>
@@ -80,7 +104,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PromptAuditEvent, PromptIssueSummary } from '../types'
-import { SCANNER_CATALOG } from '../viewModel'
+import { CONTENT_CATEGORY_CATALOG, SCANNER_CATALOG } from '../viewModel'
 
 const props = defineProps<{ show: boolean; event: PromptAuditEvent | null; loading: boolean }>()
 defineEmits<{ (event: 'close'): void }>()
@@ -93,8 +117,16 @@ const DECISIONS = new Set(['pass', 'flag', 'critical'])
 const ACTIONS = new Set(['Allow', 'Warn', 'Block'])
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical'])
 
-function displayPrompt(event: PromptAuditEvent): string {
+function displayFullRequest(event: PromptAuditEvent): string {
   return event.snapshot.full_prompt || event.snapshot.redacted_preview || '—'
+}
+
+function displayAuditedPrompt(event: PromptAuditEvent): string {
+  return event.snapshot.audited_prompt || event.snapshot.full_prompt || event.snapshot.redacted_preview || '—'
+}
+
+function isNotAudited(event: PromptAuditEvent): boolean {
+  return event.audit_status === 'gap' || event.audit_status === 'bypass'
 }
 
 function formatDecisionAction(decision: string, action: string): string {
@@ -107,9 +139,23 @@ function translateCategory(category: string): string {
     ? t(`admin.promptAudit.scanners.${category}`)
     : category
 }
+function eventLabel(group: string, value: string): string {
+  const key = `admin.promptAudit.events.${group}.${value || 'unknown'}`
+  const label = t(key)
+  return label === key ? value || '—' : label
+}
 function formatCategories(categories: string[]): string {
   if (!categories.length) return '—'
   return categories.map(translateCategory).join(', ')
+}
+function formatContentCategories(categories: string[]): string {
+  if (!categories.length) return '—'
+  return categories.map(translateContentCategory).join(', ')
+}
+function translateContentCategory(category: string): string {
+  return CONTENT_CATEGORY_CATALOG.includes(category as (typeof CONTENT_CATEGORY_CATALOG)[number])
+    ? t(`admin.promptAudit.contentCategories.${category}`)
+    : category
 }
 function translateEvidence(value: string): string {
   const byId = SCANNER_CATALOG.find((scanner) => scanner.id === value)
@@ -128,6 +174,8 @@ function formatGuardReturn(event: PromptAuditEvent): string {
     risk_level: RISK_LEVELS.has(event.risk_level) ? t(`admin.promptAudit.riskLevels.${event.risk_level}`) : event.risk_level,
     action: ACTIONS.has(event.action) ? t(`admin.promptAudit.actions.${event.action}`) : event.action,
     categories: event.categories.map(translateCategory),
+    intent_categories: (event.intent_categories || []).map(translateCategory),
+    content_categories: (event.content_categories || []).map(translateContentCategory),
     matched_scanners: event.matched_scanners.map(translateCategory),
     scanner_scores: event.scanner_scores,
     scanner_evidence: evidence,

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	"io"
 	"log/slog"
 	"net"
@@ -199,6 +200,9 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 //   - 调用方必须关闭 resp.Body，否则会导致 inFlight 计数泄漏
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	if proxyURL != "" {
+		return nil, cpapolicy.Required()
+	}
 	applyGrokCLIProxyHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
@@ -245,6 +249,9 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 // profile 为 nil 时不启用 TLS 指纹，行为与 Do 方法相同。
 // profile 非 nil 时使用指定的 Profile 进行 TLS 指纹伪装。
 func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	if proxyURL != "" {
+		return nil, cpapolicy.Required()
+	}
 	if profile == nil {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
@@ -604,6 +611,9 @@ func (s *httpUpstreamService) shouldValidateResolvedIP() bool {
 // validateRequestHost 校验请求主机的解析结果不落在回环、私网、链路本地或未指定地址。
 // 是否全局启用由 security.url_allowlist 决定；带 WithHTTPUpstreamPublicHostsOnly 标记的请求无论配置如何都校验。
 func (s *httpUpstreamService) validateRequestHost(req *http.Request) error {
+	if err := cpapolicy.ValidateRequest(req); err != nil {
+		return err
+	}
 	publicHostsOnly := req != nil && service.HTTPUpstreamPublicHostsOnly(req.Context())
 	if !s.shouldValidateResolvedIP() && !publicHostsOnly {
 		return nil
@@ -622,10 +632,7 @@ func (s *httpUpstreamService) validateRequestHost(req *http.Request) error {
 }
 
 func (s *httpUpstreamService) redirectChecker(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
-	}
-	return s.validateRequestHost(req)
+	return cpapolicy.NoRedirect(req, via)
 }
 
 // acquireClient 获取或创建客户端，并标记为进行中请求

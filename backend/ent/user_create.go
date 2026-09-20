@@ -368,6 +368,20 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (_c *UserCreate) SetPromptAuditBypass(v bool) *UserCreate {
+	_c.mutation.SetPromptAuditBypass(v)
+	return _c
+}
+
+// SetNillablePromptAuditBypass sets the "prompt_audit_bypass" field if the given value is not nil.
+func (_c *UserCreate) SetNillablePromptAuditBypass(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetPromptAuditBypass(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -674,6 +688,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.PromptAuditBypass(); !ok {
+		v := user.DefaultPromptAuditBypass
+		_c.mutation.SetPromptAuditBypass(v)
+	}
 	return nil
 }
 
@@ -765,6 +783,9 @@ func (_c *UserCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "User.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.PromptAuditBypass(); !ok {
+		return &ValidationError{Name: "prompt_audit_bypass", err: errors.New(`ent: missing required field "User.prompt_audit_bypass"`)}
 	}
 	return nil
 }
@@ -892,6 +913,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(user.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.PromptAuditBypass(); ok {
+		_spec.SetField(user.FieldPromptAuditBypass, field.TypeBool, value)
+		_node.PromptAuditBypass = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1517,6 +1542,18 @@ func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	return u
 }
 
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (u *UserUpsert) SetPromptAuditBypass(v bool) *UserUpsert {
+	u.Set(user.FieldPromptAuditBypass, v)
+	return u
+}
+
+// UpdatePromptAuditBypass sets the "prompt_audit_bypass" field to the value that was provided on create.
+func (u *UserUpsert) UpdatePromptAuditBypass() *UserUpsert {
+	u.SetExcluded(user.FieldPromptAuditBypass)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1979,6 +2016,20 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (u *UserUpsertOne) SetPromptAuditBypass(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetPromptAuditBypass(v)
+	})
+}
+
+// UpdatePromptAuditBypass sets the "prompt_audit_bypass" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdatePromptAuditBypass() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdatePromptAuditBypass()
 	})
 }
 
@@ -2610,6 +2661,20 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (u *UserUpsertBulk) SetPromptAuditBypass(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetPromptAuditBypass(v)
+	})
+}
+
+// UpdatePromptAuditBypass sets the "prompt_audit_bypass" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdatePromptAuditBypass() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdatePromptAuditBypass()
 	})
 }
 

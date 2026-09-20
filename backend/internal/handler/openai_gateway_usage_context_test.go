@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,4 +39,30 @@ func TestOpenAISubmitUsageRecordTaskCopiesRequestContext(t *testing.T) {
 
 	require.Equal(t, "openai-client-request-123", gotClientRequestID)
 	require.Equal(t, "openai-request-456", gotRequestID)
+}
+
+func TestSubmitUsageRecordTaskCopiesPromptAuditLatency(t *testing.T) {
+	parent := service.WithPromptAuditLatency(context.Background(), 432)
+
+	var gotLatencyMS *int
+	h := &GatewayHandler{}
+	h.submitUsageRecordTask(parent, func(ctx context.Context) {
+		gotLatencyMS = service.PromptAuditLatencyFromContext(ctx)
+	})
+
+	require.NotNil(t, gotLatencyMS)
+	require.Equal(t, 432, *gotLatencyMS)
+}
+
+func TestOpenAISubmitUsageRecordTaskCopiesPromptAuditLatency(t *testing.T) {
+	parent := service.WithPromptAuditLatency(context.Background(), 765)
+
+	var gotLatencyMS *int
+	h := &OpenAIGatewayHandler{}
+	h.submitUsageRecordTask(parent, func(ctx context.Context) {
+		gotLatencyMS = service.PromptAuditLatencyFromContext(ctx)
+	})
+
+	require.NotNil(t, gotLatencyMS)
+	require.Equal(t, 765, *gotLatencyMS)
 }

@@ -15,10 +15,14 @@ import (
 type PromptAdminService interface {
 	GetConfig() (PublicConfig, error)
 	SaveConfig(context.Context, UpdateConfigRequest, int64) (PublicConfig, error)
+	ListPolicyVersions(context.Context, int) ([]PromptPolicyVersion, error)
+	RollbackPolicy(context.Context, int64, int64, int64) (PublicConfig, error)
 	Probe(context.Context, ProbeRequest) ProbeResult
 	Runtime(context.Context) RuntimeSnapshot
 	ListEvents(context.Context, EventFilter, int, int) (*EventPage, error)
 	GetEvent(context.Context, int64) (*Event, error)
+	ListAdaptiveSamples(context.Context, string, int, int) (*AdaptiveSamplePage, error)
+	ReviewAdaptiveSample(context.Context, int64, int64, AdaptiveReviewRequest) (*AdaptiveSample, error)
 	DeleteEvent(context.Context, int64) (*DeleteResult, error)
 	DeleteEventsByIDs(context.Context, []int64) (*DeleteResult, error)
 	PreviewDelete(context.Context, EventFilter, int64) (*DeletePreview, error)
@@ -54,6 +58,44 @@ func (h *PromptAdminHandler) UpdateConfig(c *gin.Context) {
 		return
 	}
 	setPromptAdminAudit(c, "success", "", configAuditFields(request, &config))
+	response.Success(c, config)
+}
+
+func (h *PromptAdminHandler) ListPolicyVersions(c *gin.Context) {
+	limit, err := positiveIntQuery(c, "limit", 20, 100)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	versions, err := h.service.ListPolicyVersions(c.Request.Context(), limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, versions)
+}
+
+func (h *PromptAdminHandler) RollbackPolicy(c *gin.Context) {
+	targetVersion, err := strconv.ParseInt(c.Param("config_version"), 10, 64)
+	if err != nil || targetVersion <= 0 {
+		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_invalid_policy_version", "策略版本无效"))
+		return
+	}
+	var request RollbackPolicyRequest
+	if err := c.ShouldBindJSON(&request); err != nil || request.ExpectedConfigVersion < 1 {
+		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_invalid_policy_rollback", "策略回退请求无效"))
+		return
+	}
+	config, err := h.service.RollbackPolicy(c.Request.Context(), targetVersion, request.ExpectedConfigVersion, adminID(c))
+	if err != nil {
+		setPromptAdminAudit(c, "failed", infraerrors.Reason(err), map[string]any{"target_config_version": targetVersion})
+		response.ErrorFrom(c, err)
+		return
+	}
+	setPromptAdminAudit(c, "success", "", map[string]any{
+		"target_config_version": targetVersion,
+		"config_version":        config.ConfigVersion,
+	})
 	response.Success(c, config)
 }
 
@@ -120,6 +162,51 @@ func (h *PromptAdminHandler) GetEvent(c *gin.Context) {
 		return
 	}
 	response.Success(c, event)
+}
+
+func (h *PromptAdminHandler) ListAdaptiveSamples(c *gin.Context) {
+	page, err := positiveIntQuery(c, "page", 1, 0)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	pageSize, err := positiveIntQuery(c, "page_size", 20, 100)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	result, err := h.service.ListAdaptiveSamples(c.Request.Context(), c.Query("status"), page, pageSize)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *PromptAdminHandler) ReviewAdaptiveSample(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_invalid_adaptive_sample_id", "自适应样本 ID 无效"))
+		return
+	}
+	var request AdaptiveReviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_invalid_adaptive_review", "自适应样本复核请求无效"))
+		return
+	}
+	sample, err := h.service.ReviewAdaptiveSample(c.Request.Context(), id, adminID(c), request)
+	if errors.Is(err, ErrAdaptiveSampleNotFound) {
+		response.ErrorFrom(c, infraerrors.NotFound("prompt_audit_adaptive_sample_not_found", "自适应样本不存在"))
+		return
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	setPromptAdminAudit(c, "success", "", map[string]any{
+		"adaptive_sample_id": id, "review_decision": sample.ReviewStatus,
+	})
+	response.Success(c, sample)
 }
 
 func (h *PromptAdminHandler) DeleteEvent(c *gin.Context) {
@@ -228,10 +315,18 @@ func configAuditFields(request UpdateConfigRequest, saved *PublicConfig) map[str
 	}
 	return map[string]any{
 		"enabled": request.Enabled, "blocking_enabled": request.BlockingEnabled,
+		"blocking_audit_mode":       request.BlockingAuditMode,
+		"background_audit_mode":     request.BackgroundAuditMode,
 		"blocking_latest_turn_only": request.BlockingLatestTurnOnly,
 		"config_version":            version, "endpoint_count": len(request.Endpoints),
 		"scanner_count": len(request.Scanners), "all_groups": request.AllGroups,
 		"group_count": len(request.GroupIDs),
+		"whitelist_count": func() int {
+			if request.WhitelistEmails == nil {
+				return 0
+			}
+			return len(*request.WhitelistEmails)
+		}(),
 	}
 }
 
@@ -272,6 +367,13 @@ func eventFilterFromQuery(c *gin.Context) (EventFilter, error) {
 		Decision: c.Query("decision"), RiskLevel: c.Query("risk_level"), Endpoint: c.Query("endpoint"),
 		GroupID: groupID, UserID: userID, APIKeyID: apiKeyID, RequestID: c.Query("request_id"),
 		PromptHash: c.Query("prompt_hash"), Keyword: c.Query("keyword"),
+	}
+	if value := strings.TrimSpace(c.Query("aggregate")); value != "" {
+		aggregate, parseErr := strconv.ParseBool(value)
+		if parseErr != nil {
+			return EventFilter{}, infraerrors.BadRequest("prompt_audit_invalid_aggregate", "聚合参数无效")
+		}
+		filter.Aggregate = aggregate
 	}
 	if value := strings.TrimSpace(c.Query("start_at")); value != "" {
 		filter.StartAt = parseTimeQuery(value)

@@ -1012,6 +1012,21 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 }
 
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
+	internalAccountPool, _ := ctx.Value(ctxkey.InternalAccountPool).(bool)
+	if internalAccountPool && groupID == nil && hasForcePlatform {
+		accounts, err := s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+		if err != nil {
+			slog.Debug("account_scheduling_list_internal_failed",
+				"platform", platform,
+				"error", err)
+			return nil, useMixed, err
+		}
+		slog.Debug("account_scheduling_list_internal",
+			"platform", platform,
+			"count", len(accounts))
+		return accounts, useMixed, nil
+	}
 	if s.schedulerSnapshot != nil {
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		if err == nil {
@@ -1038,7 +1053,6 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		}
 		return accounts, useMixed, err
 	}
-	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
 		platforms := []string{platform, PlatformAntigravity}
 		var accounts []Account

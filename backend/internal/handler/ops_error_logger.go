@@ -2491,8 +2491,8 @@ func shouldSkipOpsErrorLog(ctx context.Context, ops *service.OpsService, message
 	return false
 }
 
-// shouldSkipOpsErrorLogForCyber：cyber_policy 命中的请求由 recordCyberPolicyIfMarked
-// 统一落一条 status=403 的错误请求，故中间件跳过自身落库，避免双写。
+// shouldSkipOpsErrorLogForCyber：上游安全策略命中的请求由各自记录器统一落一条
+// 语义 403，故中间件跳过自身落库，避免再生成泛化 502/403。
 func shouldSkipOpsErrorLogForCyber(c *gin.Context) bool {
-	return service.GetOpsCyberPolicy(c) != nil
+	return service.GetOpsCyberPolicy(c) != nil || service.GetOpsBioPolicy(c) != nil
 }

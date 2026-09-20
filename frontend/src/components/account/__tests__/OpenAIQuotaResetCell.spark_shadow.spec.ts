@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import OpenAIQuotaResetCell from '../OpenAIQuotaResetCell.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { Account } from '@/types'
-import { refreshOpenAIQuota, resetOpenAIQuota } from '@/api/admin/accounts'
+import { refreshOpenAIQuota, resetOpenAIQuota, setOpenAIQuotaAutoReset } from '@/api/admin/accounts'
 
 vi.mock('@/api/admin/accounts', () => ({
   refreshOpenAIQuota: vi.fn(),
   resetOpenAIQuota: vi.fn(),
+  setOpenAIQuotaAutoReset: vi.fn(),
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -62,6 +63,7 @@ const resetButton = (wrapper: ReturnType<typeof mount>) =>
 beforeEach(() => {
   vi.mocked(refreshOpenAIQuota).mockReset()
   vi.mocked(resetOpenAIQuota).mockReset()
+  vi.mocked(setOpenAIQuotaAutoReset).mockReset()
 })
 
 describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
@@ -72,6 +74,9 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
     const btn = resetButton(wrapper)
     expect(btn.attributes('disabled')).toBeDefined()
     expect(btn.attributes('title')).toBe('admin.accounts.openaiQuotaReset.resetTooltipShadow')
+    const autoReset = wrapper.find('[data-testid="openai-quota-auto-reset-toggle"]')
+    expect(autoReset.attributes('disabled')).toBeDefined()
+    expect(autoReset.attributes('title')).toBe('admin.accounts.openaiQuotaReset.autoResetTooltipShadow')
     wrapper.unmount()
   })
 
@@ -82,6 +87,21 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
     const btn = resetButton(wrapper)
     // 未加载数据时本就 disabled(无次数),但提示语必须是 needQuery,不得是 shadow 提示。
     expect(btn.attributes('title')).toBe('admin.accounts.openaiQuotaReset.resetTooltipNeedQuery')
+    wrapper.unmount()
+  })
+
+  it('明确配置的 CPA quota bridge 显示次数、重置和自动重置控件', () => {
+    const account = makeAccount({
+      type: 'apikey',
+      extra: {
+        openai_quota_via_compatible_upstream: true,
+      },
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+
+    expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.count')
+    expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.reset')
+    expect(wrapper.find('[data-testid="openai-quota-auto-reset-toggle"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -341,6 +361,27 @@ describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
     expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.resetAccountRecoveryFailed')
     expect(resetButton(wrapper).attributes('disabled')).toBeDefined()
     expect(wrapper.emitted('account-updated')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('读取账号持久化开关状态并可切换自动重置', async () => {
+    vi.mocked(setOpenAIQuotaAutoReset).mockResolvedValue({ enabled: false })
+    const account = makeAccount({
+      parent_account_id: null,
+      type: 'apikey',
+      extra: { openai_quota_auto_reset_enabled: true, openai_quota_via_compatible_upstream: true },
+    })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+
+    const toggle = wrapper.find('[data-testid="openai-quota-auto-reset-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    await toggle.trigger('click')
+    await flushPromises()
+
+    expect(setOpenAIQuotaAutoReset).toHaveBeenCalledWith(1, false)
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(wrapper.text()).toContain('admin.accounts.openaiQuotaReset.autoResetDisabled')
     wrapper.unmount()
   })
 })

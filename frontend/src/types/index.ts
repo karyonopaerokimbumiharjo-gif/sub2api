@@ -94,11 +94,25 @@ export interface User {
   balance_notify_enabled: boolean
   balance_notify_threshold: number | null
   balance_notify_extra_emails: NotifyEmailEntry[]
+  balance_grants?: UserBalanceGrant[]
   subscriptions?: UserSubscription[] // User's active subscriptions
   last_active_at?: string | null
   created_at: string
   updated_at: string
   deleted_at?: string | null
+}
+
+export interface UserBalanceGrant {
+  id: number
+  user_id: number
+  redeem_code_id?: number | null
+  redeem_code?: string
+  source_type: string
+  original_amount: number
+  remaining_amount: number
+  expires_at: string
+  granted_at: string
+  status: string
 }
 
 export interface AdminUser extends User {
@@ -112,6 +126,8 @@ export interface AdminUser extends User {
   restrict_public_groups?: boolean
   // 当前并发数（仅管理员列表接口返回）
   current_concurrency?: number
+  // 管理员显式设置的安全审核放行开关；普通用户接口不返回。
+  prompt_audit_bypass?: boolean
 }
 
 export interface LoginRequest {
@@ -941,6 +957,8 @@ export interface Proxy {
   password?: string | null
   status: 'active' | 'inactive' | 'expired'
   account_count?: number // Number of accounts using this proxy
+  cpa_credential_count?: number // Number of CPA credentials using this proxy; absent when CPA is unavailable
+  cpa_credential_names?: string[]
   latency_ms?: number
   latency_status?: 'success' | 'failed'
   latency_message?: string
@@ -1198,6 +1216,9 @@ export interface Account {
       last_result_at?: string
       error_code?: string
     }
+    openai_quota_auto_reset_enabled?: boolean
+    openai_quota_auto_reset_last_reset_at?: string | null
+    openai_quota_auto_reset_last_status?: string | null
   } & Record<string, unknown>)
   proxy_id: number | null
   proxy_fallback_origin_id?: number | null
@@ -1326,6 +1347,7 @@ export interface WindowStats {
 }
 
 export interface UsageProgress {
+	utilization_unavailable?: boolean
   utilization: number // Percentage (0-100+, 100 = 100%)
   resets_at: string | null
   remaining_seconds: number
@@ -1384,6 +1406,7 @@ export interface GrokBillingSummary {
 }
 
 export interface AccountUsageInfo {
+	quota_updated_at?: string | null
   source?: 'passive' | 'active'
   updated_at: string | null
   five_hour: UsageProgress | null
@@ -1734,6 +1757,7 @@ export interface UsageLog {
   native_compaction_v2: boolean
   duration_ms: number | null
   first_token_ms: number | null
+  prompt_audit_latency_ms?: number | null
 
   // 图片生成字段
   image_count: number
@@ -1832,7 +1856,7 @@ export interface RedeemCode {
   updated_at?: string
   notes?: string
   group_id?: number | null // 订阅类型专用
-  validity_days?: number // 订阅类型专用
+  validity_days?: number // 余额/订阅兑换后的有效天数
   user?: User
   group?: Group // 关联的分组
 }
@@ -1842,7 +1866,7 @@ export interface GenerateRedeemCodesRequest {
   type: RedeemCodeType
   value: number
   group_id?: number | null // 订阅类型专用
-  validity_days?: number // 订阅类型专用
+  validity_days?: number // 余额/订阅兑换后的有效天数
   expires_at?: string | null
   expires_in_days?: number
 }
@@ -2040,6 +2064,7 @@ export interface UpdateUserRequest {
   balance?: number
   concurrency?: number
   rpm_limit?: number
+  prompt_audit_bypass?: boolean
   status?: 'active' | 'disabled'
   allowed_groups?: number[] | null
   restrict_public_groups?: boolean

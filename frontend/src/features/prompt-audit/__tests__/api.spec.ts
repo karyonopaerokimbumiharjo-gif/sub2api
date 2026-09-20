@@ -22,7 +22,7 @@ describe('Prompt Audit API', () => {
   it('sends a temporary probe token only in the request and never invents response credentials', async () => {
     client.post.mockResolvedValue({ data: { ok: true, token_applied: true } })
     const result = await promptAuditAPI.probeEndpoint({
-      id: 'guard-1', name: 'Guard', protocol: 'openai_compatible', base_url: 'http://127.0.0.1:8000', model: 'guard',
+      id: 'guard-1', name: 'Guard', protocol: 'openai_compatible', adapter: 'qwen3guard', base_url: 'http://127.0.0.1:8000', model: 'guard',
       token: 'api-canary-secret', clear_token: false, timeout_ms: 1000, input_limit: 1000, enabled: true, has_token: false, token_status: 'missing',
     })
     expect(client.post).toHaveBeenCalledWith('/admin/prompt-audit/endpoints/probe', expect.objectContaining({ endpoint: expect.objectContaining({ token: 'api-canary-secret' }) }))
@@ -40,5 +40,31 @@ describe('Prompt Audit API', () => {
     expect(client.post).toHaveBeenCalledWith('/admin/prompt-audit/events/delete-by-filter', expect.objectContaining({
       snapshot_max_id: 10, filter_hash: 'a'.repeat(64), confirmation_token: 'opaque-token', confirm: true,
     }))
+  })
+
+  it('lists and reviews adaptive samples under the unified route', async () => {
+    client.get.mockResolvedValue({ data: { items: [], total: 0, page: 1, page_size: 20, pages: 0 } })
+    await promptAuditAPI.listAdaptiveSamples('disagreement', 1, 20)
+    expect(client.get).toHaveBeenCalledWith('/admin/prompt-audit/adaptive-samples', {
+      params: { status: 'disagreement', page: 1, page_size: 20 },
+    })
+
+    client.post.mockResolvedValue({ data: { id: 9, review_status: 'allow' } })
+    await promptAuditAPI.reviewAdaptiveSample(9, 'allow')
+    expect(client.post).toHaveBeenCalledWith('/admin/prompt-audit/adaptive-samples/9/review', {
+      decision: 'allow', note: '',
+    })
+  })
+
+  it('lists policy snapshots and rolls back with optimistic concurrency', async () => {
+    client.get.mockResolvedValue({ data: [{ id: 7, config_version: 6, endpoint_order: ['luna', 'spark'] }] })
+    await promptAuditAPI.listPolicyVersions(12)
+    expect(client.get).toHaveBeenCalledWith('/admin/prompt-audit/policy-versions', { params: { limit: 12 } })
+
+    client.post.mockResolvedValue({ data: { config_version: 8 } })
+    await promptAuditAPI.rollbackPolicy(6, 7)
+    expect(client.post).toHaveBeenCalledWith('/admin/prompt-audit/policy-versions/6/rollback', {
+      expected_config_version: 7,
+    })
   })
 })

@@ -154,6 +154,7 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 		SetNillableLastActiveAt(userIn.LastActiveAt).
 		SetRpmLimit(userIn.RPMLimit).
 		SetRestrictPublicGroups(userIn.RestrictPublicGroups).
+		SetPromptAuditBypass(userIn.PromptAuditBypass).
 		Save(txCtx)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrEmailExists)
@@ -313,6 +314,9 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	}
 	if fields.RPMLimit {
 		updateOp = updateOp.SetRpmLimit(userIn.RPMLimit)
+	}
+	if fields.PromptAuditBypass {
+		updateOp = updateOp.SetPromptAuditBypass(userIn.PromptAuditBypass)
 	}
 	if fields.Status {
 		updateOp = updateOp.SetStatus(userIn.Status)
@@ -828,6 +832,14 @@ func (r *userRepository) filterUsersByAttributes(ctx context.Context, attrs map[
 }
 
 func (r *userRepository) UpdateBalance(ctx context.Context, id int64, amount float64) error {
+	if err := r.ExpireBalanceGrants(ctx, id); err != nil {
+		return err
+	}
+	if amount < 0 {
+		if err := r.consumeBalanceGrants(ctx, id, -amount); err != nil {
+			return err
+		}
+	}
 	client := clientFromContext(ctx, r.client)
 	update := client.User.Update().Where(dbuser.IDEQ(id)).AddBalance(amount)
 	// Track cumulative recharge amount for percentage-based notifications
@@ -869,6 +881,13 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 // 透支策略：允许余额变为负数，确保当前请求能够完成
 // 中间件会阻止余额 <= 0 的用户发起后续请求
 func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount float64) error {
+	if err := r.ExpireBalanceGrants(ctx, id); err != nil {
+		return err
+	}
+	if err := r.consumeBalanceGrants(ctx, id, amount); err != nil {
+		return err
+	}
+
 	client := clientFromContext(ctx, r.client)
 	n, err := client.User.Update().
 		Where(dbuser.IDEQ(id), dbuser.BalanceGTE(amount)).
@@ -1035,6 +1054,179 @@ func scanBalanceChange(ctx context.Context, client *dbent.Client, query string, 
 		return service.BalanceChange{}, false, err
 	}
 	return change, true, rows.Err()
+}
+
+func (r *userRepository) CreateBalanceGrant(ctx context.Context, input service.CreateBalanceGrantInput) error {
+	if input.UserID <= 0 || input.Amount <= 0 || input.ExpiresAt.IsZero() {
+		return nil
+	}
+	sourceType := strings.TrimSpace(input.SourceType)
+	if sourceType == "" {
+		sourceType = "redeem_code"
+	}
+	grantedAt := input.GrantedAt
+	if grantedAt.IsZero() {
+		grantedAt = time.Now()
+	}
+	exec := txAwareSQLExecutor(ctx, r.sql, r.client)
+	if exec == nil {
+		return fmt.Errorf("sql executor is not configured")
+	}
+
+	if input.RedeemCodeID != nil {
+		if _, err := exec.ExecContext(ctx, `
+			UPDATE redeem_codes
+			SET expires_at = $1
+			WHERE id = $2
+		`, input.ExpiresAt, *input.RedeemCodeID); err != nil {
+			return err
+		}
+	}
+
+	var redeemCodeID any
+	if input.RedeemCodeID != nil {
+		redeemCodeID = *input.RedeemCodeID
+	}
+	_, err := exec.ExecContext(ctx, `
+		INSERT INTO user_balance_grants (
+			user_id,
+			redeem_code_id,
+			source_type,
+			original_amount,
+			remaining_amount,
+			expires_at,
+			status,
+			created_at,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $4, $5, 'active', $6, NOW())
+		ON CONFLICT (redeem_code_id) WHERE redeem_code_id IS NOT NULL DO NOTHING
+	`, input.UserID, redeemCodeID, sourceType, input.Amount, input.ExpiresAt, grantedAt)
+	return err
+}
+
+func (r *userRepository) ExpireBalanceGrants(ctx context.Context, userID int64) error {
+	if userID <= 0 {
+		return nil
+	}
+	exec := txAwareSQLExecutor(ctx, r.sql, r.client)
+	if exec == nil {
+		return fmt.Errorf("sql executor is not configured")
+	}
+	_, err := exec.ExecContext(ctx, `SELECT public.expire_user_balance_grants($1)`, userID)
+	return err
+}
+
+func (r *userRepository) ExpireDueBalanceGrants(ctx context.Context, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	exec := txAwareSQLExecutor(ctx, r.sql, r.client)
+	if exec == nil {
+		return nil, fmt.Errorf("sql executor is not configured")
+	}
+	rows, err := exec.QueryContext(ctx, `
+		SELECT expired_user_id
+		FROM public.expire_due_balance_grants($1)
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	userIDs := make([]int64, 0)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
+func (r *userRepository) ListActiveBalanceGrants(ctx context.Context, userID int64, limit int) ([]service.UserBalanceGrant, error) {
+	if userID <= 0 {
+		return []service.UserBalanceGrant{}, nil
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if err := r.ExpireBalanceGrants(ctx, userID); err != nil {
+		return nil, err
+	}
+	exec := txAwareSQLExecutor(ctx, r.sql, r.client)
+	if exec == nil {
+		return nil, fmt.Errorf("sql executor is not configured")
+	}
+	rows, err := exec.QueryContext(ctx, `
+		SELECT
+			g.id,
+			g.user_id,
+			g.redeem_code_id,
+			COALESCE(rc.code, ''),
+			g.source_type,
+			g.original_amount::double precision,
+			g.remaining_amount::double precision,
+			g.expires_at,
+			g.created_at,
+			g.status
+		FROM user_balance_grants g
+		LEFT JOIN redeem_codes rc ON rc.id = g.redeem_code_id
+		WHERE g.user_id = $1
+		  AND g.status = 'active'
+		  AND g.remaining_amount > 0
+		  AND g.expires_at > NOW()
+		ORDER BY g.expires_at ASC, g.id ASC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	grants := make([]service.UserBalanceGrant, 0)
+	for rows.Next() {
+		var grant service.UserBalanceGrant
+		var redeemCodeID sql.NullInt64
+		if err := rows.Scan(
+			&grant.ID,
+			&grant.UserID,
+			&redeemCodeID,
+			&grant.RedeemCode,
+			&grant.SourceType,
+			&grant.OriginalAmount,
+			&grant.RemainingAmount,
+			&grant.ExpiresAt,
+			&grant.GrantedAt,
+			&grant.Status,
+		); err != nil {
+			return nil, err
+		}
+		if redeemCodeID.Valid {
+			grant.RedeemCodeID = &redeemCodeID.Int64
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
+func (r *userRepository) consumeBalanceGrants(ctx context.Context, userID int64, amount float64) error {
+	if userID <= 0 || amount <= 0 {
+		return nil
+	}
+	exec := txAwareSQLExecutor(ctx, r.sql, r.client)
+	if exec == nil {
+		return fmt.Errorf("sql executor is not configured")
+	}
+	_, err := exec.ExecContext(ctx, `SELECT public.consume_user_balance_grants($1, $2::numeric)`, userID, amount)
+	return err
 }
 
 func (r *userRepository) UpdateConcurrency(ctx context.Context, id int64, amount int) error {

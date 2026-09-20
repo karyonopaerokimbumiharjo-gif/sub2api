@@ -180,6 +180,11 @@ func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// PromptAuditBypass applies equality check predicate on the "prompt_audit_bypass" field. It's identical to PromptAuditBypassEQ.
+func PromptAuditBypass(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldPromptAuditBypass, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1398,6 +1403,16 @@ func RpmLimitLT(v int) predicate.User {
 // RpmLimitLTE applies the LTE predicate on the "rpm_limit" field.
 func RpmLimitLTE(v int) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldRpmLimit, v))
+}
+
+// PromptAuditBypassEQ applies the EQ predicate on the "prompt_audit_bypass" field.
+func PromptAuditBypassEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldPromptAuditBypass, v))
+}
+
+// PromptAuditBypassNEQ applies the NEQ predicate on the "prompt_audit_bypass" field.
+func PromptAuditBypassNEQ(v bool) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldPromptAuditBypass, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

@@ -334,24 +334,17 @@ func (s *AntigravityGatewayService) IsModelSupported(requestedModel string) bool
 
 // TestConnectionResult 测试连接结果
 type TestConnectionResult struct {
-	Text        string // 响应文本
-	MappedModel string // 实际使用的模型
+	Text             string // 响应文本
+	MappedModel      string // 实际使用的模型
+	Usage            OpenAIUsage
+	EstimatedCostUSD float64
+	PricingKnown     bool
 }
 
 // TestConnection 测试 Antigravity 账号连接。
 // 复用 antigravityRetryLoop 的完整重试 / credits overages / 智能重试逻辑，
 // 与真实调度行为一致。差异：不做账号切换（测试指定账号）、不记录 ops 错误。
 func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
-
-	// 获取 token
-	if s.tokenProvider == nil {
-		return nil, errors.New("antigravity token provider not configured")
-	}
-	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
-	if err != nil {
-		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
-	}
-
 	projectID, err := resolveAntigravityProjectID(account)
 	if err != nil {
 		return nil, err
@@ -373,6 +366,66 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	if err != nil {
 		return nil, fmt.Errorf("构建请求失败: %w", err)
 	}
+	return s.executeInternalTextRequest(ctx, account, modelID, mappedModel, requestBody,
+		fmt.Sprintf("[antigravity-Test] account=%d(%s)", account.ID, account.Name), testConnectionHandleError)
+}
+
+// GenerateText performs an internal, non-HTTP-loopback Antigravity generation.
+// It is intended for trusted service features such as prompt auditing that must
+// reuse configured OAuth accounts without re-entering the public gateway.
+func (s *AntigravityGatewayService) GenerateText(
+	ctx context.Context,
+	account *Account,
+	modelID string,
+	systemPrompt string,
+	userPrompt string,
+	maxOutputTokens int,
+) (*TestConnectionResult, error) {
+	if account == nil || account.Platform != PlatformAntigravity {
+		return nil, errors.New("antigravity account required")
+	}
+	if !strings.HasPrefix(modelID, "gemini-") {
+		return nil, errors.New("internal text generation requires a gemini model")
+	}
+	projectID, err := resolveAntigravityProjectID(account)
+	if err != nil {
+		return nil, err
+	}
+	mappedModel := s.getMappedModel(account, modelID)
+	if mappedModel == "" {
+		return nil, fmt.Errorf("model %s not in whitelist", modelID)
+	}
+	requestBody, err := s.buildGeminiTextRequest(projectID, mappedModel, systemPrompt, userPrompt, maxOutputTokens)
+	if err != nil {
+		return nil, fmt.Errorf("构建请求失败: %w", err)
+	}
+	result, err := s.executeInternalTextRequest(ctx, account, modelID, mappedModel, requestBody,
+		fmt.Sprintf("[antigravity-InternalText] account=%d", account.ID), internalTextHandleError)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || strings.TrimSpace(result.Text) == "" {
+		return nil, errors.New("upstream returned empty text")
+	}
+	return result, nil
+}
+
+func (s *AntigravityGatewayService) executeInternalTextRequest(
+	ctx context.Context,
+	account *Account,
+	modelID string,
+	mappedModel string,
+	requestBody []byte,
+	prefix string,
+	handleError func(context.Context, string, *Account, int, http.Header, []byte, string, int64, string, bool) *handleModelRateLimitResult,
+) (*TestConnectionResult, error) {
+	if s.tokenProvider == nil {
+		return nil, errors.New("antigravity token provider not configured")
+	}
+	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
+	}
 
 	// 代理 URL
 	proxyURL := ""
@@ -381,7 +434,6 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	}
 
 	// 复用 antigravityRetryLoop：完整的重试 / credits overages / 智能重试
-	prefix := fmt.Sprintf("[antigravity-Test] account=%d(%s)", account.ID, account.Name)
 	p := antigravityRetryLoopParams{
 		ctx:            ctx,
 		prefix:         prefix,
@@ -395,7 +447,7 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 		settingService: s.settingService,
 		accountRepo:    s.accountRepo,
 		requestedModel: modelID,
-		handleError:    testConnectionHandleError,
+		handleError:    handleError,
 	}
 
 	result, err := s.antigravityRetryLoop(p)
@@ -439,6 +491,17 @@ func testConnectionHandleError(
 	return nil
 }
 
+func internalTextHandleError(
+	_ context.Context, prefix string, account *Account,
+	statusCode int, _ http.Header, _ []byte,
+	requestedModel string, _ int64, _ string, _ bool,
+) *handleModelRateLimitResult {
+	logger.LegacyPrintf("service.antigravity_gateway",
+		"%s internal_text_error status=%d model=%s account=%d",
+		prefix, statusCode, requestedModel, account.ID)
+	return nil
+}
+
 // buildGeminiTestRequest 构建 Gemini 格式测试请求
 // 使用最小 token 消耗：输入 "." + maxOutputTokens: 1
 func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model string) ([]byte, error) {
@@ -462,6 +525,35 @@ func (s *AntigravityGatewayService) buildGeminiTestRequest(projectID, model stri
 		},
 	}
 	payloadBytes, _ := json.Marshal(payload)
+	return s.wrapV1InternalRequest(projectID, model, payloadBytes)
+}
+
+func (s *AntigravityGatewayService) buildGeminiTextRequest(projectID, model, systemPrompt, userPrompt string, maxOutputTokens int) ([]byte, error) {
+	if maxOutputTokens < 1 {
+		maxOutputTokens = 160
+	}
+	if maxOutputTokens > 512 {
+		maxOutputTokens = 512
+	}
+	parts := []map[string]any{{"text": antigravity.GetDefaultIdentityPatch()}}
+	if strings.TrimSpace(systemPrompt) != "" {
+		parts = append(parts, map[string]any{"text": systemPrompt})
+	}
+	payload := map[string]any{
+		"contents": []map[string]any{{
+			"role":  "user",
+			"parts": []map[string]any{{"text": userPrompt}},
+		}},
+		"systemInstruction": map[string]any{"parts": parts},
+		"generationConfig": map[string]any{
+			"temperature":     0,
+			"maxOutputTokens": maxOutputTokens,
+		},
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
 	return s.wrapV1InternalRequest(projectID, model, payloadBytes)
 }
 

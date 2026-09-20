@@ -43,7 +43,7 @@ func openPromptAuditIntegrationDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err)
-	for _, name := range []string{"181_prompt_audit.sql", "182_prompt_audit_full_prompt.sql"} {
+	for _, name := range []string{"181_prompt_audit.sql", "182_prompt_audit_full_prompt.sql", "202_prompt_audit_incremental_full.sql"} {
 		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		require.NoError(t, err)
 		// The migration runner can retry an interrupted deployment; the migration
@@ -77,7 +77,8 @@ func integrationSnapshot(seed string) PromptSnapshot {
 		UserEmailSnapshot: "user-" + seed + "@example.test", APIKeyNameSnapshot: "key-" + seed,
 		GroupName: "group-" + seed, Provider: "openai", Endpoint: "/v1/chat/completions",
 		Protocol: "openai_chat", Model: "gpt-test", PromptHash: strings.Repeat(seed[:1], 64),
-		RedactedPreview: "redacted-" + seed, PromptLength: len([]rune(seed)), MessageCount: 1,
+		RedactedPreview: "redacted-" + seed, FullPrompt: "full-" + seed, AuditedPrompt: "audited-" + seed,
+		PromptLength: len([]rune(seed)), MessageCount: 1,
 	}
 }
 

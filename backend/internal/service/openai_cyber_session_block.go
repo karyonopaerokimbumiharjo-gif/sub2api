@@ -22,6 +22,20 @@ type CyberSessionBlockStore interface {
 	FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error)
 }
 
+// SecurityAuditRevocationStore persists revocation independently from Redis.
+type SecurityAuditRevocationStore interface {
+	SaveSecurityAuditRevocations(context.Context, []string) error
+	LoadSecurityAuditRevocations(context.Context, []string) (map[string]bool, error)
+}
+
+func (s *OpenAIGatewayService) securityAuditRevocationStore() SecurityAuditRevocationStore {
+	if s == nil || s.settingService == nil {
+		return nil
+	}
+	store, _ := s.settingService.settingRepo.(SecurityAuditRevocationStore)
+	return store
+}
+
 const cyberSessionTranscriptLookupOverflowBlockKey = "transcript_lookup_limit_exceeded"
 
 const securityAuditSessionBlockNamespace = "prompt_guard:"
@@ -184,6 +198,16 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 	var firstErr error
 	namespacedKeys := securityAuditSessionBlockKeys(keys)
 	namespacedScope := securityAuditSessionBlockKey(scopeKey)
+	if durable := s.securityAuditRevocationStore(); durable != nil && len(namespacedKeys) > 0 {
+		keys := append([]string(nil), namespacedKeys...)
+		if namespacedScope != "" {
+			keys = append(keys, namespacedScope)
+		}
+		if err := durable.SaveSecurityAuditRevocations(ctx, keys); err != nil {
+			firstErr = err
+		}
+	}
+
 	if store := s.cyberSessionBlockStore(); store != nil && len(namespacedKeys) > 0 {
 		if err := store.SetCyberSessionBlocked(ctx, namespacedScope, namespacedKeys, ttl); err != nil {
 			firstErr = err
@@ -217,9 +241,33 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 // FindSecurityAuditSessionInvalidatedForRequest checks the independent prompt-guard
 // invalidation namespace. It deliberately ignores cyber_session_block_enabled so
 // a blocking audit verdict cannot be re-enabled by an older persisted setting.
+const SecurityAuditSessionStoreUnavailable = "security_audit_session_store_unavailable"
+
 func (s *OpenAIGatewayService) FindSecurityAuditSessionInvalidatedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
 	if s == nil {
 		return ""
+	}
+	if durable := s.securityAuditRevocationStore(); durable != nil {
+		direct := securityAuditSessionBlockKeys([]string{CyberSessionPreviousResponseBlockKey(apiKeyID, body), CyberSessionExplicitBlockKey(apiKeyID, c, body)})
+		transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
+		keys := append(direct, securityAuditSessionBlockKeys(transcript.lookupKeys)...)
+		scope := securityAuditSessionBlockKey(CyberSessionScopeKey(apiKeyID, clientIP, userAgent))
+		query := append([]string(nil), keys...)
+		if scope != "" {
+			query = append(query, scope)
+		}
+		found, err := durable.LoadSecurityAuditRevocations(ctx, query)
+		if err != nil {
+			return SecurityAuditSessionStoreUnavailable
+		}
+		for _, key := range keys {
+			if found[key] {
+				return key
+			}
+		}
+		if transcript.lookupKeysTruncated && found[scope] {
+			return securityAuditSessionBlockKey(cyberSessionTranscriptLookupOverflowBlockKey)
+		}
 	}
 	store := s.cyberSessionBlockStore()
 	if store == nil {
@@ -233,7 +281,7 @@ func (s *OpenAIGatewayService) FindSecurityAuditSessionInvalidatedForRequest(ctx
 		key, err := store.FindCyberSessionBlocked(ctx, direct)
 		if err != nil {
 			logger.LegacyPrintf("service.openai_gateway", "security audit direct session read failed: err=%v", err)
-			return ""
+			return SecurityAuditSessionStoreUnavailable
 		}
 		if key != "" {
 			return key
@@ -246,7 +294,7 @@ func (s *OpenAIGatewayService) FindSecurityAuditSessionInvalidatedForRequest(ctx
 	active, err := store.IsCyberSessionScopeActive(ctx, scopeKey)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "security audit session scope read failed: err=%v", err)
-		return ""
+		return SecurityAuditSessionStoreUnavailable
 	}
 	if !active {
 		return ""
@@ -262,7 +310,7 @@ func (s *OpenAIGatewayService) FindSecurityAuditSessionInvalidatedForRequest(ctx
 	key, err := store.FindCyberSessionBlocked(ctx, keys)
 	if err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "security audit session block batch read failed: err=%v", err)
-		return ""
+		return SecurityAuditSessionStoreUnavailable
 	}
 	return key
 }

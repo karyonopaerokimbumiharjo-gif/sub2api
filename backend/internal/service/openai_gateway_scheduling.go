@@ -528,10 +528,9 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 		now := time.Now()
 		utilization5h, has5h := resolveOpenAIQuotaUtilization(account.Extra, "5h", now)
 		utilization7d, has7d := resolveOpenAIQuotaUtilization(account.Extra, "7d", now)
-		if has5h && utilization5h >= config.Threshold5h {
-			notifyOpenAIAutoReset(account.ID)
-			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: config.Threshold5h, utilization: utilization5h, reason: "quota_auto_reset_pending_5h"}
-		}
+		// Reset-credit automation is 7-day-only. A full 5h window must never
+		// trigger a reset-credit attempt; it is handled by ordinary auto-pause
+		// below.
 		if has7d && utilization7d >= config.Threshold7d {
 			notifyOpenAIAutoReset(account.ID)
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: config.Threshold7d, utilization: utilization7d, reason: "quota_auto_reset_pending_7d"}
@@ -542,15 +541,17 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 		pause5h, pause7d := resolveOpenAIQuotaAutoPauseThresholds(ctx, account)
 		pauseReached5h := !disabled5h && pause5h > 0 && has5h && utilization5h >= pause5h
 		pauseReached7d := !disabled7d && pause7d > 0 && has7d && utilization7d >= pause7d
-		if pauseReached5h || pauseReached7d {
+		// A 5h pause remains a normal scheduling decision. It must not consult
+		// reset-credit state or notify the reset worker.
+		if pauseReached5h {
+			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: pause5h, utilization: utilization5h}
+		}
+		if pauseReached7d {
 			state := openAIAutoResetStateFromExtra(account.Extra)
 			if state != nil && state.Status == OpenAIAutoResetStatusAvailable && state.AvailableCount > 0 && !openAIAutoResetStateStale(state, now) {
 				return false, openAIQuotaAutoPauseDecision{}
 			}
 			notifyOpenAIAutoReset(account.ID)
-			if pauseReached5h {
-				return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: pause5h, utilization: utilization5h, reason: "quota_auto_reset_credit_check_5h"}
-			}
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: pause7d, utilization: utilization7d, reason: "quota_auto_reset_credit_check_7d"}
 		}
 	}

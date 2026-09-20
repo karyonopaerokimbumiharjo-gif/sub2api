@@ -32,11 +32,14 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 	}
 	aggregated := &NormalizedResult{
 		Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow,
-		ScannerBackend: "qwen3guard-openai", Categories: []string{}, MatchedScanners: []string{},
+		ScannerBackend: "qwen3guard-openai", Categories: []string{}, IntentCategories: []string{},
+		ContentCategories: []string{}, MatchedScanners: []string{},
 		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}, ChunkTotal: len(results),
 		LatencyMS: int(latency.Milliseconds()),
 	}
 	categories := map[string]struct{}{}
+	intentCategories := map[string]struct{}{}
+	contentCategories := map[string]struct{}{}
 	matched := map[string]struct{}{}
 	unknown := map[string]struct{}{}
 	for _, result := range results {
@@ -62,6 +65,12 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 		for _, category := range result.Categories {
 			categories[category] = struct{}{}
 		}
+		for _, category := range result.IntentCategories {
+			intentCategories[category] = struct{}{}
+		}
+		for _, category := range result.ContentCategories {
+			contentCategories[category] = struct{}{}
+		}
 		for _, scanner := range result.MatchedScanners {
 			matched[scanner] = struct{}{}
 		}
@@ -80,9 +89,26 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 		}
 	}
 	aggregated.Categories = orderedScannerKeys(categories)
+	aggregated.IntentCategories = orderedScannerKeys(intentCategories)
+	aggregated.ContentCategories = orderedContentCategoryKeys(contentCategories)
 	aggregated.MatchedScanners = orderedScannerKeys(matched)
 	aggregated.UnknownCategories = sortedKeys(unknown)
 	return aggregated, nil
+}
+
+func orderedContentCategoryKeys(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	remaining := make(map[string]struct{}, len(values))
+	for key := range values {
+		remaining[key] = struct{}{}
+	}
+	for _, category := range AllContentCategoryIDs {
+		if _, ok := remaining[category]; ok {
+			result = append(result, category)
+			delete(remaining, category)
+		}
+	}
+	return append(result, sortedKeys(remaining)...)
 }
 
 func resultSeverity(decision EventDecision) int {

@@ -500,6 +500,23 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		} else if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
 			return nil, fmt.Errorf("update user balance: %w", err)
 		}
+		if amount > 0 && redeemCode.ValidityDays > 0 {
+			creator, ok := s.userRepo.(BalanceGrantCreator)
+			if ok {
+				grantedAt := time.Now()
+				expiresAt := grantedAt.AddDate(0, 0, redeemCode.ValidityDays)
+				if err := creator.CreateBalanceGrant(txCtx, CreateBalanceGrantInput{
+					UserID:       userID,
+					RedeemCodeID: &redeemCode.ID,
+					SourceType:   "redeem_code",
+					Amount:       amount,
+					ExpiresAt:    expiresAt,
+					GrantedAt:    grantedAt,
+				}); err != nil {
+					return nil, fmt.Errorf("create balance grant: %w", err)
+				}
+			}
+		}
 
 	case RedeemTypeConcurrency:
 		delta := int(redeemCode.Value)

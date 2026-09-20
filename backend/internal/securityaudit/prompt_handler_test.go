@@ -19,10 +19,14 @@ import (
 type fakePromptAdminService struct {
 	config       PublicConfig
 	save         func(context.Context, UpdateConfigRequest, int64) (PublicConfig, error)
+	versions     func(context.Context, int) ([]PromptPolicyVersion, error)
+	rollback     func(context.Context, int64, int64, int64) (PublicConfig, error)
 	probe        func(context.Context, ProbeRequest) ProbeResult
 	runtime      RuntimeSnapshot
 	list         func(context.Context, EventFilter, int, int) (*EventPage, error)
 	get          func(context.Context, int64) (*Event, error)
+	listAdaptive func(context.Context, string, int, int) (*AdaptiveSamplePage, error)
+	review       func(context.Context, int64, int64, AdaptiveReviewRequest) (*AdaptiveSample, error)
 	deleteOne    func(context.Context, int64) (*DeleteResult, error)
 	deleteIDs    func(context.Context, []int64) (*DeleteResult, error)
 	preview      func(context.Context, EventFilter, int64) (*DeletePreview, error)
@@ -37,6 +41,18 @@ func (s *fakePromptAdminService) SaveConfig(ctx context.Context, req UpdateConfi
 		return PublicConfig{}, errors.New("unexpected SaveConfig call")
 	}
 	return s.save(ctx, req, actorID)
+}
+func (s *fakePromptAdminService) ListPolicyVersions(ctx context.Context, limit int) ([]PromptPolicyVersion, error) {
+	if s.versions == nil {
+		return []PromptPolicyVersion{}, nil
+	}
+	return s.versions(ctx, limit)
+}
+func (s *fakePromptAdminService) RollbackPolicy(ctx context.Context, targetConfigVersion, expectedConfigVersion, actorID int64) (PublicConfig, error) {
+	if s.rollback == nil {
+		return PublicConfig{}, errors.New("unexpected RollbackPolicy call")
+	}
+	return s.rollback(ctx, targetConfigVersion, expectedConfigVersion, actorID)
 }
 func (s *fakePromptAdminService) Probe(ctx context.Context, req ProbeRequest) ProbeResult {
 	if s.probe == nil {
@@ -56,6 +72,18 @@ func (s *fakePromptAdminService) GetEvent(ctx context.Context, id int64) (*Event
 		return nil, ErrEventNotFound
 	}
 	return s.get(ctx, id)
+}
+func (s *fakePromptAdminService) ListAdaptiveSamples(ctx context.Context, status string, page, pageSize int) (*AdaptiveSamplePage, error) {
+	if s.listAdaptive == nil {
+		return &AdaptiveSamplePage{}, nil
+	}
+	return s.listAdaptive(ctx, status, page, pageSize)
+}
+func (s *fakePromptAdminService) ReviewAdaptiveSample(ctx context.Context, id, actorID int64, request AdaptiveReviewRequest) (*AdaptiveSample, error) {
+	if s.review == nil {
+		return nil, ErrAdaptiveSampleNotFound
+	}
+	return s.review(ctx, id, actorID, request)
 }
 func (s *fakePromptAdminService) DeleteEvent(ctx context.Context, id int64) (*DeleteResult, error) {
 	if s.deleteOne == nil {
@@ -94,15 +122,44 @@ func promptAdminRouter(service PromptAdminService) *gin.Engine {
 	group := router.Group("/admin/prompt-audit")
 	group.GET("/config", handler.GetConfig)
 	group.PUT("/config", handler.UpdateConfig)
+	group.GET("/policy-versions", handler.ListPolicyVersions)
+	group.POST("/policy-versions/:config_version/rollback", handler.RollbackPolicy)
 	group.POST("/endpoints/probe", handler.ProbeEndpoint)
 	group.GET("/runtime", handler.GetRuntime)
 	group.GET("/events", handler.ListEvents)
 	group.GET("/events/:id", handler.GetEvent)
+	group.GET("/adaptive-samples", handler.ListAdaptiveSamples)
+	group.POST("/adaptive-samples/:id/review", handler.ReviewAdaptiveSample)
 	group.DELETE("/events/:id", handler.DeleteEvent)
 	group.POST("/events/batch-delete", handler.BatchDelete)
 	group.POST("/events/delete-preview", handler.DeletePreview)
 	group.POST("/events/delete-by-filter", handler.DeleteByFilter)
 	return router
+}
+
+func TestPromptAdminPolicyVersionsAndRollback(t *testing.T) {
+	service := &fakePromptAdminService{
+		versions: func(_ context.Context, limit int) ([]PromptPolicyVersion, error) {
+			require.Equal(t, 7, limit)
+			return []PromptPolicyVersion{{ID: 2, ConfigVersion: 9, EndpointOrder: []string{"luna", "spark"}}}, nil
+		},
+		rollback: func(_ context.Context, target, expected, actor int64) (PublicConfig, error) {
+			require.Equal(t, int64(8), target)
+			require.Equal(t, int64(9), expected)
+			require.Equal(t, int64(42), actor)
+			return PublicConfig{ConfigVersion: 10, Endpoints: []PublicEndpoint{{ID: "spark"}, {ID: "luna"}}}, nil
+		},
+	}
+	router := promptAdminRouter(service)
+
+	listed := promptAdminRequest(t, router, http.MethodGet, "/admin/prompt-audit/policy-versions?limit=7", nil)
+	require.Equal(t, http.StatusOK, listed.Code)
+	require.Contains(t, listed.Body.String(), `"endpoint_order":["luna","spark"]`)
+
+	rolledBack := promptAdminRequest(t, router, http.MethodPost, "/admin/prompt-audit/policy-versions/8/rollback", map[string]any{"expected_config_version": 9})
+	require.Equal(t, http.StatusOK, rolledBack.Code)
+	require.Contains(t, rolledBack.Body.String(), `"config_version":10`)
+	require.Contains(t, rolledBack.Body.String(), `"id":"spark"`)
 }
 
 func promptAdminRequest(t *testing.T, router http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -211,12 +268,38 @@ func TestPromptAdminRejectsInvalidEventIDsTimesAndPagination(t *testing.T) {
 		{http.MethodGet, "/admin/prompt-audit/events?group_id=bad", nil, "prompt_audit_invalid_filter_id"},
 		{http.MethodGet, "/admin/prompt-audit/events?start_at=not-time", nil, "prompt_audit_invalid_time"},
 		{http.MethodGet, "/admin/prompt-audit/events?page=0", nil, "prompt_audit_invalid_pagination"},
+		{http.MethodPost, "/admin/prompt-audit/adaptive-samples/nope/review", AdaptiveReviewRequest{Decision: "allow"}, "prompt_audit_invalid_adaptive_sample_id"},
 		{http.MethodPost, "/admin/prompt-audit/events/batch-delete", map[string]any{"ids": []int64{1, -2}}, "prompt_audit_invalid_event_id"},
 	} {
 		response := promptAdminRequest(t, router, tc.method, tc.path, tc.body)
 		require.Equalf(t, http.StatusBadRequest, response.Code, "%s %s", tc.method, tc.path)
 		require.Contains(t, response.Body.String(), tc.reason)
 	}
+}
+
+func TestPromptAdminListsAndReviewsAdaptiveSamples(t *testing.T) {
+	service := &fakePromptAdminService{
+		listAdaptive: func(_ context.Context, status string, page, pageSize int) (*AdaptiveSamplePage, error) {
+			require.Equal(t, "disagreement", status)
+			require.Equal(t, 2, page)
+			require.Equal(t, 10, pageSize)
+			return &AdaptiveSamplePage{Items: []*AdaptiveSample{{ID: 7, Status: status}}, Total: 1, Page: page, PageSize: pageSize, Pages: 1}, nil
+		},
+		review: func(_ context.Context, id, actorID int64, request AdaptiveReviewRequest) (*AdaptiveSample, error) {
+			require.Equal(t, int64(7), id)
+			require.Equal(t, int64(42), actorID)
+			require.Equal(t, "block", request.Decision)
+			return &AdaptiveSample{ID: id, ReviewStatus: "block"}, nil
+		},
+	}
+	router := promptAdminRouter(service)
+	listed := promptAdminRequest(t, router, http.MethodGet, "/admin/prompt-audit/adaptive-samples?status=disagreement&page=2&page_size=10", nil)
+	require.Equal(t, http.StatusOK, listed.Code)
+	require.Contains(t, listed.Body.String(), `"id":7`)
+
+	reviewed := promptAdminRequest(t, router, http.MethodPost, "/admin/prompt-audit/adaptive-samples/7/review", AdaptiveReviewRequest{Decision: "block"})
+	require.Equal(t, http.StatusOK, reviewed.Code)
+	require.Contains(t, reviewed.Body.String(), `"review_status":"block"`)
 }
 
 func validHandlerUpdateRequest(token string) UpdateConfigRequest {

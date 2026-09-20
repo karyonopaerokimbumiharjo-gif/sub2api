@@ -278,6 +278,32 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
 }
 
+func TestAPIKeyService_SnapshotRoundTrip_PreservesPromptAuditBypass(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	apiKey := &APIKey{
+		ID:     1,
+		UserID: 2,
+		Key:    "k-user-audit-bypass",
+		Status: StatusActive,
+		User: &User{
+			ID:                2,
+			Status:            StatusActive,
+			Role:              RoleUser,
+			Balance:           10,
+			Concurrency:       3,
+			PromptAuditBypass: true,
+		},
+	}
+
+	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	roundTrip := svc.snapshotToAPIKey(apiKey.Key, snapshot)
+
+	require.NotNil(t, roundTrip)
+	require.NotNil(t, roundTrip.User)
+	require.True(t, snapshot.User.PromptAuditBypass)
+	require.True(t, roundTrip.User.PromptAuditBypass)
+}
+
 func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testing.T) {
 	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	groupID := int64(9)

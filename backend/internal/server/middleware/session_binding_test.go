@@ -24,12 +24,13 @@ func TestSessionBindingContextFollowsForwardedIPSwitch(t *testing.T) {
 		trustedProxies []string
 		wantIP         string
 	}{
-		{name: "enabled switch takes over raw headers", trustForwarded: true, wantIP: "1.2.3.4"},
+		{name: "enabled switch still requires trusted peer", trustForwarded: true, wantIP: "127.0.0.1"},
 		{name: "disabled switch ignores untrusted headers", trustForwarded: false, wantIP: "127.0.0.1"},
 		{name: "disabled switch uses configured Gin proxy", trustForwarded: false, trustedProxies: []string{"127.0.0.1"}, wantIP: "1.2.3.4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
+			cfg.Server.TrustedProxies = tc.trustedProxies
 			cfg.SetTrustForwardedIPForAPIKeyACL(tc.trustForwarded)
 
 			r := gin.New()
@@ -61,6 +62,7 @@ func TestSessionBindingContextSnapshotsForwardedModeAndHeaders(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.SetForwardedClientIPSettings(true, []string{"X-Initial-IP"})
+	cfg.Server.TrustedProxies = []string{"9.9.9.9"}
 
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))

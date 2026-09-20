@@ -89,6 +89,43 @@ describe('ProfileInfoCard', () => {
     expect(wrapper.get('[data-testid="profile-auth-bindings-panel"]').exists()).toBe(true)
   })
 
+  it('places balance grant expirations directly below the overview hero', () => {
+    const wrapper = mount(ProfileInfoCard, {
+      props: {
+        user: createUser({
+          balance_grants: [
+            {
+              id: 11,
+              user_id: 5,
+              redeem_code_id: 91,
+              redeem_code: 'redeem-code-0001',
+              source_type: 'redeem_code',
+              original_amount: 30,
+              remaining_amount: 12.5,
+              expires_at: '2026-07-01T00:00:00Z',
+              granted_at: '2026-06-01T00:00:00Z',
+              status: 'active'
+            }
+          ]
+        })
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    const html = wrapper.html()
+    const heroIndex = html.indexOf('data-testid="profile-overview-hero"')
+    const grantsIndex = html.indexOf('data-testid="profile-balance-grants-card"')
+    const basicsIndex = html.indexOf('data-testid="profile-basics-panel"')
+
+    expect(heroIndex).toBeGreaterThanOrEqual(0)
+    expect(grantsIndex).toBeGreaterThan(heroIndex)
+    expect(basicsIndex).toBeGreaterThan(grantsIndex)
+  })
+
   it('renders third-party source hints from profile sources', () => {
     const wrapper = mount(ProfileInfoCard, {
       props: {

@@ -118,6 +118,20 @@ describe('AccountTestModal', () => {
     localStorage.clear()
   })
 
+  it('selects GPT-6 Astra from the current upstream catalog', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-6-astra', display_name: 'GPT-6 Astra' }
+    ])
+    const wrapper = mount(AccountTestModal, {
+      props: { show: false, account: buildAccount() },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
+  })
+
   it('posts compact mode for OpenAI compact probe', async () => {
     const wrapper = mount(AccountTestModal, {
       props: {

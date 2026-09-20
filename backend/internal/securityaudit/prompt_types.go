@@ -21,7 +21,21 @@ const (
 	ErrorCodeRequiresEnabled       = "prompt_guard_requires_audit_enabled"
 
 	DefaultGuardModel = "sileader/qwen3guard:0.6b"
+
+	EndpointProtocolOpenAICompatible    = "openai_compatible"
+	EndpointProtocolAntigravityInternal = "antigravity_internal"
+	EndpointProtocolOpenAIInternal      = "openai_internal"
+
+	EndpointAdapterQwen3Guard = "qwen3guard"
+	EndpointAdapterGenericLLM = "generic_llm"
+
+	DefaultAntigravityAuditModel    = "gemini-3.6-flash-low"
+	DefaultOpenAIInternalAuditModel = "gpt-5.3-codex-spark"
 )
+
+func isInternalEndpointProtocol(protocol string) bool {
+	return protocol == EndpointProtocolAntigravityInternal || protocol == EndpointProtocolOpenAIInternal
+}
 
 type Mode string
 
@@ -72,16 +86,19 @@ type Request struct {
 	UserID     int64
 	Username   string
 	UserEmail  string
-	APIKeyID   int64
-	APIKeyName string
-	GroupID    *int64
-	GroupName  string
-	Provider   string
-	Endpoint   string
-	Protocol   string
-	Model      string
-	Body       []byte
-	Stage      string
+	// PromptAuditBypass comes only from the authenticated server-side user
+	// snapshot. Clients cannot opt themselves out of auditing.
+	PromptAuditBypass bool
+	APIKeyID          int64
+	APIKeyName        string
+	GroupID           *int64
+	GroupName         string
+	Provider          string
+	Endpoint          string
+	Protocol          string
+	Model             string
+	Body              []byte
+	Stage             string
 }
 
 func (r Request) Clone() Request {
@@ -107,18 +124,24 @@ type PromptSnapshot struct {
 	Protocol           string `json:"protocol"`
 	Model              string `json:"model"`
 	PromptHash         string `json:"prompt_hash"`
+	TaskFingerprint    string `json:"task_fingerprint"`
+	AuditSubject       string `json:"audit_subject"`
 	RedactedPreview    string `json:"redacted_preview"`
 	FullPrompt         string `json:"full_prompt"`
+	AuditedPrompt      string `json:"audited_prompt"`
 	PromptLength       int    `json:"prompt_length"`
 	MessageCount       int    `json:"message_count"`
 	Stage              string `json:"stage"`
 
-	ScanText string `json:"-"`
+	ScanText            string   `json:"-"`
+	SegmentFingerprints []string `json:"-"`
 }
 
 func (s PromptSnapshot) Redacted() PromptSnapshot {
 	s.ScanText = ""
 	s.FullPrompt = ""
+	s.AuditedPrompt = ""
+	s.SegmentFingerprints = nil
 	return s
 }
 
@@ -128,6 +151,8 @@ type NormalizedResult struct {
 	Action            Action             `json:"action"`
 	Safety            string             `json:"safety"`
 	Categories        []string           `json:"categories"`
+	IntentCategories  []string           `json:"intent_categories"`
+	ContentCategories []string           `json:"content_categories"`
 	MatchedScanners   []string           `json:"matched_scanners"`
 	ScannerScores     map[string]float64 `json:"scanner_scores"`
 	ScannerEvidence   map[string]string  `json:"scanner_evidence"`
@@ -142,10 +167,14 @@ type NormalizedResult struct {
 }
 
 type PromptDecision struct {
-	Kind           DecisionKind      `json:"kind"`
-	ErrorCode      string            `json:"error_code,omitempty"`
-	Result         *NormalizedResult `json:"result,omitempty"`
-	AllowNextStage bool              `json:"allow_next_stage"`
+	Kind      DecisionKind      `json:"kind"`
+	ErrorCode string            `json:"error_code,omitempty"`
+	Result    *NormalizedResult `json:"result,omitempty"`
+	// Snapshot is request-scoped metadata used by the gateway to correlate
+	// upstream policy feedback with the prompt audit that preceded it. It is
+	// never serialized to clients.
+	Snapshot       *PromptSnapshot `json:"-"`
+	AllowNextStage bool            `json:"allow_next_stage"`
 }
 
 type LegacyDecision struct {
@@ -231,29 +260,58 @@ type QueueStats struct {
 	Active     int64 `json:"active"`
 }
 
+type PromptAuditUsagePeriod struct {
+	Invocations         int64   `json:"invocations"`
+	Successes           int64   `json:"successes"`
+	Failures            int64   `json:"failures"`
+	Invalid             int64   `json:"invalid"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	EstimatedCostUSD    float64 `json:"estimated_cost_usd"`
+	PricedInvocations   int64   `json:"priced_invocations"`
+}
+
+type PromptAuditAccountUsage struct {
+	AccountID    int64  `json:"account_id"`
+	AccountName  string `json:"account_name"`
+	AccountEmail string `json:"account_email"`
+	PromptAuditUsagePeriod
+}
+
+type PromptAuditUsageOverview struct {
+	Today     PromptAuditUsagePeriod    `json:"today"`
+	Last7Days PromptAuditUsagePeriod    `json:"last_7_days"`
+	AllTime   PromptAuditUsagePeriod    `json:"all_time"`
+	ByAccount []PromptAuditAccountUsage `json:"by_account"`
+}
+
 type RuntimeSnapshot struct {
-	ProcessStatus         string                 `json:"process_status"`
-	EffectiveMode         Mode                   `json:"effective_mode"`
-	ExpectedConfigVersion int64                  `json:"expected_config_version"`
-	ActiveConfigVersion   int64                  `json:"active_config_version"`
-	ConfigLoadedAt        *time.Time             `json:"config_loaded_at,omitempty"`
-	ConfigLoadError       string                 `json:"config_load_error,omitempty"`
-	WorkerTotal           int                    `json:"worker_total"`
-	WorkerActive          int64                  `json:"worker_active"`
-	WorkerHeartbeatAt     *time.Time             `json:"worker_heartbeat_at,omitempty"`
-	QueueCapacity         int                    `json:"queue_capacity"`
-	Queue                 QueueStats             `json:"queue"`
-	ProcessedTotal        int64                  `json:"processed_total"`
-	FailedTotal           int64                  `json:"failed_total"`
-	EnqueuedTotal         int64                  `json:"enqueued_total"`
-	DroppedTotal          int64                  `json:"dropped_total"`
-	LastProcessedAt       *time.Time             `json:"last_processed_at,omitempty"`
-	LastErrorCode         string                 `json:"last_error_code,omitempty"`
-	LastErrorMessage      string                 `json:"last_error_message,omitempty"`
-	DatabaseStatus        string                 `json:"database_status"`
-	RedisStatus           string                 `json:"redis_status"`
-	Endpoints             map[string]ProbeResult `json:"endpoints"`
-	GuardMetrics          GuardMetricsSnapshot   `json:"guard_metrics"`
+	ProcessStatus         string                   `json:"process_status"`
+	EffectiveMode         Mode                     `json:"effective_mode"`
+	ExpectedConfigVersion int64                    `json:"expected_config_version"`
+	ActiveConfigVersion   int64                    `json:"active_config_version"`
+	ConfigLoadedAt        *time.Time               `json:"config_loaded_at,omitempty"`
+	ConfigLoadError       string                   `json:"config_load_error,omitempty"`
+	WorkerTotal           int                      `json:"worker_total"`
+	WorkerActive          int64                    `json:"worker_active"`
+	WorkerHeartbeatAt     *time.Time               `json:"worker_heartbeat_at,omitempty"`
+	QueueCapacity         int                      `json:"queue_capacity"`
+	Queue                 QueueStats               `json:"queue"`
+	ProcessedTotal        int64                    `json:"processed_total"`
+	FailedTotal           int64                    `json:"failed_total"`
+	EnqueuedTotal         int64                    `json:"enqueued_total"`
+	DroppedTotal          int64                    `json:"dropped_total"`
+	LastProcessedAt       *time.Time               `json:"last_processed_at,omitempty"`
+	LastErrorCode         string                   `json:"last_error_code,omitempty"`
+	LastErrorMessage      string                   `json:"last_error_message,omitempty"`
+	DatabaseStatus        string                   `json:"database_status"`
+	RedisStatus           string                   `json:"redis_status"`
+	Endpoints             map[string]ProbeResult   `json:"endpoints"`
+	GuardMetrics          GuardMetricsSnapshot     `json:"guard_metrics"`
+	AuditUsage            PromptAuditUsageOverview `json:"audit_usage"`
+	Adaptive              AdaptiveRuntimeStats     `json:"adaptive"`
 }
 
 type Clock interface {

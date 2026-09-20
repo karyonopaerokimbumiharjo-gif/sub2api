@@ -132,6 +132,11 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("first_token_ms").
 			Optional().
 			Nillable(),
+		field.Int("prompt_audit_latency_ms").
+			Optional().
+			Nillable().
+			NonNegative().
+			Comment("Synchronous prompt-audit wall-clock delay before upstream dispatch"),
 		field.String("user_agent").
 			MaxLen(512).
 			Optional().

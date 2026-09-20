@@ -19,6 +19,9 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 	gin.SetMode(gin.TestMode)
 
 	verifiedAt := time.Date(2026, 4, 20, 8, 30, 0, 0, time.UTC)
+	grantExpiresAt := time.Date(2026, 7, 12, 9, 45, 0, 0, time.UTC)
+	grantGrantedAt := time.Date(2026, 6, 12, 9, 45, 0, 0, time.UTC)
+	redeemCodeID := int64(102)
 	repo := &userHandlerRepoStub{
 		user: &service.User{
 			ID:           31,
@@ -39,6 +42,20 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 					"username":   "linuxdo-handle",
 					"avatar_url": "https://cdn.example.com/linuxdo.png",
 				},
+			},
+		},
+		balanceGrants: []service.UserBalanceGrant{
+			{
+				ID:              7001,
+				UserID:          31,
+				RedeemCodeID:    &redeemCodeID,
+				RedeemCode:      "redeem-code-102",
+				SourceType:      "redeem_code",
+				OriginalAmount:  999999,
+				RemainingAmount: 999976.8,
+				ExpiresAt:       grantExpiresAt,
+				GrantedAt:       grantGrantedAt,
+				Status:          "active",
 			},
 		},
 	}
@@ -83,4 +100,13 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 	require.True(t, ok)
 	require.Equal(t, "linuxdo", usernameSource["provider"])
 	require.Equal(t, "linuxdo", usernameSource["source"])
+
+	balanceGrants, ok := resp.Data["balance_grants"].([]any)
+	require.True(t, ok)
+	require.Len(t, balanceGrants, 1)
+	firstGrant, ok := balanceGrants[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(7001), firstGrant["id"])
+	require.Equal(t, "redeem-code-102", firstGrant["redeem_code"])
+	require.Equal(t, float64(999976.8), firstGrant["remaining_amount"])
 }

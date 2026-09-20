@@ -146,12 +146,13 @@ type WindowStats struct {
 
 // UsageProgress 使用量进度
 type UsageProgress struct {
-	Utilization      float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
-	ResetsAt         *time.Time   `json:"resets_at"`              // 重置时间
-	RemainingSeconds int          `json:"remaining_seconds"`      // 距重置剩余秒数
-	WindowStats      *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
-	UsedRequests     int64        `json:"used_requests,omitempty"`
-	LimitRequests    int64        `json:"limit_requests,omitempty"`
+	UtilizationUnavailable bool         `json:"utilization_unavailable,omitempty"`
+	Utilization            float64      `json:"utilization"`            // 使用率百分比 (0-100+，100表示100%)
+	ResetsAt               *time.Time   `json:"resets_at"`              // 重置时间
+	RemainingSeconds       int          `json:"remaining_seconds"`      // 距重置剩余秒数
+	WindowStats            *WindowStats `json:"window_stats,omitempty"` // 窗口期统计（从窗口开始到当前的使用量）
+	UsedRequests           int64        `json:"used_requests,omitempty"`
+	LimitRequests          int64        `json:"limit_requests,omitempty"`
 }
 
 // AntigravityModelQuota Antigravity 单个模型的配额信息
@@ -181,6 +182,7 @@ type AICredit struct {
 
 // UsageInfo 账号使用量信息
 type UsageInfo struct {
+	QuotaUpdatedAt     *time.Time     `json:"quota_updated_at,omitempty"`
 	Source             string         `json:"source,omitempty"`               // "passive" or "active"
 	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`           // 更新时间
 	FiveHour           *UsageProgress `json:"five_hour"`                      // 5小时窗口
@@ -297,7 +299,7 @@ type AccountUsageService struct {
 	antigravityQuotaFetcher *AntigravityQuotaFetcher
 	grokQuotaFetcher        *GrokQuotaFetcher
 	grokQuotaService        *GrokQuotaService
-	openAIQuotaService      *OpenAIQuotaService
+	openAIQuotaService      openAIQuotaUsageQuerier
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
@@ -319,6 +321,10 @@ func NewAccountUsageService(
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
 ) *AccountUsageService {
+	var quotaQuery openAIQuotaUsageQuerier
+	if openAIQuotaService != nil {
+		quotaQuery = openAIQuotaService
+	}
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
 		usageLogRepo:            usageLogRepo,
@@ -327,7 +333,7 @@ func NewAccountUsageService(
 		antigravityQuotaFetcher: antigravityQuotaFetcher,
 		grokQuotaFetcher:        grokQuotaFetcher,
 		grokQuotaService:        grokQuotaService,
-		openAIQuotaService:      openAIQuotaService,
+		openAIQuotaService:      quotaQuery,
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
@@ -358,9 +364,10 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 		return s.getPassiveUsageForAccount(ctx, account)
 	}
 
-	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
+	if account.Platform == PlatformOpenAI &&
+		(account.Type == AccountTypeOAuth || account.IsOpenAICompatibleQuotaBridge()) {
 		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
-		if err == nil {
+		if err == nil && usage != nil && usage.Error == "" {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
@@ -717,9 +724,38 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
+	if raw := account.GetExtraString("codex_usage_updated_at"); raw != "" {
+		if fetchedAt, err := parseTime(raw); err == nil {
+			usage.QuotaUpdatedAt = &fetchedAt
+		}
+	}
 
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
-		if account.IsShadow() {
+		if account.IsOpenAICompatibleQuotaBridge() {
+			// Query the explicitly bound CPA identity, not a generation probe that
+			// can pick a different account or an unsupported default model.
+			var quota *OpenAIQuotaUsage
+			var queryErr error
+			if s.openAIQuotaService == nil {
+				queryErr = fmt.Errorf("quota service unavailable")
+			} else {
+				quota, queryErr = s.openAIQuotaService.QueryUsage(ctx, account.ID)
+			}
+			if queryErr == nil && (quota == nil || quota.RateLimit == nil) {
+				queryErr = fmt.Errorf("quota response has no rate limit")
+			}
+			if queryErr != nil {
+				usage.ErrorCode = "quota_refresh_failed"
+				usage.Error = "Quota refresh failed; cached values may be stale"
+			} else {
+				fetchedAt := time.Now()
+				updates := buildCodexQuotaWindowExtraUpdates(quota.RateLimit, fetchedAt)
+				mergeAccountExtra(account, updates)
+				s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+				applyExtraToUsage(usage, account.Extra, fetchedAt)
+				usage.QuotaUpdatedAt = &fetchedAt
+			}
+		} else if account.IsShadow() {
 			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
 			// via the shared OpenAIQuotaService, which resolves credentials from the
 			// parent account.  The result is written to the shadow row's own codex_*
@@ -756,14 +792,14 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 
 	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now)); err == nil {
 		if usage.FiveHour == nil {
-			usage.FiveHour = &UsageProgress{Utilization: 0}
+			usage.FiveHour = &UsageProgress{UtilizationUnavailable: true}
 		}
 		usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
 	}
 
 	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now)); err == nil {
 		if usage.SevenDay == nil {
-			usage.SevenDay = &UsageProgress{Utilization: 0}
+			usage.SevenDay = &UsageProgress{UtilizationUnavailable: true}
 		}
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
@@ -774,6 +810,10 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
 	if account == nil {
 		return false
+	}
+	if account.IsOpenAICompatibleQuotaBridge() {
+		// A successful upstream response may legitimately omit a 5h window.
+		return account.IsRateLimited() || isOpenAICodexSnapshotStale(account, now)
 	}
 	if usage == nil {
 		return true
@@ -788,14 +828,14 @@ func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now ti
 }
 
 func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
-	if account == nil || !account.IsOpenAIOAuth() {
+	if account == nil || (!account.IsOpenAIOAuth() && !account.IsOpenAICompatibleQuotaBridge()) {
 		return false
 	}
 	// 普通账号的 codex 刷新走 probe(/responses 头),要求 WSv2;但 spark 影子走 QueryUsage
 	// (/wham/usage body 的 codex_bengalfox),与 WSv2 无关——不能用 WSv2 门控其 staleness,否则首刷后
 	// codex_5h/7d 已存在→staleness 恒 false→spark 窗口永久冻结(外审第9轮 P1)。影子改按
 	// codex_usage_updated_at TTL 判定;实际查询频率仍由 shouldProbeOpenAICodexSnapshot 的缓存 TTL 节流。
-	if !account.IsShadow() && !account.IsOpenAIResponsesWebSocketV2Enabled() {
+	if !account.IsOpenAICompatibleQuotaBridge() && !account.IsShadow() && !account.IsOpenAIResponsesWebSocketV2Enabled() {
 		return false
 	}
 	if account.Extra == nil {
@@ -829,11 +869,18 @@ func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(accountID int64, no
 }
 
 func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {
-	if account == nil || !account.IsOAuth() {
+	if account == nil {
 		return nil, nil
 	}
+	isCompatibleBridge := account.IsOpenAICompatibleQuotaBridge()
+	if !account.IsOAuth() && !isCompatibleBridge {
+		return nil, nil
+	}
+
 	accessToken := ""
-	if !account.IsOpenAIAgentIdentity() {
+	if isCompatibleBridge {
+		accessToken = account.GetOpenAIApiKey()
+	} else if !account.IsOpenAIAgentIdentity() {
 		accessToken = account.GetOpenAIAccessToken()
 	}
 	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
@@ -841,6 +888,18 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	modelID := openaipkg.CodexUsageProbeModel
 	payload := createOpenAITestPayload(modelID, true)
+	probeURL := chatgptCodexURL
+	if isCompatibleBridge {
+		modelID = selectResponsesProbeModel(account)
+		payload = map[string]any{
+			"model":             modelID,
+			"input":             "Reply OK.",
+			"stream":            false,
+			"store":             false,
+			"max_output_tokens": 16,
+		}
+		probeURL = buildOpenAIResponsesURL(account.GetOpenAIBaseURL())
+	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
@@ -848,13 +907,17 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, probeURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create openai probe request: %w", err)
 	}
-	req.Host = "chatgpt.com"
 	req.Header.Set("Content-Type", "application/json")
-	if account.IsOpenAIAgentIdentity() {
+	if isCompatibleBridge {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Accept", "application/json")
+		account.ApplyHeaderOverrides(req.Header)
+	} else if account.IsOpenAIAgentIdentity() {
+		req.Host = "chatgpt.com"
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
 		if authErr != nil {
 			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
@@ -865,24 +928,27 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 			}
 		}
 	} else {
+		req.Host = "chatgpt.com"
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	canonical := resolveCodexOutboundIdentity("")
-	req.Header.Set("Originator", canonical.originator)
-	req.Header.Set("Version", canonical.version)
-	req.Header.Set("User-Agent", canonical.userAgent)
-	if s.identityCache != nil {
-		if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
-			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
+	if !isCompatibleBridge {
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		canonical := resolveCodexOutboundIdentity("")
+		req.Header.Set("Originator", canonical.originator)
+		req.Header.Set("Version", canonical.version)
+		req.Header.Set("User-Agent", canonical.userAgent)
+		if s.identityCache != nil {
+			if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
+				req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
+			}
 		}
+		// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入。
+		// 上面写进 header 的指纹缓存 UA 只在强制统一被关闭时才参与配对（保持回滚后的历史语义）；
+		// 强制统一开启时客户端身份不参与构造，探针与真实转发用同一套规范身份出站。
+		enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
+		setOpenAIChatGPTAccountHeaders(req.Header, account)
 	}
-	// 与真实转发一致：账号级自定义 UA 同样作为管理员显式配置传入。
-	// 上面写进 header 的指纹缓存 UA 只在强制统一被关闭时才参与配对（保持回滚后的历史语义）；
-	// 强制统一开启时客户端身份不参与构造，探针与真实转发用同一套规范身份出站。
-	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
-	setOpenAIChatGPTAccountHeaders(req.Header, account)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -962,12 +1028,8 @@ func applyExtraToUsage(usage *UsageInfo, extra map[string]any, now time.Time) {
 	if usage == nil {
 		return
 	}
-	if progress := buildCodexUsageProgressFromExtra(extra, "5h", now); progress != nil {
-		usage.FiveHour = progress
-	}
-	if progress := buildCodexUsageProgressFromExtra(extra, "7d", now); progress != nil {
-		usage.SevenDay = progress
-	}
+	usage.FiveHour = buildCodexUsageProgressFromExtra(extra, "5h", now)
+	usage.SevenDay = buildCodexUsageProgressFromExtra(extra, "7d", now)
 }
 
 func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
@@ -1505,7 +1567,7 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 	}
 
 	usedRaw, ok := extra[usedPercentKey]
-	if !ok {
+	if !ok || usedRaw == nil {
 		return nil
 	}
 

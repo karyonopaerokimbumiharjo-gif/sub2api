@@ -18,8 +18,9 @@ const DialogStub = defineComponent({ props: ['show', 'title'], emits: ['close'],
 const PaginationStub = defineComponent({ props: ['total', 'page', 'pageSize'], emits: ['update:page', 'update:pageSize'], template: '<div data-test="pagination" />' })
 
 const endpoint = (): PromptAuditEndpointDraft => ({
-  id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', base_url: 'http://127.0.0.1:8000',
+  id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', adapter: 'qwen3guard', base_url: 'http://cpa:8317',
   model: 'guard-model', timeout_ms: 3000, input_limit: 4000, enabled: true,
+  account_id: 0,
   has_token: true, token_status: 'configured', token: '', clear_token: false,
 })
 
@@ -65,23 +66,107 @@ describe('Prompt Audit components', () => {
     expect(token.attributes('placeholder')).toContain('admin.promptAudit.pool.reenterSecret')
   })
 
-  it('supports group search, stale configured groups, nine scanners, and bounded worker inputs', async () => {
+  it('preserves CPA nodes alongside the explicit Jev provider choice', async () => {
+    const wrapper = mount(EndpointPool, {
+      props: { endpoints: [endpoint()], probeResults: {}, probingIds: [] },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+    await wrapper.findAll('button').find((button) => button.text().includes('common.edit'))!.trigger('click')
+    expect(wrapper.find('select[aria-label="admin.promptAudit.pool.protocol"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="admin.promptAudit.pool.oauthAccount"]').exists()).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('[aria-label="admin.promptAudit.pool.baseUrl"]').element.value).toBe('http://cpa:8317')
+    await wrapper.get('[data-test="save-endpoint"]').trigger('click')
+    const updated = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
+    expect(updated[0]).toMatchObject({ protocol: 'openai_compatible', base_url: 'http://cpa:8317', account_id: 0 })
+  })
+
+  it('reorders audit nodes and disables moves past the list boundaries', async () => {
+    const endpoints = [
+      { ...endpoint(), id: 'first', name: 'First' },
+      { ...endpoint(), id: 'second', name: 'Second' },
+      { ...endpoint(), id: 'third', name: 'Third' },
+    ]
+    const wrapper = mount(EndpointPool, {
+      props: { endpoints, probeResults: {}, probingIds: [] },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+
+    expect(wrapper.get('[data-test="move-up-first"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-test="move-down-third"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-test="move-up-second"]').trigger('click')
+    const movedUp = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
+    expect(movedUp.map((item) => item.id)).toEqual(['second', 'first', 'third'])
+
+    await wrapper.get('[data-test="move-down-second"]').trigger('click')
+    const movedDown = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
+    expect(movedDown.map((item) => item.id)).toEqual(['first', 'third', 'second'])
+  })
+
+  it('edits Jev without replacing its provider and permits entering its credential', async () => {
+    const jev = {
+      ...endpoint(), protocol: 'typesafe_systemone' as const, model: 'jev-1.13.0',
+      base_url: 'https://api.typesafe.ai', has_token: false, token_status: 'missing', enabled: false,
+    }
+    const wrapper = mount(EndpointPool, {
+      props: { endpoints: [jev], probeResults: {}, probingIds: [] },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+    expect(wrapper.text()).toContain('admin.promptAudit.pool.missing')
+    await wrapper.findAll('button').find((button) => button.text().includes('common.edit'))!.trigger('click')
+    expect(wrapper.get<HTMLSelectElement>('[data-test="audit-provider"]').element.value).toBe('typesafe_systemone')
+    expect(wrapper.get<HTMLInputElement>('[aria-label="admin.promptAudit.pool.baseUrl"]').element.value).toBe('https://api.typesafe.ai')
+    await wrapper.get('[aria-label="admin.promptAudit.pool.apiKey"]').setValue('synthetic-jev-credential')
+    await wrapper.get('[data-test="save-endpoint"]').trigger('click')
+    const updated = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
+    expect(updated[0]).toMatchObject({
+      protocol: 'typesafe_systemone', base_url: 'https://api.typesafe.ai', model: 'jev-1.13.0', token: 'synthetic-jev-credential',
+    })
+  })
+
+  it('clears a Jev credential when the user switches back to CPA', async () => {
+    const jev = { ...endpoint(), protocol: 'typesafe_systemone' as const, base_url: 'https://api.typesafe.ai', model: 'jev-1.13.0' }
+    const wrapper = mount(EndpointPool, {
+      props: { endpoints: [jev], probeResults: {}, probingIds: [] },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+    await wrapper.findAll('button').find((button) => button.text().includes('common.edit'))!.trigger('click')
+    await wrapper.get('[data-test="audit-provider"]').setValue('openai_compatible')
+    await wrapper.get('[data-test="save-endpoint"]').trigger('click')
+    const updated = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
+    expect(updated[0]).toMatchObject({ protocol: 'openai_compatible', base_url: 'http://cpa:8317', clear_token: true, token: '', enabled: false })
+  })
+
+  it('supports group search, stale configured groups, ten scanners, and bounded concurrency inputs', async () => {
     const draft: PromptAuditDraft = {
-      enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
-      worker_count: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: false, group_ids: [1, 99],
+      enabled: true, blocking_enabled: false, blocking_audit_mode: 'incremental_full', blocking_latest_turn_only: true, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+      adaptive_enabled: false, adaptive_collect_when_disabled: true, adaptive_allow_sample_rate: 5, adaptive_risk_sample_rate: 100,
+      output_audit_enabled: false, output_allow_sample_rate: 5, output_risk_sample_rate: 100,
+      worker_count: 4, prompt_chunk_concurrency: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: false, group_ids: [1, 99],
+      whitelist_emails: [],
       endpoints: [endpoint()], config_version: 1, updated_at: '', updated_by: 0, change_summary: '',
     }
     const wrapper = mount(PolicyPanel, {
       props: { draft, groups: [{ id: 1, name: 'Alpha', platform: 'openai', status: 'active' }, { id: 2, name: 'Beta', platform: 'claude', status: 'inactive' }] },
     })
     expect(wrapper.text()).toContain('99')
-    expect(wrapper.findAll('input[type="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(9)
+    expect(wrapper.findAll('input[type="checkbox"]').filter((input) => SCANNER_CATALOG.some((scanner) => input.attributes('aria-label') === `admin.promptAudit.scanners.${scanner.id}`))).toHaveLength(10)
     await wrapper.get('[aria-label="admin.promptAudit.policy.searchGroups"]').setValue('Beta')
     expect(wrapper.text()).toContain('Beta')
     expect(wrapper.text()).not.toContain('Alpha')
     await wrapper.get('[aria-label="admin.promptAudit.policy.workerCount"]').setValue('6')
     const emitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
     expect(emitted.worker_count).toBe(6)
+    const chunkInput = wrapper.get('[aria-label="admin.promptAudit.policy.chunkConcurrency"]')
+    expect(chunkInput.attributes('min')).toBe('1')
+    expect(chunkInput.attributes('max')).toBe('16')
+    await chunkInput.setValue('12')
+    const chunkEmitted = wrapper.emitted('update:draft')?.at(-1)?.[0] as PromptAuditDraft
+    expect(chunkEmitted.prompt_chunk_concurrency).toBe(12)
+    await wrapper.setProps({ draft: chunkEmitted })
+    expect(wrapper.text()).toContain('admin.promptAudit.policy.chunkConcurrencyWarning')
+
+    expect(wrapper.find('[data-test="prompt-audit-whitelist"]').exists()).toBe(false)
   })
 
   it('keeps identity fields separate, supports selection, and opens filter deletion from the toolbar', async () => {
@@ -218,7 +303,8 @@ describe('Prompt Audit components', () => {
         request_id: 'req-1', user_id: 1, username: 'alice', user_email: 'alice@example.test',
         api_key_id: 2, api_key_name: 'alice-key', group_id: 3, group_name: 'Alpha', provider: 'openai',
         endpoint: '/v1/chat/completions', protocol: 'openai_chat', model: 'gpt-test',
-        prompt_hash: 'a'.repeat(64), redacted_preview: 'redacted prompt body', full_prompt: 'complete unmasked prompt body', prompt_length: 20,
+        prompt_hash: 'a'.repeat(64), redacted_preview: 'redacted prompt body', full_prompt: 'complete unmasked request body',
+        audited_prompt: 'actual audited prompt body', prompt_length: 20,
         message_count: 1, stage: 'http',
       },
     }
@@ -229,12 +315,15 @@ describe('Prompt Audit components', () => {
     const panel = wrapper.get('[data-test="event-detail-tab-panel"]')
     expect(panel.classes()).toContain('h-[min(62vh,36rem)]')
     expect(panel.classes()).toContain('overflow-y-auto')
+    expect(wrapper.get('[data-test="summary-prompt-full"]').text()).toContain('complete unmasked request body')
+    expect(wrapper.get('[data-test="summary-audited-prompt"]').text()).toContain('actual audited prompt body')
 
     const riskTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('admin.promptAudit.events.tabs.risks'))
     expect(riskTab).toBeTruthy()
     await riskTab!.trigger('click')
     expect(wrapper.get('[data-test="event-detail-tab-panel"]').classes()).toContain('h-[min(62vh,36rem)]')
-    expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).toContain('complete unmasked prompt body')
+    expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).toContain('actual audited prompt body')
+    expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).not.toContain('complete unmasked request body')
     expect(wrapper.get('[data-test="risk-prompt-preview"]').text()).not.toContain('redacted prompt body')
     expect(wrapper.get('[data-test="risk-prompt-full"]').classes()).toContain('overflow-auto')
     expect(wrapper.get('[data-test="risk-guard-return"]').text()).toContain('"decision": "admin.promptAudit.decisions.critical"')

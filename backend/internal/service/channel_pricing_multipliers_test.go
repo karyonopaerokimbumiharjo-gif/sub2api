@@ -246,7 +246,7 @@ func TestCalculateTokenCostContextTierEnablement(t *testing.T) {
 		require.InDelta(t, 200e-6, cost.TotalCost, 1e-12)
 	})
 
-	t.Run("group enabled uses interval", func(t *testing.T) {
+	t.Run("group enabled account disabled uses base tier", func(t *testing.T) {
 		resolved.longContextPricingEnabled = true
 		accountDisabled := false
 		cost, err := service.calculateTokenCost(resolved, CostInput{
@@ -254,11 +254,22 @@ func TestCalculateTokenCostContextTierEnablement(t *testing.T) {
 			LongContextBillingEnabled: &accountDisabled,
 		})
 		require.NoError(t, err)
-		require.InDelta(t, 400e-6, cost.TotalCost, 1e-12)
+		require.InDelta(t, 200e-6, cost.TotalCost, 1e-12)
 	})
 
-	t.Run("account enabled overrides disabled group", func(t *testing.T) {
+	t.Run("account enabled group disabled uses base tier", func(t *testing.T) {
 		resolved.longContextPricingEnabled = false
+		accountEnabled := true
+		cost, err := service.calculateTokenCost(resolved, CostInput{
+			Model: "custom", Tokens: tokens, RateMultiplier: 1, Resolver: resolver,
+			LongContextBillingEnabled: &accountEnabled,
+		})
+		require.NoError(t, err)
+		require.InDelta(t, 200e-6, cost.TotalCost, 1e-12)
+	})
+
+	t.Run("group and account enabled use interval", func(t *testing.T) {
+		resolved.longContextPricingEnabled = true
 		accountEnabled := true
 		cost, err := service.calculateTokenCost(resolved, CostInput{
 			Model: "custom", Tokens: tokens, RateMultiplier: 1, Resolver: resolver,

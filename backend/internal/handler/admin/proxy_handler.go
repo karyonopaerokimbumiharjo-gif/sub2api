@@ -336,6 +336,7 @@ func (h *ProxyHandler) GetProxyAccounts(c *gin.Context) {
 
 // BatchCreateProxyItem represents a single proxy in batch create request
 type BatchCreateProxyItem struct {
+	Name     string `json:"name"`
 	Protocol string `json:"protocol" binding:"required,oneof=http https socks5 socks5h"`
 	Host     string `json:"host" binding:"required"`
 	Port     int    `json:"port" binding:"required,min=1,max=65535"`
@@ -379,9 +380,12 @@ func (h *ProxyHandler) BatchCreate(c *gin.Context) {
 			continue
 		}
 
-		// Create proxy with default name
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = "default"
+		}
 		_, err = h.adminService.CreateProxy(c.Request.Context(), &service.CreateProxyInput{
-			Name:     "default",
+			Name:     name,
 			Protocol: protocol,
 			Host:     host,
 			Port:     item.Port,

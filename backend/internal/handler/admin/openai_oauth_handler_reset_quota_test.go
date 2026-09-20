@@ -17,15 +17,18 @@ import (
 )
 
 type openAIQuotaWorkflowStub struct {
-	resetResult *service.OpenAIQuotaResetResult
-	resetErr    error
-	queryResult *service.OpenAIQuotaUsage
-	queryErr    error
-	cacheErr    error
+	resetResult     *service.OpenAIQuotaResetResult
+	resetErr        error
+	queryResult     *service.OpenAIQuotaUsage
+	queryErr        error
+	cacheErr        error
+	autoResetResult *service.OpenAIQuotaAutoResetSettings
+	autoResetErr    error
 
-	resetCalls int
-	queryCalls int
-	cacheCalls int
+	resetCalls     int
+	queryCalls     int
+	cacheCalls     int
+	autoResetCalls int
 
 	queryCtxErr error
 	cacheCtxErr error
@@ -52,6 +55,11 @@ func (s *openAIQuotaWorkflowStub) CachePostResetSnapshot(ctx context.Context, _ 
 	s.cacheCalls++
 	s.cacheCtxErr = ctx.Err()
 	return s.cacheErr
+}
+
+func (s *openAIQuotaWorkflowStub) SetAutoReset(context.Context, int64, bool) (*service.OpenAIQuotaAutoResetSettings, error) {
+	s.autoResetCalls++
+	return s.autoResetResult, s.autoResetErr
 }
 
 type openAIAccountStateRecovererStub struct {

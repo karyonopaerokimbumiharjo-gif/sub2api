@@ -51,12 +51,19 @@
             </label>
           </div>
         </fieldset>
+
       </div>
 
       <div class="space-y-4 rounded-xl border border-gray-200 p-4 dark:border-dark-700/60 dark:bg-dark-900/20 sm:p-5">
         <label class="block text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.policy.workerCount') }}</span>
           <input :value="draft.worker_count" type="number" min="1" max="32" class="input mt-1.5 w-full" :aria-label="t('admin.promptAudit.policy.workerCount')" @input="patch({ worker_count: Number(($event.target as HTMLInputElement).value) })" />
+        </label>
+        <label class="block text-sm text-gray-700 dark:text-dark-200">
+          <span>{{ t('admin.promptAudit.policy.chunkConcurrency') }}</span>
+          <input :value="draft.prompt_chunk_concurrency" type="number" min="1" max="16" class="input mt-1.5 w-full" :aria-label="t('admin.promptAudit.policy.chunkConcurrency')" @input="patch({ prompt_chunk_concurrency: Number(($event.target as HTMLInputElement).value) })" />
+          <span class="mt-1.5 block text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.policy.chunkConcurrencyHint') }}</span>
+          <span v-if="draft.prompt_chunk_concurrency > 8" class="mt-1.5 block text-xs text-amber-700 dark:text-amber-300">{{ t('admin.promptAudit.policy.chunkConcurrencyWarning') }}</span>
         </label>
         <label class="block text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.policy.queueCapacity') }}</span>
@@ -68,11 +75,56 @@
         </div>
       </div>
     </div>
+
+    <div class="mt-4 grid gap-4 lg:grid-cols-2">
+      <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-700/60 dark:bg-dark-900/20 sm:p-5" data-test="adaptive-policy">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.promptAudit.adaptive.title') }}</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.adaptive.description') }}</p>
+          </div>
+          <label class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-dark-200">
+            <input :checked="draft.adaptive_enabled" type="checkbox" data-test="adaptive-enabled" @change="patch({ adaptive_enabled: ($event.target as HTMLInputElement).checked })" />
+            {{ t('admin.promptAudit.adaptive.enabled') }}
+          </label>
+        </div>
+        <label class="mt-4 flex items-start gap-2 text-sm text-gray-700 dark:text-dark-200">
+          <input :checked="draft.adaptive_collect_when_disabled" type="checkbox" class="mt-0.5" @change="patch({ adaptive_collect_when_disabled: ($event.target as HTMLInputElement).checked })" />
+          <span>
+            {{ t('admin.promptAudit.adaptive.collectWhenDisabled') }}
+            <span class="mt-1 block text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.adaptive.collectWhenDisabledHint') }}</span>
+          </span>
+        </label>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <RateField :label="t('admin.promptAudit.adaptive.allowRate')" :value="draft.adaptive_allow_sample_rate" @update="patch({ adaptive_allow_sample_rate: $event })" />
+          <RateField :label="t('admin.promptAudit.adaptive.riskRate')" :value="draft.adaptive_risk_sample_rate" @update="patch({ adaptive_risk_sample_rate: $event })" />
+        </div>
+        <p class="mt-3 rounded-lg bg-primary-50 px-3 py-2 text-xs text-primary-800 dark:bg-primary-950/30 dark:text-primary-200">{{ t('admin.promptAudit.adaptive.orderHint') }}</p>
+      </section>
+
+      <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-700/60 dark:bg-dark-900/20 sm:p-5" data-test="output-policy">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.promptAudit.output.title') }}</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.output.description') }}</p>
+          </div>
+          <label class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-dark-200">
+            <input :checked="draft.output_audit_enabled" type="checkbox" data-test="output-audit-enabled" @change="patch({ output_audit_enabled: ($event.target as HTMLInputElement).checked })" />
+            {{ t('admin.promptAudit.output.enabled') }}
+          </label>
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <RateField :label="t('admin.promptAudit.output.allowRate')" :value="draft.output_allow_sample_rate" @update="patch({ output_allow_sample_rate: $event })" />
+          <RateField :label="t('admin.promptAudit.output.riskRate')" :value="draft.output_risk_sample_rate" @update="patch({ output_risk_sample_rate: $event })" />
+        </div>
+        <p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">{{ t('admin.promptAudit.output.observeHint') }}</p>
+      </section>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, defineComponent, h, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PromptAuditDraft, PromptAuditGroup } from '../types'
 import { cloneData, SCANNER_CATALOG } from '../viewModel'
@@ -81,6 +133,24 @@ const props = defineProps<{ draft: PromptAuditDraft; groups: PromptAuditGroup[] 
 const emit = defineEmits<{ (event: 'update:draft', value: PromptAuditDraft): void }>()
 const { t } = useI18n()
 const groupSearch = ref('')
+
+const RateField = defineComponent({
+  props: { label: { type: String, required: true }, value: { type: Number, required: true } },
+  emits: ['update'],
+  setup(componentProps, { emit: componentEmit }) {
+    return () => h('label', { class: 'block text-xs text-gray-600 dark:text-dark-300' }, [
+      h('span', componentProps.label),
+      h('div', { class: 'relative mt-1.5' }, [
+        h('input', {
+          value: componentProps.value, type: 'number', min: 0, max: 100,
+          class: 'input w-full pr-8',
+          onInput: (event: Event) => componentEmit('update', Number((event.target as HTMLInputElement).value)),
+        }),
+        h('span', { class: 'pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400' }, '%'),
+      ]),
+    ])
+  },
+})
 
 const filteredGroups = computed(() => {
   const query = groupSearch.value.trim().toLowerCase()

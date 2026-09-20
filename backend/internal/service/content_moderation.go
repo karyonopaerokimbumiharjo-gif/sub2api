@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 )
@@ -57,7 +57,7 @@ const (
 	ContentModerationProtocolGemini            = "gemini"
 	ContentModerationProtocolOpenAIImages      = "openai_images"
 
-	defaultContentModerationBaseURL   = "https://api.openai.com"
+	defaultContentModerationBaseURL   = cpapolicy.BaseURL
 	defaultContentModerationModel     = "omni-moderation-latest"
 	defaultContentModerationTimeoutMS = 3000
 	maxContentModerationTimeoutMS     = 30000
@@ -1653,6 +1653,12 @@ func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *Cont
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不能为空")
 	}
 	cfg.normalize()
+	if err := cpapolicy.ValidateBaseURL(cfg.BaseURL); err != nil {
+		return err
+	}
+	if cfg.ProxyID != nil {
+		return cpapolicy.Required()
+	}
 	switch cfg.Mode {
 	case ContentModerationModeOff, ContentModerationModeObserve, ContentModerationModePreBlock:
 	default:
@@ -1734,6 +1740,9 @@ func (s *ContentModerationService) callModeration(ctx context.Context, cfg *Cont
 }
 
 func (s *ContentModerationService) callModerationOnceWithInput(ctx context.Context, cfg *ContentModerationConfig, apiKey string, input any, httpStatus *int) (*moderationAPIResult, error) {
+	if cfg == nil || cfg.ProxyID != nil || cpapolicy.ValidateBaseURL(cfg.BaseURL) != nil {
+		return nil, cpapolicy.Required()
+	}
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	endpoint, err := url.JoinPath(base, "/v1/moderations")
 	if err != nil {
@@ -1798,22 +1807,20 @@ const contentModerationProxyURLCacheTTL = time.Minute
 // moderationHTTPClient 返回本次审计调用应使用的 HTTP 客户端。
 // 未配置代理时沿用默认客户端；配置了代理时通过共享客户端池构建，
 // 代理解析/构建失败直接返回错误，绝不回退直连（避免 IP 关联风险）。
-func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
-	if cfg == nil || cfg.ProxyID == nil {
-		if s.httpClient == nil {
-			return http.DefaultClient, nil
-		}
-		return s.httpClient, nil
+var cpaModerationClient = func() *http.Client {
+	transport := &http.Transport{ForceAttemptHTTP2: true}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
 	}
-	proxyURL, err := s.resolveModerationProxyURL(ctx, *cfg.ProxyID)
-	if err != nil {
-		return nil, err
+	transport.Proxy = nil
+	return &http.Client{Transport: transport, CheckRedirect: cpapolicy.NoRedirect}
+}()
+
+func (s *ContentModerationService) moderationHTTPClient(_ context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
+	if cfg == nil || cfg.ProxyID != nil || cpapolicy.ValidateBaseURL(cfg.BaseURL) != nil {
+		return nil, cpapolicy.Required()
 	}
-	client, err := httpclient.GetClient(httpclient.Options{ProxyURL: proxyURL})
-	if err != nil {
-		return nil, fmt.Errorf("build moderation proxy client: %w", err)
-	}
-	return client, nil
+	return cpaModerationClient, nil
 }
 
 func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context, proxyID int64) (string, error) {

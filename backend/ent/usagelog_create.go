@@ -463,6 +463,20 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (_c *UsageLogCreate) SetPromptAuditLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetPromptAuditLatencyMs(v)
+	return _c
+}
+
+// SetNillablePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillablePromptAuditLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetPromptAuditLatencyMs(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -884,6 +898,11 @@ func (_c *UsageLogCreate) check() error {
 	if _, ok := _c.mutation.Stream(); !ok {
 		return &ValidationError{Name: "stream", err: errors.New(`ent: missing required field "UsageLog.stream"`)}
 	}
+	if v, ok := _c.mutation.PromptAuditLatencyMs(); ok {
+		if err := usagelog.PromptAuditLatencyMsValidator(v); err != nil {
+			return &ValidationError{Name: "prompt_audit_latency_ms", err: fmt.Errorf(`ent: validator failed for field "UsageLog.prompt_audit_latency_ms": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -1082,6 +1101,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstTokenMs(); ok {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
+	}
+	if value, ok := _c.mutation.PromptAuditLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
+		_node.PromptAuditLatencyMs = &value
 	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -1863,6 +1886,30 @@ func (u *UsageLogUpsert) AddFirstTokenMs(v int) *UsageLogUpsert {
 // ClearFirstTokenMs clears the value of the "first_token_ms" field.
 func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldFirstTokenMs)
+	return u
+}
+
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsert) SetPromptAuditLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldPromptAuditLatencyMs, v)
+	return u
+}
+
+// UpdatePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdatePromptAuditLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldPromptAuditLatencyMs)
+	return u
+}
+
+// AddPromptAuditLatencyMs adds v to the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsert) AddPromptAuditLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldPromptAuditLatencyMs, v)
+	return u
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsert) ClearPromptAuditLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldPromptAuditLatencyMs)
 	return u
 }
 
@@ -2817,6 +2864,34 @@ func (u *UsageLogUpsertOne) UpdateFirstTokenMs() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertOne) SetPromptAuditLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetPromptAuditLatencyMs(v)
+	})
+}
+
+// AddPromptAuditLatencyMs adds v to the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertOne) AddPromptAuditLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddPromptAuditLatencyMs(v)
+	})
+}
+
+// UpdatePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdatePromptAuditLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdatePromptAuditLatencyMs()
+	})
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearPromptAuditLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearPromptAuditLatencyMs()
 	})
 }
 
@@ -3973,6 +4048,34 @@ func (u *UsageLogUpsertBulk) UpdateFirstTokenMs() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetPromptAuditLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetPromptAuditLatencyMs(v)
+	})
+}
+
+// AddPromptAuditLatencyMs adds v to the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddPromptAuditLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddPromptAuditLatencyMs(v)
+	})
+}
+
+// UpdatePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdatePromptAuditLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdatePromptAuditLatencyMs()
+	})
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearPromptAuditLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearPromptAuditLatencyMs()
 	})
 }
 

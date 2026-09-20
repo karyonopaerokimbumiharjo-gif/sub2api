@@ -895,6 +895,13 @@ export interface OpsErrorLog {
   id: number
   created_at: string
 
+  // List-only aggregation metadata. The representative row still links to a
+  // real raw event; occurrence_count > 1 means repeated routing errors were
+  // collapsed for display.
+  occurrence_count?: number
+  first_seen_at?: string
+  last_seen_at?: string
+
   // Standardized classification
   phase: OpsPhase
   type: string
@@ -1108,6 +1115,9 @@ export type OpsErrorListQueryParams = {
   q?: string
   status_codes?: string
   status_codes_other?: string
+
+  // Collapse repeated gateway routing failures for display only.
+  collapse_routing_unavailable?: string
 
   // 服务端排序,列白名单见后端 opsErrorLogsOrderBy(created_at/model/status_code)
   sort_by?: string

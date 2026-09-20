@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -63,6 +65,113 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		},
 	}, usage, now) {
 		t.Fatal("expected stale ws snapshot to trigger refresh")
+	}
+}
+
+func TestOpenAICompatibleQuotaBridgeRequiresExplicitMarker(t *testing.T) {
+	t.Parallel()
+
+	base := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://cpa.example.test",
+			"api_key":  "bridge-key",
+		},
+	}
+	if base.IsOpenAICompatibleQuotaBridge() {
+		t.Fatal("ordinary OpenAI API key account must not be treated as a quota bridge")
+	}
+	base.Extra = map[string]any{OpenAIQuotaViaCompatibleUpstreamExtraKey: true}
+	if !base.IsOpenAICompatibleQuotaBridge() {
+		t.Fatal("explicitly marked compatible upstream should be treated as a quota bridge")
+	}
+}
+
+func TestAccountUsageService_CompatibleQuotaBridgeProbe(t *testing.T) {
+	t.Parallel()
+
+	var gotAuthorization string
+	var gotPath string
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Errorf("decode probe payload: %v", err)
+		}
+		w.Header().Set("x-codex-primary-used-percent", "22")
+		w.Header().Set("x-codex-primary-reset-after-seconds", "551700")
+		w.Header().Set("x-codex-primary-window-minutes", "10080")
+		w.Header().Set("x-codex-secondary-used-percent", "3")
+		w.Header().Set("x-codex-secondary-reset-after-seconds", "7200")
+		w.Header().Set("x-codex-secondary-window-minutes", "300")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"completed"}`))
+	}))
+	defer server.Close()
+
+	account := &Account{
+		ID:       3030,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": server.URL,
+			"api_key":  "bridge-secret",
+			"model_mapping": map[string]any{
+				"gpt-5.6-luna": "gpt-5.6-luna",
+			},
+		},
+		Extra: map[string]any{OpenAIQuotaViaCompatibleUpstreamExtraKey: true},
+	}
+	svc := &AccountUsageService{}
+	updates, err := svc.probeOpenAICodexSnapshot(context.Background(), account)
+	if err != nil {
+		t.Fatalf("probeOpenAICodexSnapshot() error = %v", err)
+	}
+	if gotAuthorization != "Bearer bridge-secret" {
+		t.Fatalf("Authorization = %q, want bridge bearer token", gotAuthorization)
+	}
+	if gotPath != "/v1/responses" {
+		t.Fatalf("probe path = %q, want /v1/responses", gotPath)
+	}
+	if gotPayload["model"] != "gpt-5.6-luna" {
+		t.Fatalf("probe model = %v, want configured upstream model", gotPayload["model"])
+	}
+	if got := updates["codex_5h_used_percent"]; got != 3.0 {
+		t.Fatalf("codex_5h_used_percent = %v, want 3", got)
+	}
+	if got := updates["codex_7d_used_percent"]; got != 22.0 {
+		t.Fatalf("codex_7d_used_percent = %v, want 22", got)
+	}
+}
+
+func TestShouldRefreshOpenAICodexSnapshot_CompatibleQuotaBridgeUsesTTL(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	usage := &UsageInfo{
+		FiveHour: &UsageProgress{},
+		SevenDay: &UsageProgress{},
+	}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://cpa.example.test",
+			"api_key":  "bridge-key",
+		},
+		Extra: map[string]any{
+			OpenAIQuotaViaCompatibleUpstreamExtraKey: true,
+			"codex_usage_updated_at":                 now.Add(-(openAIProbeCacheTTL + time.Minute)).Format(time.RFC3339),
+		},
+	}
+	if !shouldRefreshOpenAICodexSnapshot(account, usage, now) {
+		t.Fatal("stale compatible bridge snapshot should refresh without OAuth WSv2")
+	}
+	account.Extra["codex_usage_updated_at"] = now.Add(-time.Minute).Format(time.RFC3339)
+	if shouldRefreshOpenAICodexSnapshot(account, usage, now) {
+		t.Fatal("fresh compatible bridge snapshot should honor cache TTL")
 	}
 }
 

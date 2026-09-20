@@ -47,6 +47,7 @@ var (
 // Questions are owned by server code. Client text is state/evidence and is
 // never interpolated into the question instructions.
 var jevRiskRubrics = map[string]string{
+	"biological_risk":               "Does the text request actionable assistance that materially enables harmful biological activity, including creating, enhancing or deploying biological threats? General biology education, public health, risk prevention and non-actionable analysis alone are not violations.",
 	"violent":                       "Does the text request actionable assistance to commit real-world violence or a credible threat? Quotation, news, fiction, prevention and non-actionable analysis alone are not violations.",
 	"non_violent_illegal_acts":      "Does the text request actionable assistance for theft, fraud, credential abuse or unauthorized intrusion? Authorized defensive testing and educational analysis alone are not violations.",
 	"sexual_content_or_sexual_acts": "Does the text request sexual exploitation, sexual content involving minors, or non-consensual sexual content? Clinical health information and abuse prevention alone are not violations.",

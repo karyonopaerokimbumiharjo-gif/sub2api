@@ -44577,6 +44577,8 @@ type UsageLogMutation struct {
 	addduration_ms               *int
 	first_token_ms               *int
 	addfirst_token_ms            *int
+	prompt_audit_latency_ms      *int
+	addprompt_audit_latency_ms   *int
 	user_agent                   *string
 	ip_address                   *string
 	image_count                  *int
@@ -46464,6 +46466,76 @@ func (m *UsageLogMutation) ResetFirstTokenMs() {
 	delete(m.clearedFields, usagelog.FieldFirstTokenMs)
 }
 
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (m *UsageLogMutation) SetPromptAuditLatencyMs(i int) {
+	m.prompt_audit_latency_ms = &i
+	m.addprompt_audit_latency_ms = nil
+}
+
+// PromptAuditLatencyMs returns the value of the "prompt_audit_latency_ms" field in the mutation.
+func (m *UsageLogMutation) PromptAuditLatencyMs() (r int, exists bool) {
+	v := m.prompt_audit_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPromptAuditLatencyMs returns the old "prompt_audit_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldPromptAuditLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPromptAuditLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPromptAuditLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPromptAuditLatencyMs: %w", err)
+	}
+	return oldValue.PromptAuditLatencyMs, nil
+}
+
+// AddPromptAuditLatencyMs adds i to the "prompt_audit_latency_ms" field.
+func (m *UsageLogMutation) AddPromptAuditLatencyMs(i int) {
+	if m.addprompt_audit_latency_ms != nil {
+		*m.addprompt_audit_latency_ms += i
+	} else {
+		m.addprompt_audit_latency_ms = &i
+	}
+}
+
+// AddedPromptAuditLatencyMs returns the value that was added to the "prompt_audit_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedPromptAuditLatencyMs() (r int, exists bool) {
+	v := m.addprompt_audit_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (m *UsageLogMutation) ClearPromptAuditLatencyMs() {
+	m.prompt_audit_latency_ms = nil
+	m.addprompt_audit_latency_ms = nil
+	m.clearedFields[usagelog.FieldPromptAuditLatencyMs] = struct{}{}
+}
+
+// PromptAuditLatencyMsCleared returns if the "prompt_audit_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) PromptAuditLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldPromptAuditLatencyMs]
+	return ok
+}
+
+// ResetPromptAuditLatencyMs resets all changes to the "prompt_audit_latency_ms" field.
+func (m *UsageLogMutation) ResetPromptAuditLatencyMs() {
+	m.prompt_audit_latency_ms = nil
+	m.addprompt_audit_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldPromptAuditLatencyMs)
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (m *UsageLogMutation) SetUserAgent(s string) {
 	m.user_agent = &s
@@ -47279,7 +47351,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 48)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47381,6 +47453,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.first_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.prompt_audit_latency_ms != nil {
+		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
 	}
 	if m.user_agent != nil {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -47497,6 +47572,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.DurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.FirstTokenMs()
+	case usagelog.FieldPromptAuditLatencyMs:
+		return m.PromptAuditLatencyMs()
 	case usagelog.FieldUserAgent:
 		return m.UserAgent()
 	case usagelog.FieldIPAddress:
@@ -47600,6 +47677,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldDurationMs(ctx)
 	case usagelog.FieldFirstTokenMs:
 		return m.OldFirstTokenMs(ctx)
+	case usagelog.FieldPromptAuditLatencyMs:
+		return m.OldPromptAuditLatencyMs(ctx)
 	case usagelog.FieldUserAgent:
 		return m.OldUserAgent(ctx)
 	case usagelog.FieldIPAddress:
@@ -47873,6 +47952,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFirstTokenMs(v)
 		return nil
+	case usagelog.FieldPromptAuditLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPromptAuditLatencyMs(v)
+		return nil
 	case usagelog.FieldUserAgent:
 		v, ok := value.(string)
 		if !ok {
@@ -48026,6 +48112,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addfirst_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
 	}
+	if m.addprompt_audit_latency_ms != nil {
+		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
+	}
 	if m.addimage_count != nil {
 		fields = append(fields, usagelog.FieldImageCount)
 	}
@@ -48079,6 +48168,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.AddedFirstTokenMs()
+	case usagelog.FieldPromptAuditLatencyMs:
+		return m.AddedPromptAuditLatencyMs()
 	case usagelog.FieldImageCount:
 		return m.AddedImageCount()
 	case usagelog.FieldVideoCount:
@@ -48220,6 +48311,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddFirstTokenMs(v)
 		return nil
+	case usagelog.FieldPromptAuditLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPromptAuditLatencyMs(v)
+		return nil
 	case usagelog.FieldImageCount:
 		v, ok := value.(int)
 		if !ok {
@@ -48287,6 +48385,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(usagelog.FieldFirstTokenMs) {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.FieldCleared(usagelog.FieldPromptAuditLatencyMs) {
+		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
 	}
 	if m.FieldCleared(usagelog.FieldUserAgent) {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -48367,6 +48468,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ClearFirstTokenMs()
+		return nil
+	case usagelog.FieldPromptAuditLatencyMs:
+		m.ClearPromptAuditLatencyMs()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ClearUserAgent()
@@ -48504,6 +48608,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ResetFirstTokenMs()
+		return nil
+	case usagelog.FieldPromptAuditLatencyMs:
+		m.ResetPromptAuditLatencyMs()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ResetUserAgent()
@@ -48731,6 +48838,7 @@ type UserMutation struct {
 	addtotal_recharged            *float64
 	rpm_limit                     *int
 	addrpm_limit                  *int
+	prompt_audit_bypass           *bool
 	clearedFields                 map[string]struct{}
 	api_keys                      map[int64]struct{}
 	removedapi_keys               map[int64]struct{}
@@ -49973,6 +50081,42 @@ func (m *UserMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetPromptAuditBypass sets the "prompt_audit_bypass" field.
+func (m *UserMutation) SetPromptAuditBypass(b bool) {
+	m.prompt_audit_bypass = &b
+}
+
+// PromptAuditBypass returns the value of the "prompt_audit_bypass" field in the mutation.
+func (m *UserMutation) PromptAuditBypass() (r bool, exists bool) {
+	v := m.prompt_audit_bypass
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPromptAuditBypass returns the old "prompt_audit_bypass" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldPromptAuditBypass(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPromptAuditBypass is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPromptAuditBypass requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPromptAuditBypass: %w", err)
+	}
+	return oldValue.PromptAuditBypass, nil
+}
+
+// ResetPromptAuditBypass resets all changes to the "prompt_audit_bypass" field.
+func (m *UserMutation) ResetPromptAuditBypass() {
+	m.prompt_audit_bypass = nil
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *UserMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -50709,7 +50853,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 25)
+	fields := make([]string, 0, 26)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -50785,6 +50929,9 @@ func (m *UserMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, user.FieldRpmLimit)
 	}
+	if m.prompt_audit_bypass != nil {
+		fields = append(fields, user.FieldPromptAuditBypass)
+	}
 	return fields
 }
 
@@ -50843,6 +50990,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.TotalRecharged()
 	case user.FieldRpmLimit:
 		return m.RpmLimit()
+	case user.FieldPromptAuditBypass:
+		return m.PromptAuditBypass()
 	}
 	return nil, false
 }
@@ -50902,6 +51051,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldTotalRecharged(ctx)
 	case user.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case user.FieldPromptAuditBypass:
+		return m.OldPromptAuditBypass(ctx)
 	}
 	return nil, fmt.Errorf("unknown User field %s", name)
 }
@@ -51085,6 +51236,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRpmLimit(v)
+		return nil
+	case user.FieldPromptAuditBypass:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPromptAuditBypass(v)
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)
@@ -51323,6 +51481,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case user.FieldPromptAuditBypass:
+		m.ResetPromptAuditBypass()
 		return nil
 	}
 	return fmt.Errorf("unknown User field %s", name)

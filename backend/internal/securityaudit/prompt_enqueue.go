@@ -6,10 +6,11 @@ import (
 )
 
 type Enqueuer struct {
-	config  ConfigStore
-	repo    JobRepository
-	payload PayloadStore
-	metrics Metrics
+	config       ConfigStore
+	repo         JobRepository
+	payload      PayloadStore
+	segmentCache PromptSegmentAllowCache
+	metrics      Metrics
 }
 
 func NewEnqueuer(config ConfigStore, repo JobRepository, payload PayloadStore, metrics ...Metrics) *Enqueuer {
@@ -17,7 +18,8 @@ func NewEnqueuer(config ConfigStore, repo JobRepository, payload PayloadStore, m
 	if len(metrics) > 0 {
 		metric = metrics[0]
 	}
-	return &Enqueuer{config: config, repo: repo, payload: payload, metrics: metric}
+	segmentCache, _ := payload.(PromptSegmentAllowCache)
+	return &Enqueuer{config: config, repo: repo, payload: payload, segmentCache: segmentCache, metrics: metric}
 }
 
 func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
@@ -26,8 +28,9 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 	}
 	cfg, ok := e.config.Active()
 	baseFields := requestLogFields(req)
-	if !ok || cfg.EffectiveMode() != ModeAsync {
-		LogInfo(EventEnqueueSkipped, mergeLogFields(baseFields, map[string]any{"status": "skipped", "error_code": "mode_not_async"}))
+	backgroundMode := cfg.EffectiveBackgroundAuditMode()
+	if !ok || !cfg.RiskControlEnabled || !cfg.Enabled || backgroundMode == BackgroundAuditModeOff {
+		LogInfo(EventEnqueueSkipped, mergeLogFields(baseFields, map[string]any{"status": "skipped", "error_code": "background_audit_off"}))
 		return nil
 	}
 	baseFields["config_version"] = cfg.ConfigVersion
@@ -40,7 +43,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 		LogWarn(EventEnqueueDropped, mergeLogFields(baseFields, map[string]any{"status": "dropped", "error_code": "no_enabled_endpoint"}))
 		return nil
 	}
-	snapshot, err := ExtractPromptSnapshot(req)
+	snapshot, err := buildScopedPromptSnapshot(ctx, req, cfg, backgroundMode, e.segmentCache)
 	if errors.Is(err, ErrNoPromptText) {
 		LogInfo(EventEnqueueSkipped, mergeLogFields(baseFields, map[string]any{"status": "skipped", "error_code": "no_user_text"}))
 		return nil
@@ -65,7 +68,13 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 		e.recordDropped()
 		return err
 	}
-	if err := e.payload.Set(ctx, job.ID, snapshot.ScanText, DefaultPayloadTTL); err != nil {
+	queuedPayload, err := encodeQueuedPromptPayload(snapshot, backgroundMode)
+	if err != nil {
+		_ = e.repo.MarkStagingFailed(ctx, job.ID, "payload_encode_failed", "payload encoding failed")
+		e.recordDropped()
+		return err
+	}
+	if err := e.payload.Set(ctx, job.ID, queuedPayload, DefaultPayloadTTL); err != nil {
 		_ = e.repo.MarkStagingFailed(ctx, job.ID, "payload_store_failed", "payload store unavailable")
 		LogWarn(EventEnqueueDropped, mergeLogFields(baseFields, map[string]any{
 			"job_id": job.ID, "status": "dropped", "error_code": "payload_store_failed",
@@ -84,7 +93,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 	}
 	LogInfo(EventJobEnqueued, mergeLogFields(baseFields, map[string]any{
 		"job_id":         job.ID,
-		"queue_capacity": cfg.QueueCapacity, "status": "queued",
+		"queue_capacity": cfg.QueueCapacity, "audit_mode": backgroundMode, "status": "queued",
 	}))
 	if e.metrics != nil {
 		e.metrics.IncEnqueued()

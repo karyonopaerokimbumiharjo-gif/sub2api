@@ -73,6 +73,18 @@ export function resolvePrimaryResponseBody(
   const upstreamPayload = resolveUpstreamPayload(detail)
   const errorBody = String(detail.error_body || '').trim()
 
+  if (isPolicyBlock(detail)) {
+    return JSON.stringify({
+      error: {
+        code: String(detail.type || 'policy_block'),
+        message: String(detail.upstream_error_message || detail.message || 'Request blocked by provider policy')
+      },
+      source: String(detail.error_source || 'upstream_http'),
+      semantic_status: detail.status_code,
+      upstream_transport_status: detail.upstream_status_code ?? null
+    })
+  }
+
   if (errorType === 'upstream') {
     return upstreamPayload || errorBody
   }
@@ -87,5 +99,12 @@ export function resolvePrimaryResponseBody(
     return upstreamPayload
   }
 
-  return errorBody
+	return errorBody
+}
+
+function isPolicyBlock(detail: OpsErrorDetail): boolean {
+  const type = String(detail.type || '').toLowerCase()
+  if (type.includes('bio_policy') || type.includes('cyber_policy')) return true
+  const body = String(detail.error_body || '')
+  return body.includes('"code":"bio_policy"') || body.includes('"code":"cyber_policy"')
 }

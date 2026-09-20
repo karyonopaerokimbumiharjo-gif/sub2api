@@ -110,6 +110,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		h.openAISecurityAuditError(c, decision)
 		return
 	}
+	if h.rejectIfBioPromptBlocked(c, apiKey, reqModel, cyberBlockFormatChat) {
+		return
+	}
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatChat) {
 		return
 	}
@@ -254,6 +257,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			cyberBlockBodyChat = body
 		}
 		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockBodyChat, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordBioPolicyIfMarked(c, apiKey, account, reqModel)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)

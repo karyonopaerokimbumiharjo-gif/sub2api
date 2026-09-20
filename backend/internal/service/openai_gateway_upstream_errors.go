@@ -254,7 +254,9 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
 	// selected credential for it.
-	if hit, _, _ := detectOpenAICyberPolicy(upstreamBody); hit {
+	cyberHit, _, _ := detectOpenAICyberPolicy(upstreamBody)
+	bioHit, _, _ := detectOpenAIBioPolicy(upstreamBody)
+	if cyberHit || bioHit {
 		return false
 	}
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
@@ -543,6 +545,17 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
 	}
+	// bio_policy is a deterministic provider safety rejection, not an account
+	// outage. Return a stable 403, do not cool the account, and mark the request
+	// so the handler can persist upstream feedback and block prompt replays.
+	if hit, bioMsg := markOpenAIBioPolicy(c, body, resp.StatusCode, 0, 0); hit {
+		setOpsUpstreamError(c, resp.StatusCode, bioMsg, truncateString(string(body), 2048))
+		MarkResponseCommitted(c)
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
+			"type": "invalid_request_error", "code": "bio_policy", "message": OpenAIBioPolicyClientMessage,
+		}})
+		return nil, fmt.Errorf("openai bio_policy: %s", bioMsg)
+	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)
 		setOpsUpstreamError(c, resp.StatusCode, clientMsg, truncateString(string(body), 2048))
@@ -793,6 +806,12 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			return nil, fmt.Errorf("openai cyber_policy: %d", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("openai cyber_policy: %s", cyberMsg)
+	}
+	if hit, bioMsg := markOpenAIBioPolicy(c, body, resp.StatusCode, 0, 0); hit {
+		setOpsUpstreamError(c, resp.StatusCode, bioMsg, truncateString(string(body), 2048))
+		MarkResponseCommitted(c)
+		writeError(c, http.StatusForbidden, "invalid_request_error", OpenAIBioPolicyClientMessage)
+		return nil, fmt.Errorf("openai bio_policy: %s", bioMsg)
 	}
 	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
 		clientMsg := grokContentPolicyClientMessage(body)

@@ -96,17 +96,18 @@ type UserListFilters struct {
 // 注意这里没有 balance / total_recharged：余额只能经由 AdjustBalance、
 // SetBalance、UpdateBalance、DeductBalance 等原子接口修改，Update 永远不碰它们。
 type UserUpdateFields struct {
-	Email        bool
-	Username     bool
-	Notes        bool
-	PasswordHash bool
-	Role         bool
-	Status       bool
-	Concurrency  bool
-	RPMLimit     bool
-	SignupSource bool
-	LastLoginAt  bool
-	LastActiveAt bool
+	Email             bool
+	Username          bool
+	Notes             bool
+	PasswordHash      bool
+	Role              bool
+	Status            bool
+	Concurrency       bool
+	RPMLimit          bool
+	PromptAuditBypass bool
+	SignupSource      bool
+	LastLoginAt       bool
+	LastActiveAt      bool
 	// BalanceNotifySettings 覆盖 balance_notify_enabled / _threshold_type / _threshold。
 	BalanceNotifySettings bool
 	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
@@ -261,6 +262,41 @@ type UpdateProfileRequest struct {
 	BalanceNotifyThreshold *float64 `json:"balance_notify_threshold"`
 }
 
+type UserBalanceGrant struct {
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	RedeemCodeID    *int64    `json:"redeem_code_id,omitempty"`
+	RedeemCode      string    `json:"redeem_code,omitempty"`
+	SourceType      string    `json:"source_type"`
+	OriginalAmount  float64   `json:"original_amount"`
+	RemainingAmount float64   `json:"remaining_amount"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	GrantedAt       time.Time `json:"granted_at"`
+	Status          string    `json:"status"`
+}
+
+type CreateBalanceGrantInput struct {
+	UserID       int64
+	RedeemCodeID *int64
+	SourceType   string
+	Amount       float64
+	ExpiresAt    time.Time
+	GrantedAt    time.Time
+}
+
+type BalanceGrantCreator interface {
+	CreateBalanceGrant(ctx context.Context, input CreateBalanceGrantInput) error
+}
+
+type BalanceGrantLister interface {
+	ListActiveBalanceGrants(ctx context.Context, userID int64, limit int) ([]UserBalanceGrant, error)
+}
+
+type BalanceGrantExpirer interface {
+	ExpireBalanceGrants(ctx context.Context, userID int64) error
+	ExpireDueBalanceGrants(ctx context.Context, limit int) ([]int64, error)
+}
+
 type UserAvatar struct {
 	StorageProvider string
 	StorageKey      string
@@ -329,6 +365,14 @@ func (s *UserService) GetProfile(ctx context.Context, userID int64) (*User, erro
 		return nil, fmt.Errorf("get user avatar: %w", err)
 	}
 	return user, nil
+}
+
+func (s *UserService) GetProfileBalanceGrants(ctx context.Context, userID int64) ([]UserBalanceGrant, error) {
+	lister, ok := s.userRepo.(BalanceGrantLister)
+	if !ok {
+		return []UserBalanceGrant{}, nil
+	}
+	return lister.ListActiveBalanceGrants(ctx, userID, 100)
 }
 
 func (s *UserService) GetProfileIdentitySummaries(ctx context.Context, userID int64, user *User) (UserIdentitySummarySet, error) {

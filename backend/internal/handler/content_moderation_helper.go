@@ -127,8 +127,16 @@ func contentModerationRequestID(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
+	// Usage billing deliberately prefers the stable client request ID for
+	// idempotency. Prompt-audit jobs must use the exact same key so their
+	// latency can be joined back to the eventual usage log.
+	if clientRequestID, ok := ctx.Value(ctxkey.ClientRequestID).(string); ok && strings.TrimSpace(clientRequestID) != "" {
+		return "client:" + strings.TrimSpace(clientRequestID)
+	}
 	if requestID, ok := ctx.Value(ctxkey.RequestID).(string); ok {
-		return strings.TrimSpace(requestID)
+		if requestID = strings.TrimSpace(requestID); requestID != "" {
+			return "local:" + requestID
+		}
 	}
 	return ""
 }

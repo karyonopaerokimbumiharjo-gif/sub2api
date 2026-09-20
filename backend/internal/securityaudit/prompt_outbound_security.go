@@ -8,12 +8,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const maxGuardResponseBytes int64 = 256 * 1024
 
+// OpenCode is retained as an explicitly scoped DeepSeek fallback for Prompt
+// Audit only. Business traffic and all other audit endpoints remain CPA-only.
+const openCodeAuditBaseURL = "https://opencode.ai/zen/go"
+
+func isOpenCodeAuditBaseURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "opencode.ai") || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" {
+		return false
+	}
+	return strings.TrimRight(u.Path, "/") == "/zen/go"
+}
+
 func NormalizeBaseURL(raw string) (string, error) {
+	if err := cpapolicy.ValidateBaseURL(raw); err != nil && !isOpenCodeAuditBaseURL(raw) {
+		return "", err
+	}
 	raw = strings.TrimSpace(raw)
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -83,7 +99,20 @@ func NewSecureHTTPClient(endpoint ActiveEndpoint) (*http.Client, error) {
 		timeout = DefaultTimeoutMS * time.Millisecond
 	}
 	return &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
+		Transport:     transport,
+		Timeout:       timeout,
+		CheckRedirect: cpapolicy.NoRedirect,
 	}, nil
+}
+
+// normalizeAuditEndpointURL keeps the existing CPA restriction for compatible
+// endpoints while allowing only the pinned official origin for native Jev.
+func normalizeAuditEndpointURL(protocol, raw string) (string, error) {
+	if protocol == JevProtocol {
+		if _, err := jevEvaluationURL(raw); err != nil {
+			return "", err
+		}
+		return JevBaseURL, nil
+	}
+	return NormalizeBaseURL(raw)
 }

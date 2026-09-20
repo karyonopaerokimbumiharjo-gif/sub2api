@@ -120,6 +120,9 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
+		// 管理员显式放行该用户的安全审核。请求侧只信任服务端加载的用户快照。
+		field.Bool("prompt_audit_bypass").
+			Default(false),
 	}
 }
 

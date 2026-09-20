@@ -26,6 +26,13 @@ type OpsErrorLog struct {
 	ID        int64     `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 
+	// Display-only aggregation metadata. Raw ops_error_logs rows are never
+	// deleted or rewritten; list endpoints may collapse repeated routing
+	// failures into one representative row.
+	OccurrenceCount int64     `json:"occurrence_count"`
+	FirstSeenAt     time.Time `json:"first_seen_at"`
+	LastSeenAt      time.Time `json:"last_seen_at"`
+
 	// Standardized classification
 	// - phase: request|auth|account_auth|routing|upstream|network|internal
 	// - owner: client|provider|platform
@@ -155,6 +162,10 @@ type OpsErrorLogFilter struct {
 	// - excluded: only show excluded errors
 	// - all: show everything
 	View string
+
+	// CollapseRoutingUnavailable groups repeated gateway routing failures in a
+	// five-minute window for admin display. It never changes persisted rows.
+	CollapseRoutingUnavailable bool
 
 	Page     int
 	PageSize int

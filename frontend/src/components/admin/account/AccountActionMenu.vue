@@ -124,8 +124,16 @@ const isRateLimited = computed(() => {
 })
 const isOverloaded = computed(() => props.account?.overload_until && new Date(props.account.overload_until) > new Date())
 const isTempUnschedulable = computed(() => props.account?.temp_unschedulable_until && new Date(props.account.temp_unschedulable_until) > new Date())
+// CPA bridge accounts can be rate-limited inside CPA while their Sub2API
+// runtime status remains active. Keep the recovery action available for those
+// accounts so operators can clear any local state after the upstream cools.
+const isOpenAIQuotaBridge = computed(() =>
+  props.account?.platform === 'openai' &&
+  props.account?.type === 'apikey' &&
+  props.account.extra?.openai_quota_via_compatible_upstream === true
+)
 const hasRecoverableState = computed(() => {
-  return props.account?.status === 'error' || Boolean(isRateLimited.value) || Boolean(isOverloaded.value) || Boolean(isTempUnschedulable.value)
+  return Boolean(isOpenAIQuotaBridge.value) || props.account?.status === 'error' || Boolean(isRateLimited.value) || Boolean(isOverloaded.value) || Boolean(isTempUnschedulable.value)
 })
 const isAntigravityOAuth = computed(() => props.account?.platform === 'antigravity' && props.account?.type === 'oauth')
 const isOpenAIOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth')

@@ -60,7 +60,7 @@ export async function getById(id: number): Promise<RedeemCode> {
  * @param type - Type of redeem code
  * @param value - Value of the code
  * @param groupId - Group ID (required for subscription type)
- * @param validityDays - Validity days (for subscription type)
+ * @param validityDays - Balance/subscription validity days after redemption
  * @param expiresInDays - Days before the code itself expires
  * @returns Array of generated redeem codes
  */
@@ -78,9 +78,10 @@ export async function generate(
     value
   }
 
-  // 订阅类型专用字段
   if (type === 'subscription') {
     payload.group_id = groupId
+  }
+  if (type === 'subscription' || type === 'balance') {
     if (validityDays && validityDays > 0) {
       payload.validity_days = validityDays
     }

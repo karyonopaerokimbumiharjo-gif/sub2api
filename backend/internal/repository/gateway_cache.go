@@ -225,6 +225,7 @@ func (c *gatewayCache) ReleaseGrokVideoBilled(ctx context.Context, key string) e
 
 // Compile-time assertion: gatewayCache must implement CyberSessionBlockStore.
 var _ service.CyberSessionBlockStore = (*gatewayCache)(nil)
+var _ service.BioPromptBlockStore = (*gatewayCache)(nil)
 var _ service.LiveCallStore = (*gatewayCache)(nil)
 
 const reasoningContentPrefix = "reasoning_content:"
@@ -274,6 +275,18 @@ const (
 	cyberSessionScopePrefix         = "cyber_session_scope:"
 	cyberSessionRedisCommandMaxKeys = 128
 )
+const bioPromptBlockPrefix = "bio_prompt_block:"
+
+var setBioPromptBlockedScript = redis.NewScript(`
+	local current = tonumber(redis.call('GET', KEYS[1])) or 0
+	current = current + 1
+	local ttl = tonumber(ARGV[1])
+	if current > 1 then
+		ttl = tonumber(ARGV[2])
+	end
+	redis.call('SET', KEYS[1], tostring(current), 'EX', ttl)
+	return {current, ttl}
+`)
 
 // SetCyberSessionBlocked writes exact blocks in bounded transactions. The
 // coarse scope is activated only after all exact blocks have been stored.
@@ -347,6 +360,33 @@ func (c *gatewayCache) FindCyberSessionBlocked(ctx context.Context, keys []strin
 		}
 	}
 	return "", nil
+}
+
+func (c *gatewayCache) SetBioPromptBlocked(ctx context.Context, key string, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 30 * 24 * time.Hour
+	}
+	firstSeconds := int64(ttl / time.Second)
+	repeatSeconds := firstSeconds * 3
+	_, err := setBioPromptBlockedScript.Run(ctx, c.rdb, []string{bioPromptBlockPrefix + key}, firstSeconds, repeatSeconds).Result()
+	return err
+}
+
+func (c *gatewayCache) IsBioPromptBlocked(ctx context.Context, keys []string) (bool, error) {
+	if len(keys) == 0 {
+		return false, nil
+	}
+	redisKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key != "" {
+			redisKeys = append(redisKeys, bioPromptBlockPrefix+key)
+		}
+	}
+	if len(redisKeys) == 0 {
+		return false, nil
+	}
+	n, err := c.rdb.Exists(ctx, redisKeys...).Result()
+	return n > 0, err
 }
 
 var claimLiveControllerScript = redis.NewScript(`

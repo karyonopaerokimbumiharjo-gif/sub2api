@@ -18,7 +18,7 @@ const (
 	schedulerBucketSetKey          = "sched:buckets"
 	schedulerOutboxWatermarkKey    = "sched:outbox:watermark"
 	schedulerAccountPrefix         = "sched:acc:"
-	schedulerAccountMetaPrefix     = "sched:meta:"
+	schedulerAccountMetaPrefix     = "sched:meta:cpa-v1:"
 	schedulerAccountLastUsedPrefix = "sched:acc:last_used:"
 	schedulerActivePrefix          = "sched:active:"
 	schedulerReadyPrefix           = "sched:ready:"
@@ -956,7 +956,7 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	}
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
+	keys := []string{"base_url", "model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {

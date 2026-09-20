@@ -22,6 +22,9 @@ function initIOSViewportZoomFix() {
   viewport.setAttribute('content', `${content}, maximum-scale=1.0`)
 }
 
+const frontendBuildMarker = 'balance-grants-profile-v0.1.164'
+;(window as Window & { __SUB2API_FRONTEND_BUILD__?: string }).__SUB2API_FRONTEND_BUILD__ = frontendBuildMarker
+
 function initThemeClass() {
   const savedTheme = localStorage.getItem('theme')
   const shouldUseDark =

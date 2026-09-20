@@ -949,6 +949,7 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 			UpstreamStatus: resp.StatusCode,
 		})
 	}
+	bioHit, bioMsg := markOpenAIBioPolicy(c, body, resp.StatusCode, 0, 0)
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -963,8 +964,8 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 	// 错误体虽不会原样透传，运行态账号状态仍需更新，避免粘性路由继续复用
-	// 刚被限流的账号。cyber 例外：不冷却账号。
-	if !cyberHit {
+	// 刚被限流的账号。安全策略拒绝例外：不冷却账号。
+	if !cyberHit && !bioHit {
 		reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
 		canonicalModel := canonicalOpenAIAccountSchedulingModel(account, reqModel)
 		_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, canonicalModel)
@@ -983,6 +984,12 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
+	if bioHit {
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{
+			"type": "invalid_request_error", "code": "bio_policy", "message": OpenAIBioPolicyClientMessage,
+		}})
+		return fmt.Errorf("openai bio_policy: %s", bioMsg)
+	}
 	// context-window 超限是确定性请求失败（shouldFailoverOpenAIPassthroughResponse
 	// 已保证不切号），其文案对客户端可操作（如触发自动压缩）；在净化信封内保留
 	// 脱敏后的上游消息，而不是抹成通用文案。
@@ -1516,6 +1523,10 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 	payload []byte,
 	failedMessage string,
 ) (status int, errType string, errMsg string, matched bool) {
+	if hit, bioMessage := markOpenAIBioPolicy(c, payload, http.StatusOK, 0, 0); hit {
+		setOpsUpstreamError(c, http.StatusBadGateway, bioMessage, truncateString(string(payload), 2048))
+		return http.StatusForbidden, "invalid_request_error", OpenAIBioPolicyClientMessage, true
+	}
 	ruleBody := openAIStreamFailedEventPassthroughBody(payload, failedMessage)
 	upstreamStatus := openAIStreamFailedEventSemanticStatus(payload, failedMessage)
 	return applyErrorPassthroughRule(
@@ -1531,6 +1542,9 @@ func applyOpenAIStreamFailedErrorPassthroughRule(
 
 func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool {
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+		return false
+	}
+	if hit, _, _ := detectOpenAIBioPolicy(payload); hit {
 		return false
 	}
 	if isOpenAIContextWindowError(message, payload) {
@@ -1583,6 +1597,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 
 func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
+		return false
+	}
+	if hit, _, _ := detectOpenAIBioPolicy(payload); hit {
 		return false
 	}
 	if isOpenAIContextWindowError(message, payload) {
@@ -2070,6 +2087,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
+				_, _ = markOpenAIBioPolicy(c, dataBytes, http.StatusOK, usage.InputTokens, usage.OutputTokens)
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
 				if !outputStarted && !cyberHit {
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {

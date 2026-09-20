@@ -69,6 +69,23 @@ describe('AccountActionMenu viewport positioning', () => {
     expect(getMenu().textContent).toContain('admin.accounts.recoverState')
   })
 
+  it('keeps recovery available for an active CPA quota bridge', async () => {
+    const bridgeAccount = {
+      id: 30,
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      extra: { openai_quota_via_compatible_upstream: true }
+    } as Account
+    mount(AccountActionMenu, {
+      props: { show: true, account: bridgeAccount, anchorRect: new DOMRect(500, 100, 32, 24) },
+      global: { stubs: { Icon: true } }
+    })
+    await flushPromises()
+
+    expect(getMenu().textContent).toContain('admin.accounts.recoverState')
+  })
+
   it('opens below the trigger when the complete menu fits', async () => {
     await mountMenu(new DOMRect(500, 100, 32, 24))
 

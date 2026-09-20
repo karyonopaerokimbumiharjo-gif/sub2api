@@ -59,3 +59,21 @@ func TestAPIKeyService_RejectsV15AuthSnapshotWithoutReasoningEffortPolicy(t *tes
 		t.Fatalf("expected no API key from stale snapshot, got %#v", apiKey)
 	}
 }
+
+func TestAPIKeyService_RejectsV21AuthSnapshotWithoutPromptAuditBypassProjection(t *testing.T) {
+	svc := &APIKeyService{}
+
+	apiKey, ok, err := svc.applyAuthCacheEntry("k-v21-missing-prompt-bypass", &APIKeyAuthCacheEntry{
+		Snapshot: &APIKeyAuthSnapshot{Version: 21},
+	})
+
+	if err != nil {
+		t.Fatalf("expected stale snapshot to be ignored without error, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected v21 auth snapshot to be rejected after fixing the prompt-audit bypass projection")
+	}
+	if apiKey != nil {
+		t.Fatalf("expected no API key from stale snapshot, got %#v", apiKey)
+	}
+}

@@ -279,11 +279,11 @@ export default {
         description: '控制 API Key 白/黑名单、操作审计日志与会话 IP/UA 绑定使用哪个客户端 IP 判断',
         trustForwardedIp: '信任反代传递的客户端 IP',
         trustForwardedIpHint:
-          '为保证升级兼容默认开启。开启后 CF-Connecting-IP、X-Real-IP 或 X-Forwarded-For 会直接接管客户端 IP 解析并覆盖 server.trusted_proxies；关闭后严格使用 server.trusted_proxies 配置的 Gin 可信代理链。仅在源站无法被直接访问时开启接管模式。切换会改变现有会话的 IP 指纹。',
+          '开启后，仅接受 server.trusted_proxies 中可信代理传递的自定义和兼容 IP 请求头；关闭后使用 Gin 可信代理链。直接连接客户端始终不能覆盖来源 IP。切换可能改变现有会话的 IP 指纹。',
         forwardedClientIpHeaders: '自定义客户端 IP 请求头',
         forwardedClientIpHeadersHint: '添加 CDN 或反代请求头名称，解析时优先于内置请求头。',
         forwardedClientIpHeadersPlaceholder: 'X-Client-IP',
-        forwardedClientIpHeadersRiskHint: '源站可被直接访问时，这些原始请求头可被伪造；请先限制源站访问再信任它们。',
+        forwardedClientIpHeadersRiskHint: '可信代理必须清除客户端传入的同名请求头，并写入真实来源 IP。',
         forwardedClientIpHeaderInvalid: '请输入有效的 HTTP 请求头名称。',
         forwardedClientIpHeadersLimit: '自定义客户端 IP 请求头最多允许 {max} 个。',
         removeForwardedClientIpHeader: '移除 {header}'

@@ -14,6 +14,7 @@ type openAICyberTranscriptBlockKeys struct {
 	lookupKeys          []string
 	preLatestUserKey    string
 	lookupKeysTruncated bool
+	hasModelHistory     bool
 }
 
 // Bound the Redis lookup work for a single request while retaining the most
@@ -25,6 +26,10 @@ const maxOpenAICyberTranscriptLookupKeys = 256
 // context key requires model-generated history so shared first-turn templates
 // cannot block unrelated conversations.
 func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyberTranscriptBlockKeys {
+	return deriveOpenAICyberTranscriptBlockKeysWithLimit(apiKeyID, body, maxOpenAICyberTranscriptLookupKeys)
+}
+
+func deriveOpenAICyberTranscriptBlockKeysWithLimit(apiKeyID int64, body []byte, limit int) openAICyberTranscriptBlockKeys {
 	if len(body) == 0 {
 		return openAICyberTranscriptBlockKeys{}
 	}
@@ -58,7 +63,7 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 			return openAICyberTranscriptBlockKeys{}
 		}
 		result := openAICyberTranscriptBlockKeys{
-			lookupKeys: make([]string, 0, maxOpenAICyberTranscriptLookupKeys),
+			lookupKeys: make([]string, 0, min(limit, 64)),
 		}
 		nextLookupKey := 0
 		lookupKeysRotated := false
@@ -85,11 +90,11 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 			_, _ = h.Write([]byte("|item="))
 			_, _ = h.Write([]byte(canonical))
 			lastLookupKey = hex.EncodeToString(h.Sum(nil))
-			if len(result.lookupKeys) < maxOpenAICyberTranscriptLookupKeys {
+			if len(result.lookupKeys) < limit {
 				result.lookupKeys = append(result.lookupKeys, lastLookupKey)
 			} else {
 				result.lookupKeys[nextLookupKey] = lastLookupKey
-				nextLookupKey = (nextLookupKey + 1) % maxOpenAICyberTranscriptLookupKeys
+				nextLookupKey = (nextLookupKey + 1) % limit
 				lookupKeysRotated = true
 				result.lookupKeysTruncated = true
 			}
@@ -104,11 +109,15 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 			ordered = append(ordered, result.lookupKeys[:nextLookupKey]...)
 			result.lookupKeys = ordered
 		}
+		result.hasModelHistory = hasModelGeneratedItem
 		return result
 	}
 
 	if messages := root.Get("messages"); messages.Exists() {
 		return appendSequence(messages)
+	}
+	if contents := root.Get("contents"); contents.Exists() {
+		return appendSequence(contents)
 	}
 	input := root.Get("input")
 	if input.IsArray() {
@@ -123,9 +132,50 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 	return openAICyberTranscriptBlockKeys{}
 }
 
+// AuditConversationKeys reuses the gateway's canonical transcript identity.
+// A first-turn template is never used as a conversation-wide block: without
+// model history only the explicit session and exact request can be invalidated.
+// This keeps a fresh conversation that removed unsafe tool metadata usable.
+func AuditConversationKeys(principalID int64, sessionID string, body []byte) (lookup, block []string, overflow bool) {
+	if principalID <= 0 || len(body) == 0 {
+		return nil, nil, false
+	}
+	root := openAIRequestPayloadView(body)
+	if !root.IsObject() {
+		return nil, nil, false
+	}
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(root.Get("prompt_cache_key").String())
+	}
+	if key := hashCyberSessionBlockKey(principalID, sessionID); key != "" {
+		lookup, block = append(lookup, key), append(block, key)
+	}
+	if previous := strings.TrimSpace(root.Get("previous_response_id").String()); previous != "" {
+		key := hashCyberSessionBlockKey(principalID, "previous_response:"+previous)
+		lookup, block = append(lookup, key), append(block, key)
+	}
+	// Hash the wire bytes for exact replay without copying a potentially large
+	// image/file payload into another canonical JSON buffer.
+	wireDigest := sha256.Sum256(body)
+	exact := hashCyberSessionBlockKey(principalID, "audit-request:"+hex.EncodeToString(wireDigest[:]))
+	lookup, block = append(lookup, exact), append(block, exact)
+	derived := deriveOpenAICyberTranscriptBlockKeysWithLimit(principalID, body, 4096)
+	lookup = append(lookup, derived.lookupKeys...)
+	if derived.hasModelHistory && len(derived.lookupKeys) > 0 {
+		block = append(block, derived.lookupKeys[len(derived.lookupKeys)-1])
+		if derived.preLatestUserKey != "" && derived.preLatestUserKey != block[len(block)-1] {
+			block = append(block, derived.preLatestUserKey)
+		}
+	}
+	return lookup, block, derived.lookupKeysTruncated
+}
+
 func openAICyberTranscriptItemStartsUserTurn(item gjson.Result) bool {
 	if strings.EqualFold(strings.TrimSpace(item.Get("role").String()), "user") {
 		content := item.Get("content")
+		if !content.Exists() {
+			content = item.Get("parts")
+		}
 		if content.IsArray() {
 			hasUserContent := false
 			content.ForEach(func(_, block gjson.Result) bool {

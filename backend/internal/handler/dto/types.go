@@ -43,8 +43,9 @@ type User struct {
 type AdminUser struct {
 	User
 
-	Notes      string     `json:"notes"`
-	LastUsedAt *time.Time `json:"last_used_at"`
+	Notes             string     `json:"notes"`
+	LastUsedAt        *time.Time `json:"last_used_at"`
+	PromptAuditBypass bool       `json:"prompt_audit_bypass"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
 	GroupRates map[int64]float64 `json:"group_rates,omitempty"`
@@ -478,20 +479,22 @@ type AdminProxy struct {
 // AdminProxyWithAccountCount 是管理员接口使用的带账号统计的 proxy DTO。
 type AdminProxyWithAccountCount struct {
 	AdminProxy
-	AccountCount   int64  `json:"account_count"`
-	LatencyMs      *int64 `json:"latency_ms,omitempty"`
-	LatencyStatus  string `json:"latency_status,omitempty"`
-	LatencyMessage string `json:"latency_message,omitempty"`
-	IPAddress      string `json:"ip_address,omitempty"`
-	Country        string `json:"country,omitempty"`
-	CountryCode    string `json:"country_code,omitempty"`
-	Region         string `json:"region,omitempty"`
-	City           string `json:"city,omitempty"`
-	QualityStatus  string `json:"quality_status,omitempty"`
-	QualityScore   *int   `json:"quality_score,omitempty"`
-	QualityGrade   string `json:"quality_grade,omitempty"`
-	QualitySummary string `json:"quality_summary,omitempty"`
-	QualityChecked *int64 `json:"quality_checked,omitempty"`
+	AccountCount       int64    `json:"account_count"`
+	CPACredentialCount *int64   `json:"cpa_credential_count,omitempty"`
+	CPACredentialNames []string `json:"cpa_credential_names,omitempty"`
+	LatencyMs          *int64   `json:"latency_ms,omitempty"`
+	LatencyStatus      string   `json:"latency_status,omitempty"`
+	LatencyMessage     string   `json:"latency_message,omitempty"`
+	IPAddress          string   `json:"ip_address,omitempty"`
+	Country            string   `json:"country,omitempty"`
+	CountryCode        string   `json:"country_code,omitempty"`
+	Region             string   `json:"region,omitempty"`
+	City               string   `json:"city,omitempty"`
+	QualityStatus      string   `json:"quality_status,omitempty"`
+	QualityScore       *int     `json:"quality_score,omitempty"`
+	QualityGrade       string   `json:"quality_grade,omitempty"`
+	QualitySummary     string   `json:"quality_summary,omitempty"`
+	QualityChecked     *int64   `json:"quality_checked,omitempty"`
 }
 
 type ProxyAccountSummary struct {
@@ -633,6 +636,8 @@ type UsageLog struct {
 	NativeCompactionV2 bool `json:"native_compaction_v2"`
 	DurationMs         *int `json:"duration_ms"`
 	FirstTokenMs       *int `json:"first_token_ms"`
+	// Audit latency remains separate from upstream timing.
+	PromptAuditLatencyMs *int `json:"prompt_audit_latency_ms"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`

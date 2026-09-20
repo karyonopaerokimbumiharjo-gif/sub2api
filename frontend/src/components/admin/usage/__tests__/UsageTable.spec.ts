@@ -38,6 +38,14 @@ const messages: Record<string, string> = {
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
+  'usage.latencyFirstTokenWithoutAudit': 'First (no audit)',
+  'usage.latencyFirstTokenWithAudit': 'First (with audit)',
+  'usage.latencyDurationWithoutAudit': 'Total (no audit)',
+  'usage.latencyDurationWithAudit': 'Total (with audit)',
+  'usage.latencyFirstToken': 'First',
+  'usage.latencyDuration': 'Total',
+  'usage.promptAuditLatencyValue': 'Prompt audit latency: {value}',
+  'usage.promptAuditLatencyMissing': 'Prompt audit latency missing',
   'usage.imageUnit': ' images',
   'usage.imageCount': 'Image count',
   'usage.imageBillingSize': 'Billing size',
@@ -93,6 +101,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-latency" :row="row" />
         <slot name="cell-request_id" :row="row" />
         <slot name="cell-upstream_request_id" :row="row" />
       </div>
@@ -127,6 +136,90 @@ const baseImageRow = {
   image_size_source: null,
   image_size_breakdown: null,
 }
+
+describe('admin UsageTable prompt audit latency', () => {
+  it('shows upstream-only and audit-inclusive latency without rewriting the original values', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-latency',
+          first_token_ms: 1200,
+          duration_ms: 1500,
+          prompt_audit_latency_ms: 300,
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('First (no audit)')
+    expect(text).toContain('First (with audit)')
+    expect(text).toContain('Total (no audit)')
+    expect(text).toContain('Total (with audit)')
+    expect(text).toContain('1.20s')
+    expect(text).toContain('1.50s')
+    expect(text).toContain('1.80s')
+  })
+
+  it('does not invent an audit-inclusive value for historical rows', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, request_id: 'req-history', first_token_ms: 1200, duration_ms: 1500 }],
+        loading: false,
+        columns: [],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    expect(wrapper.text()).toContain('1.20s')
+    expect(wrapper.text()).toContain('1.50s')
+    expect(wrapper.text().match(/-/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+  })
+
+  it('uses the legacy net latency display when audit comparison is hidden', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-user-latency',
+          first_token_ms: 1200,
+          duration_ms: 1500,
+          prompt_audit_latency_ms: 300,
+        }],
+        loading: false,
+        columns: [],
+        showAuditLatencyComparison: false,
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('First')
+    expect(text).toContain('Total')
+    expect(text).not.toContain('no audit')
+    expect(text).not.toContain('with audit')
+    expect(text).toContain('1.20s')
+    expect(text).toContain('1.50s')
+    expect(text).not.toContain('1.80s')
+  })
+})
 
 describe('admin UsageTable tooltip', () => {
   beforeEach(() => {
@@ -778,6 +871,7 @@ const DataTableStubWithUser = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-latency" :row="row" />
       </div>
     </div>
   `,

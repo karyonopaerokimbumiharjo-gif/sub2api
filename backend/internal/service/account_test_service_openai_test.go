@@ -13,12 +13,30 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestCreateOpenAITestPayloadUsesProvidedPrompt(t *testing.T) {
+	payload := createOpenAITestPayload("gpt-6-astra", true, "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。")
+	content, ok := payload["input"].([]map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。", content[0]["content"].([]map[string]any)[0]["text"])
+}
+
+func TestCreateOpenAITestPayloadPelicanUsesRenderInstructions(t *testing.T) {
+	payload := createOpenAITestPayload("gpt-6-astra", true, "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。")
+	require.Equal(t, pelicanTestInstructions, payload["instructions"])
+	require.Equal(t, 2200, payload["max_output_tokens"])
+
+	regular := createOpenAITestPayload("gpt-6-astra", true, "hi")
+	require.Equal(t, openai.DefaultInstructions, regular["instructions"])
+	require.NotContains(t, regular, "max_output_tokens")
+}
 
 // --- shared test helpers ---
 

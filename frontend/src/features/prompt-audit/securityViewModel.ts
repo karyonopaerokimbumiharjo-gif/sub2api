@@ -24,7 +24,7 @@ export function changeAuditProvider(
     token: '',
     clear_token: endpoint.has_token,
     enabled: false,
-    base_url: protocol === JEV_PROTOCOL ? JEV_BASE_URL : 'http://127.0.0.1:8000',
+    base_url: protocol === JEV_PROTOCOL ? JEV_BASE_URL : 'http://cpa:8317',
     model: protocol === JEV_PROTOCOL ? JEV_MODEL : 'sileader/qwen3guard:0.6b',
     input_limit: Math.min(4000, endpoint.input_limit),
   }

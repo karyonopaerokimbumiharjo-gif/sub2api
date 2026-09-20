@@ -33,7 +33,15 @@ func TestPromptAuditLogAllowlistAndErrorsDoNotLeakCanarySecrets(t *testing.T) {
 	beforeUnknown := output.Len()
 	LogWarn("prompt_audit.typo_event", map[string]any{"status": "failed"})
 	require.Equal(t, beforeUnknown, output.Len(), "events outside the stable dictionary must not be emitted")
-	require.Len(t, knownLogEvents, 28)
+
+	LogWarn(EventUserBypassFailed, map[string]any{
+		"request_id": "req-bypass",
+		"status":     "failed",
+		"error_code": "database_unavailable",
+	})
+	require.Contains(t, output.String(), EventUserBypassFailed)
+	require.Contains(t, output.String(), "req-bypass")
+	require.Len(t, knownLogEvents, 31)
 
 	_, err := NormalizeBaseURL("https://guard.example.test/path?token=" + canary)
 	require.Error(t, err)

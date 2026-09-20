@@ -66,6 +66,13 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
+      <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/70 dark:bg-amber-950/30">
+        <input v-model="form.prompt_audit_bypass" type="checkbox" class="mt-0.5" data-test="prompt-audit-bypass" />
+        <span>
+          <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.users.form.promptAuditBypass') }}</span>
+          <span class="mt-1 block text-xs text-amber-800 dark:text-amber-200">{{ t('admin.users.form.promptAuditBypassHint') }}</span>
+        </span>
+      </label>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -113,12 +120,13 @@ const form = reactive({
   role: 'user' as AdminUser['role'],
   concurrency: 1,
   rpm_limit: 0,
+  prompt_audit_bypass: false,
   customAttributes: {} as UserAttributeValuesMap
 })
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, prompt_audit_bypass: u.prompt_audit_bypass ?? false, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
@@ -149,7 +157,7 @@ const handleUpdateUser = async () => {
   const userId = props.user.id
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, concurrency: form.concurrency, rpm_limit: form.rpm_limit }
+    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, concurrency: form.concurrency, rpm_limit: form.rpm_limit, prompt_audit_bypass: form.prompt_audit_bypass }
     if (form.password.trim()) data.password = form.password.trim()
     // 提升为管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
     await stepUp.run(() => adminAPI.users.update(userId, data))

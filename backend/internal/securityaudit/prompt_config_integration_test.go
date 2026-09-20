@@ -118,10 +118,10 @@ func promptAuditTestEncryptor(t *testing.T) service.SecretEncryptor {
 func promptAuditUpdateRequest(version int64, workerCount int, token string) UpdateConfigRequest {
 	return UpdateConfigRequest{
 		ExpectedConfigVersion: version, Enabled: true, BlockingEnabled: false, StorePassEvents: false,
-		Strategy: "priority", WorkerCount: workerCount, QueueCapacity: 64, Scanners: []string{"pii", "jailbreak"},
+		Strategy: "priority", WorkerCount: workerCount, PromptChunkConcurrency: promptChunkConcurrencyPtr(DefaultPromptChunkConcurrency), QueueCapacity: 64, Scanners: []string{"pii", "jailbreak"},
 		AllGroups: true, Endpoints: []UpdateEndpoint{{
 			ID: "guard-one", Name: "Guard One", Protocol: "openai_compatible",
-			BaseURL: "http://127.0.0.1:18080", Model: "", Token: token,
+			BaseURL: "http://cpa:8317", Model: "", Token: token,
 			TimeoutMS: 1000, InputLimit: 1024, Enabled: true,
 		}},
 	}

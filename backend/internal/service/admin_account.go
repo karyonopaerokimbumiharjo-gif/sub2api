@@ -433,6 +433,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Status:      StatusActive,
 		Schedulable: true,
 	}
+	if account.ProxyID != nil && *account.ProxyID > 0 && account.IsOpenAICompatibleQuotaBridge() {
+		return nil, infraerrors.BadRequest("CPA_PROXY_USE_CREDENTIAL_SETTINGS", "CPA 上游出口代理请在 CPA 凭证设置中配置")
+	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
 			return nil, ErrUpstreamBillingProbeAccountInvalid
@@ -475,6 +478,9 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if err := ValidateCPAAccount(&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, ProxyID: input.ProxyID}); err != nil {
+		return nil, err
+	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
@@ -751,6 +757,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 影子代理恒继承母账号(由 propagateProxyToShadows 同步),不接受独立编辑——外审 B/P1;
 	// 否则要等母账号下次改 proxy 才被覆盖,期间影子会出现"有时继承、有时独立"的漂移。
 	if input.ProxyID != nil && !account.IsCredentialShadow() {
+		if *input.ProxyID > 0 && account.IsOpenAICompatibleQuotaBridge() {
+			return nil, infraerrors.BadRequest("CPA_PROXY_USE_CREDENTIAL_SETTINGS", "CPA 出口代理请在 CPA 凭证设置中修改")
+		}
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）
 		if *input.ProxyID == 0 {
 			account.ProxyID = nil
@@ -1023,6 +1032,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 要等母账号下次改 proxy 才覆盖→漂移)。含影子即整体拒绝,提示从选择中剔除影子。
 	if input.ProxyID != nil {
 		for _, acc := range cachedTargets {
+			if acc != nil && *input.ProxyID > 0 && acc.IsOpenAICompatibleQuotaBridge() {
+				return nil, infraerrors.BadRequest("CPA_PROXY_USE_CREDENTIAL_SETTINGS", "CPA 上游出口代理请在 CPA 凭证设置中配置")
+			}
 			if acc != nil && acc.IsCredentialShadow() {
 				return nil, infraerrors.Newf(http.StatusBadRequest, "SPARK_SHADOW_PROXY_INHERITED",
 					"spark shadow account %d proxy is inherited from its parent and cannot be set in bulk; manage it on the parent account", acc.ID)

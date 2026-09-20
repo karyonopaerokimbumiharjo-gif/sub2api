@@ -187,6 +187,17 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('OpenAI 测试默认选中上游目录中的 GPT-6 Astra', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-6-astra', display_name: 'GPT-6 Astra' }
+    ])
+    const wrapper = mountModal({ id: 30, name: 'CPA', platform: 'openai', type: 'apikey', status: 'active' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
+  })
+
   it('OpenAI Compact 探测会携带 compact 测试模式', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' }

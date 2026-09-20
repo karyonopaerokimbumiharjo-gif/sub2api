@@ -80,6 +80,15 @@ func applyOpsErrorSortParams(c *gin.Context, filter *service.OpsErrorLogFilter) 
 	filter.SetSort(c.Query("sort_by"), c.Query("sort_order"))
 }
 
+// applyOpsErrorPresentationParams controls list-only presentation. It never
+// mutates, removes, or resolves persisted error events.
+func applyOpsErrorPresentationParams(c *gin.Context, filter *service.OpsErrorLogFilter) {
+	switch strings.ToLower(strings.TrimSpace(c.Query("collapse_routing_unavailable"))) {
+	case "1", "true", "yes", "on":
+		filter.CollapseRoutingUnavailable = true
+	}
+}
+
 // GET /api/v1/admin/ops/errors
 func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -202,6 +211,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	}
 
 	applyOpsErrorSortParams(c, filter)
+	applyOpsErrorPresentationParams(c, filter)
 
 	result, err := h.opsService.GetErrorLogs(c.Request.Context(), filter)
 	if err != nil {
@@ -315,6 +325,7 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	}
 
 	applyOpsErrorSortParams(c, filter)
+	applyOpsErrorPresentationParams(c, filter)
 
 	result, err := h.opsService.GetErrorLogs(c.Request.Context(), filter)
 	if err != nil {

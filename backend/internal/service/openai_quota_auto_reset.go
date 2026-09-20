@@ -519,23 +519,27 @@ func (s *OpenAIQuotaAutoResetService) buildAssessment(account *Account, config O
 		threshold5h:   config.Threshold5h,
 		threshold7d:   config.Threshold7d,
 	}
-	reset5h := utilization5h >= config.Threshold5h
+	// Reset credits are consumed only for the 7-day window. Keep the legacy 5h
+	// threshold in the config for wire compatibility, but never use it to
+	// trigger a reset or to label the reset attempt.
 	reset7d := utilization7d >= config.Threshold7d
-	assessment.resetReached = reset5h || reset7d
-	assessment.triggerWindow = joinOpenAIAutoResetWindows(reset5h, reset7d)
+	assessment.resetReached = reset7d
+	assessment.triggerWindow = joinOpenAIAutoResetWindows(false, reset7d)
 
-	pause5h, pause7d := resolveOpenAIQuotaAutoPauseThresholds(context.Background(), account)
+	_, pause7d := resolveOpenAIQuotaAutoPauseThresholds(context.Background(), account)
 	if s.settings != nil {
-		pause5h, pause7d = resolveOpenAIQuotaAutoPauseThresholds(
+		_, pause7d = resolveOpenAIQuotaAutoPauseThresholds(
 			withOpenAIQuotaAutoPauseSettings(context.Background(), s.settings.GetOpenAIQuotaAutoPauseSettings(context.Background())),
 			account,
 		)
 	}
-	pauseReached5h := !resolveAccountExtraBool(account.Extra, "auto_pause_5h_disabled") && pause5h > 0 && utilization5h >= pause5h
 	pauseReached7d := !resolveAccountExtraBool(account.Extra, "auto_pause_7d_disabled") && pause7d > 0 && utilization7d >= pause7d
-	assessment.pauseReached = pauseReached5h || pauseReached7d || assessment.resetReached
+	// Automatic reset-credit consumption is deliberately a 7-day-only feature.
+	// A full 5h window may still be handled by the ordinary scheduling pause
+	// policy, but it must never wake this worker or become a reset-credit trigger.
+	assessment.pauseReached = pauseReached7d || assessment.resetReached
 	if assessment.triggerWindow == "" {
-		assessment.triggerWindow = joinOpenAIAutoResetWindows(pauseReached5h, pauseReached7d)
+		assessment.triggerWindow = joinOpenAIAutoResetWindows(false, pauseReached7d)
 	}
 	return assessment
 }

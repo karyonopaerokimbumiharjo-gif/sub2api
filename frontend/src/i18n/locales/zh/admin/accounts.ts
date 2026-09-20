@@ -289,6 +289,16 @@ export default {
         thresholdPlaceholder: '输入百分比',
       },
       testConnection: '测试连接',
+      pelicanTest: '鹈鹕测试',
+      pelicanTestTitle: '鹈鹕模型测试',
+      pelicanPromptLabel: '鹈鹕测试提示词',
+      pelicanPromptPlaceholder: '创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。',
+      pelicanPromptDefault: '只输出一个可直接运行的完整HTML文件，不要解释、不要提问、不要使用Markdown代码围栏。HTML必须内嵌SVG，绘制并自动播放一个鹈鹕骑自行车的2D动画；包含完整的<!doctype html>、<html>、<head>和<body>结构，CSS和JavaScript全部内嵌。',
+      pelicanTestHint: '使用此账号当前选中的模型生成鹈鹕 SVG 动画 HTML，用于验证模型是否能正常响应。',
+      pelicanTestMode: '模式：鹈鹕 SVG 动画测试',
+      pelicanPreview: '鹈鹕动画预览',
+      pelicanPreviewPlaying: '正在播放',
+      pelicanPreviewUnavailable: '模型没有返回可播放的 HTML/SVG 内容，请重试或更换模型。',
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
       noAccountsYet: '暂无账号',
@@ -500,6 +510,9 @@ export default {
         grokLastHeadersSeen: '响应头 {time}',
         passiveSampled: '被动采样',
         activeQuery: '查询',
+        quotaUnavailable: '上游未提供此窗口额度',
+        quotaRefreshFailed: '额度刷新失败，保留的数值可能已过期，请重试',
+        quotaFetchedAt: '额度查询时间：',
         estimatedTotalCost: '预计总费用 ${cost}',
         estimatedTotalCostTooltip: '根据当前窗口费用和使用率估算达到 100% 使用率时的总费用'
       },
@@ -531,6 +544,15 @@ export default {
           noCredit: '无卡',
           failed: '自动重置失败'
         },
+        autoReset: '自动重置',
+        autoResetTooltipOn: '自动重置已开启；账号达到 100% 时自动消耗 1 次重置次数',
+        autoResetTooltipOff: '开启后，账号达到 100% 时自动消耗 1 次重置次数',
+        autoResetTooltipShadow: 'Spark 影子账号不能开启自动重置；请在母账号上设置',
+        autoResetSaving: '正在保存自动重置设置',
+        autoResetEnabled: '自动重置已开启',
+        autoResetThresholdTooltip: '7 天窗口达到此百分比时自动使用重置卡；5 小时窗口不会触发。',
+        autoResetThresholdSaved: '7 天自动用卡阈值已保存',
+        autoResetDisabled: '自动重置已关闭',
         confirmTitle: '确认重置周限',
         confirmMessage: '将消耗 1 次重置次数立即恢复当前窗口，剩余 {count} 次。此操作不可撤销，确定继续吗？'
       },
@@ -977,10 +999,9 @@ export default {
 	  autoPauseDisabledHint: '开启后该账号永不进入自动暂停（即使全局默认阈值已配置）。',
 	  autoResetCredit: {
 	    title: '自动使用重置卡',
-	    hint: '仅在实际用量达到阈值时使用最早到期的可用卡；默认关闭。无卡或失败时账号保持暂停。',
-	    threshold5h: '5h 自动用卡阈值(%)',
+	    hint: '仅在 7 天用量达到阈值时使用最早到期的可用卡；默认关闭。5 小时窗口永远不会消耗重置卡。无卡或失败时账号保持暂停。',
 	    threshold7d: '7d 自动用卡阈值(%)',
-	    thresholdHint: '两个窗口独立判断，任一达到自身阈值即触发。可填写 0.1–100，默认均为 100。',
+	    thresholdHint: '只判断 7 天窗口。可填写 0.1–100，默认 100。',
 	    thresholdInvalid: '自动使用重置卡阈值必须在 0.1% 到 100% 之间。'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
@@ -1181,6 +1202,13 @@ export default {
         // OpenAI specific
         openai: {
           title: 'OpenAI 账户授权',
+          runtimeBackend: {
+            title: '运行后端',
+            cpa: 'CPA 后端（推荐）',
+            cpaDesc: 'OAuth 加入 CPA 账号池',
+            cpaHint: 'CPA 模式不会创建重复的直连账号；请求仍经过 Sub2 计费，再由现有 CPA bridge 转发。当前支持网页 OAuth 与手动 RT。',
+            importSuccess: 'OpenAI OAuth 已加入 CPA 后端',
+          },
           followSteps: '请按照以下步骤完成 OpenAI 账户的授权：',
           step1GenerateUrl: '点击下方按钮生成授权链接',
           generateAuthUrl: '生成授权链接',

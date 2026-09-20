@@ -44,13 +44,24 @@
             <template v-if="draft">
               <EndpointPool
                 :endpoints="draft.endpoints"
+                :oauth-accounts="oauthAccounts"
                 :probe-results="probeResults"
                 :probing-ids="probingIds"
                 @update:endpoints="updateEndpoints"
                 @probe="runProbe"
               />
-              <div v-if="loadErrors.groups" role="alert" class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ loadErrors.groups }}</div>
+              <div v-if="loadErrors.groups || loadErrors.accounts" role="alert" class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ loadErrors.groups || loadErrors.accounts }}</div>
               <PolicyPanel :draft="draft" :groups="groups" @update:draft="replaceDraft" />
+              <PolicyHistory
+                :versions="policyVersions"
+                :current-version="serverConfig?.config_version || 0"
+                :loading="loading.policies"
+                :error="loadErrors.policies"
+                :disabled="dirty"
+                :rolling-back="rollingBackVersion"
+                @refresh="loadPolicyVersions"
+                @rollback="requestPolicyRollback"
+              />
             </template>
           </div>
 
@@ -86,6 +97,24 @@
               @preview-delete="requestFilterDeletePreview"
             />
           </div>
+
+          <div v-show="activeTab === 'adaptive'" data-test="tab-panel-adaptive">
+            <AdaptiveWorkspace
+              :samples="adaptiveSamples.items"
+              :total="adaptiveSamples.total"
+              :page="adaptiveSamples.page"
+              :page-size="adaptiveSamples.page_size"
+              :status="adaptiveStatus"
+              :loading="loading.adaptive"
+              :error="loadErrors.adaptive"
+              :reviewing-id="reviewingSampleId"
+              @status="changeAdaptiveStatus"
+              @page="changeAdaptivePage"
+              @page-size="changeAdaptivePageSize"
+              @refresh="loadAdaptiveSamples"
+              @review="reviewAdaptiveSample"
+            />
+          </div>
         </main>
       </template>
     </div>
@@ -95,7 +124,44 @@
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
           <SaveToggle :label="t('admin.promptAudit.saveBar.enabled')" :model-value="draft.enabled" data-test="enabled-toggle" @update:model-value="setEnabled" />
           <SaveToggle :label="t('admin.promptAudit.saveBar.blocking')" :model-value="draft.blocking_enabled" :disabled="!draft.enabled" data-test="blocking-toggle" @update:model-value="setBlocking" />
-          <SaveToggle :label="t('admin.promptAudit.saveBar.blockingLatestTurnOnly')" :model-value="draft.blocking_latest_turn_only" :disabled="!draft.enabled || !draft.blocking_enabled" data-test="blocking-latest-turn-only-toggle" @update:model-value="replaceDraft({ ...draft!, blocking_latest_turn_only: $event })" />
+          <div class="flex items-center gap-2 text-sm" :class="!draft.enabled || !draft.blocking_enabled ? 'opacity-50' : ''" data-test="blocking-audit-mode">
+            <span class="whitespace-nowrap text-gray-700 dark:text-dark-200">{{ t('admin.promptAudit.auditMode.label') }}</span>
+            <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800" role="group" :aria-label="t('admin.promptAudit.auditMode.label')">
+              <button
+                v-for="mode in blockingAuditModes"
+                :key="mode.id"
+                type="button"
+                class="px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="draft.blocking_audit_mode === mode.id ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50 dark:text-dark-200 dark:hover:bg-dark-700'"
+                :disabled="!draft.enabled || !draft.blocking_enabled"
+                :title="mode.description"
+                :aria-pressed="draft.blocking_audit_mode === mode.id"
+                :data-test="`blocking-audit-mode-${mode.id}`"
+                @click="setBlockingAuditMode(mode.id)"
+              >
+                {{ mode.label }}
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 text-sm" :class="!draft.enabled ? 'opacity-50' : ''" data-test="background-audit-mode">
+            <span class="whitespace-nowrap text-gray-700 dark:text-dark-200">{{ t('admin.promptAudit.auditMode.backgroundLabel') }}</span>
+            <div class="inline-flex overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-600 dark:bg-dark-800" role="group" :aria-label="t('admin.promptAudit.auditMode.backgroundLabel')">
+              <button
+                v-for="mode in backgroundAuditModes"
+                :key="mode.id"
+                type="button"
+                class="px-2.5 py-1 text-xs font-medium transition-colors"
+                :class="draft.background_audit_mode === mode.id ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-50 dark:text-dark-200 dark:hover:bg-dark-700'"
+                :disabled="!draft.enabled || (!draft.blocking_enabled && mode.id === 'off')"
+                :title="mode.description"
+                :aria-pressed="draft.background_audit_mode === mode.id"
+                :data-test="`background-audit-mode-${mode.id}`"
+                @click="setBackgroundAuditMode(mode.id)"
+              >
+                {{ mode.label }}
+              </button>
+            </div>
+          </div>
           <SaveToggle :label="t('admin.promptAudit.saveBar.storePass')" :model-value="draft.store_pass_events" data-test="store-pass-toggle" @update:model-value="replaceDraft({ ...draft!, store_pass_events: $event })" />
         </div>
         <div class="flex items-center gap-3">
@@ -118,6 +184,15 @@
       danger
       @confirm="confirmBlocking"
       @cancel="showBlockingConfirmation = false"
+    />
+    <ConfirmDialog
+      :show="policyRollbackTarget > 0"
+      :title="t('admin.promptAudit.history.rollbackConfirmTitle')"
+      :message="t('admin.promptAudit.history.rollbackConfirmMessage', { version: policyRollbackTarget })"
+      :confirm-text="t('admin.promptAudit.history.rollback')"
+      danger
+      @confirm="confirmPolicyRollback"
+      @cancel="policyRollbackTarget = 0"
     />
     <ConfirmDialog
       :show="deleteRequest.mode !== ''"
@@ -156,18 +231,25 @@ import PolicyPanel from './components/PolicyPanel.vue'
 import EventWorkspace from './components/EventWorkspace.vue'
 import EventDetailDialog from './components/EventDetailDialog.vue'
 import FilterDeleteDialog from './components/FilterDeleteDialog.vue'
+import AdaptiveWorkspace from './components/AdaptiveWorkspace.vue'
+import PolicyHistory from './components/PolicyHistory.vue'
 import promptAuditAPI from './api'
 import type {
   PromptAuditDraft,
+  PromptBackgroundAuditMode,
+  PromptBlockingAuditMode,
   PromptAuditEndpointDraft,
   PromptAuditEvent,
   PromptAuditGroup,
   PromptAuditRuntime,
+  PromptAuditOAuthAccount,
   PromptDeletePreview,
   PromptEventFilters,
   PromptEventPage,
   PromptLoadErrors,
   PromptProbeResult,
+  PromptAdaptiveSamplePage,
+  PromptPolicyVersion,
 } from './types'
 import { buildUpdateRequest, cloneData, configToDraft, draftFingerprint, emptyEventFilters } from './viewModel'
 import { auditDescription, createLatestRequestGate } from './securityViewModel'
@@ -182,17 +264,32 @@ onBeforeUnmount(() => {
   previewGate.invalidate()
 })
 const appStore = useAppStore()
-type PromptAuditPageTab = 'config' | 'events'
+type PromptAuditPageTab = 'config' | 'events' | 'adaptive'
 const activeTab = ref<PromptAuditPageTab>('events')
 const pageTabs = computed(() => [
   { id: 'events' as const, label: t('admin.promptAudit.tabs.events') },
+  { id: 'adaptive' as const, label: t('admin.promptAudit.tabs.adaptive') },
   { id: 'config' as const, label: t('admin.promptAudit.tabs.config') },
+])
+const blockingAuditModes = computed<Array<{ id: PromptBlockingAuditMode; label: string; description: string }>>(() => [
+  { id: 'fast_latest', label: t('admin.promptAudit.auditMode.fast'), description: t('admin.promptAudit.auditMode.fastHint') },
+  { id: 'incremental_full', label: t('admin.promptAudit.auditMode.incremental'), description: t('admin.promptAudit.auditMode.incrementalHint') },
+  { id: 'full', label: t('admin.promptAudit.auditMode.full'), description: t('admin.promptAudit.auditMode.fullHint') },
+])
+const backgroundAuditModes = computed<Array<{ id: PromptBackgroundAuditMode; label: string; description: string }>>(() => [
+  { id: 'off', label: t('admin.promptAudit.auditMode.off'), description: t('admin.promptAudit.auditMode.offHint') },
+  ...blockingAuditModes.value,
 ])
 const serverConfig = ref<PromptAuditDraft | null>(null)
 const draft = ref<PromptAuditDraft | null>(null)
 const runtime = ref<PromptAuditRuntime | null>(null)
 const groups = ref<PromptAuditGroup[]>([])
+const oauthAccounts = ref<PromptAuditOAuthAccount[]>([])
+const policyVersions = ref<PromptPolicyVersion[]>([])
 const events = reactive<PromptEventPage>({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+const adaptiveSamples = reactive<PromptAdaptiveSamplePage>({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+const adaptiveStatus = ref('review_pending')
+const reviewingSampleId = ref(0)
 const filters = ref<PromptEventFilters>(emptyEventFilters())
 const appliedFilters = ref<PromptEventFilters>(emptyEventFilters())
 const selectedEventIds = ref<number[]>([])
@@ -204,10 +301,23 @@ const showFilterDelete = ref(false)
 const deletePreview = ref<PromptDeletePreview | null>(null)
 const deletePreviewFilters = ref<PromptEventFilters | null>(null)
 const showBlockingConfirmation = ref(false)
+const policyRollbackTarget = ref(0)
+const rollingBackVersion = ref(0)
 const deleteRequest = reactive<{ mode: '' | 'single' | 'batch'; ids: number[] }>({ mode: '', ids: [] })
-const loading = reactive({ config: false, runtime: false, groups: false, events: false, saving: false, detail: false, deleting: false, previewing: false })
-const loadErrors = reactive<PromptLoadErrors>({ config: '', runtime: '', groups: '', events: '' })
+const loading = reactive({ config: false, runtime: false, groups: false, accounts: false, events: false, adaptive: false, policies: false, saving: false, detail: false, deleting: false, previewing: false })
+const loadErrors = reactive<PromptLoadErrors>({ config: '', runtime: '', groups: '', accounts: '', events: '', adaptive: '', policies: '' })
 const dirty = computed(() => draftFingerprint(draft.value) !== draftFingerprint(serverConfig.value))
+
+function setBlockingAuditMode(mode: PromptBlockingAuditMode) {
+  if (!draft.value || !draft.value.enabled || !draft.value.blocking_enabled) return
+  replaceDraft({ ...draft.value, blocking_audit_mode: mode, blocking_latest_turn_only: mode !== 'full' })
+}
+
+function setBackgroundAuditMode(mode: PromptBackgroundAuditMode) {
+  if (!draft.value || !draft.value.enabled) return
+  if (!draft.value.blocking_enabled && mode === 'off') return
+  replaceDraft({ ...draft.value, background_audit_mode: mode })
+}
 
 const SaveToggle = defineComponent({
   inheritAttrs: false,
@@ -281,6 +391,13 @@ async function loadGroups() {
   catch (error) { loadErrors.groups = errorMessage(error, 'admin.promptAudit.errors.loadGroups') }
   finally { loading.groups = false }
 }
+async function loadOAuthAccounts() {
+  loading.accounts = true
+  loadErrors.accounts = ''
+  try { oauthAccounts.value = await promptAuditAPI.listOpenAIOAuthAccounts() }
+  catch (error) { loadErrors.accounts = errorMessage(error, 'admin.promptAudit.errors.loadAccounts') }
+  finally { loading.accounts = false }
+}
 async function loadEvents() {
   const ticket = eventsGate.begin()
   const query = cloneData(appliedFilters.value)
@@ -299,8 +416,27 @@ async function loadEvents() {
     if (eventsGate.isCurrent(ticket)) loading.events = false
   }
 }
+async function loadAdaptiveSamples() {
+  loading.adaptive = true
+  loadErrors.adaptive = ''
+  try {
+    const result = await promptAuditAPI.listAdaptiveSamples(adaptiveStatus.value, adaptiveSamples.page, adaptiveSamples.page_size)
+    Object.assign(adaptiveSamples, result)
+  } catch (error) {
+    loadErrors.adaptive = errorMessage(error, 'admin.promptAudit.errors.loadAdaptive')
+  } finally {
+    loading.adaptive = false
+  }
+}
+async function loadPolicyVersions() {
+  loading.policies = true
+  loadErrors.policies = ''
+  try { policyVersions.value = await promptAuditAPI.listPolicyVersions(20) }
+  catch (error) { loadErrors.policies = errorMessage(error, 'admin.promptAudit.errors.loadPolicies') }
+  finally { loading.policies = false }
+}
 async function loadInitial() {
-  await Promise.allSettled([loadConfig(), loadRuntime(), loadGroups(), loadEvents()])
+  await Promise.allSettled([loadConfig(), loadRuntime(), loadGroups(), loadOAuthAccounts(), loadEvents(), loadAdaptiveSamples(), loadPolicyVersions()])
 }
 
 function replaceDraft(value: PromptAuditDraft) { draft.value = cloneData(value) }
@@ -310,12 +446,20 @@ function updateEndpoints(value: PromptAuditEndpointDraft[]) {
 }
 function setEnabled(value: boolean) {
   if (!draft.value) return
-  replaceDraft({ ...draft.value, enabled: value, blocking_enabled: value ? draft.value.blocking_enabled : false })
+  const blockingEnabled = value ? draft.value.blocking_enabled : false
+  const backgroundMode = value && !blockingEnabled && draft.value.background_audit_mode === 'off'
+    ? 'fast_latest'
+    : draft.value.background_audit_mode
+  replaceDraft({ ...draft.value, enabled: value, blocking_enabled: blockingEnabled, background_audit_mode: backgroundMode })
 }
 function setBlocking(value: boolean) {
   if (!draft.value || !draft.value.enabled) return
   if (value && !draft.value.blocking_enabled) { showBlockingConfirmation.value = true; return }
-  replaceDraft({ ...draft.value, blocking_enabled: value })
+  replaceDraft({
+    ...draft.value,
+    blocking_enabled: value,
+    background_audit_mode: !value && draft.value.background_audit_mode === 'off' ? 'fast_latest' : draft.value.background_audit_mode,
+  })
 }
 function confirmBlocking() {
   showBlockingConfirmation.value = false
@@ -335,12 +479,34 @@ async function saveConfig() {
     if (draftFingerprint(draft.value) === submitted) draft.value = configToDraft(saved)
     else if (draft.value) draft.value.config_version = saved.config_version
     appStore.showSuccess(t('admin.promptAudit.messages.saved'))
-    await loadRuntime()
+    await Promise.allSettled([loadRuntime(), loadPolicyVersions()])
   } catch (error) {
     const code = extractApiErrorCode(error)
     appStore.showError(errorMessage(error, code === 'prompt_audit_config_conflict' ? 'admin.promptAudit.errors.prompt_audit_config_conflict' : 'admin.promptAudit.errors.saveConfig'))
   } finally {
     loading.saving = false
+  }
+}
+function requestPolicyRollback(configVersion: number) {
+  if (dirty.value || rollingBackVersion.value) return
+  policyRollbackTarget.value = configVersion
+}
+async function confirmPolicyRollback() {
+  const target = policyRollbackTarget.value
+  const expected = serverConfig.value?.config_version || 0
+  policyRollbackTarget.value = 0
+  if (!target || !expected || dirty.value || rollingBackVersion.value) return
+  rollingBackVersion.value = target
+  try {
+    const saved = await promptAuditAPI.rollbackPolicy(target, expected)
+    serverConfig.value = configToDraft(saved)
+    draft.value = configToDraft(saved)
+    appStore.showSuccess(t('admin.promptAudit.messages.policyRolledBack', { version: target }))
+    await Promise.allSettled([loadRuntime(), loadPolicyVersions()])
+  } catch (error) {
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.rollbackPolicy'))
+  } finally {
+    rollingBackVersion.value = 0
   }
 }
 async function runProbe(endpoint: PromptAuditEndpointDraft) {
@@ -371,6 +537,22 @@ function applyEventFilters(value: PromptEventFilters) {
 }
 function changePage(value: number) { events.page = value; void loadEvents() }
 function changePageSize(value: number) { events.page_size = value; events.page = 1; void loadEvents() }
+function changeAdaptiveStatus(value: string) { adaptiveStatus.value = value; adaptiveSamples.page = 1; void loadAdaptiveSamples() }
+function changeAdaptivePage(value: number) { adaptiveSamples.page = value; void loadAdaptiveSamples() }
+function changeAdaptivePageSize(value: number) { adaptiveSamples.page_size = value; adaptiveSamples.page = 1; void loadAdaptiveSamples() }
+async function reviewAdaptiveSample(id: number, decision: 'allow' | 'block') {
+  if (reviewingSampleId.value) return
+  reviewingSampleId.value = id
+  try {
+    await promptAuditAPI.reviewAdaptiveSample(id, decision)
+    appStore.showSuccess(t('admin.promptAudit.messages.adaptiveReviewed'))
+    await Promise.allSettled([loadAdaptiveSamples(), loadRuntime()])
+  } catch (error) {
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.reviewAdaptive'))
+  } finally {
+    reviewingSampleId.value = 0
+  }
+}
 async function openEvent(id: number) {
   const ticket = detailGate.begin()
   showEventDetail.value = true

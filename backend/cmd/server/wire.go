@@ -116,6 +116,7 @@ func provideCleanup(
 	antigravityOAuth *service.AntigravityOAuthService,
 	grokOAuth *service.GrokOAuthService,
 	openAIGateway *service.OpenAIGatewayService,
+	openAIQuota *service.OpenAIQuotaService,
 	scheduledTestRunner *service.ScheduledTestRunnerService,
 	backupSvc *service.BackupService,
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
@@ -256,6 +257,12 @@ func provideCleanup(
 			}},
 			{"TokenRefreshService", func() error {
 				tokenRefresh.Stop()
+				return nil
+			}},
+			{"OpenAIQuotaAutoResetWorker", func() error {
+				if openAIQuota != nil {
+					openAIQuota.StopAutoResetWorker()
+				}
 				return nil
 			}},
 			{"AccountExpiryService", func() error {

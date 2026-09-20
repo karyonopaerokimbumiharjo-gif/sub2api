@@ -38,7 +38,7 @@ type GenerateRedeemCodesRequest struct {
 	Type          string     `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
 	Value         float64    `json:"value"`
 	GroupID       *int64     `json:"group_id"`      // 订阅类型必填
-	ValidityDays  int        `json:"validity_days"` // 订阅类型使用，正数增加/负数退款扣减
+	ValidityDays  int        `json:"validity_days"` // 余额/订阅有效天数；正数余额码未传时默认30天
 	ExpiresAt     *time.Time `json:"expires_at"`
 	ExpiresInDays *int       `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
@@ -192,6 +192,9 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 			response.BadRequest(c, "validity_days must not be zero for subscription type")
 			return
 		}
+	}
+	if req.Type == service.RedeemTypeBalance && req.Value > 0 && req.ValidityDays <= 0 {
+		req.ValidityDays = service.DefaultBalanceRedeemValidityDays
 	}
 
 	expiresAt, err := resolveRedeemCodeExpiresAt(req.ExpiresAt, req.ExpiresInDays)

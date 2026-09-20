@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -31,6 +32,7 @@ func (s *adminServiceImpl) ListProxiesWithAccountCount(ctx context.Context, page
 		return nil, 0, err
 	}
 	s.attachProxyLatency(ctx, proxies)
+	s.attachCPACredentialBindings(ctx, proxies)
 	return proxies, result.Total, nil
 }
 
@@ -44,7 +46,57 @@ func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([
 		return nil, err
 	}
 	s.attachProxyLatency(ctx, proxies)
+	s.attachCPACredentialBindings(ctx, proxies)
 	return proxies, nil
+}
+
+// attachCPACredentialBindings exposes CPA-level proxy use alongside Sub2
+// account bindings. A nil count means CPA could not be queried; a pointer to
+// zero means the query succeeded and no CPA credential uses that proxy.
+func (s *adminServiceImpl) attachCPACredentialBindings(ctx context.Context, proxies []ProxyWithAccountCount) {
+	if len(proxies) == 0 || os.Getenv(openAIQuotaBridgeManagementURLKey) == "" {
+		return
+	}
+
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
+
+	cfg, err := cpaRuntimeConfig()
+	if err != nil {
+		logger.LegacyPrintf("service.admin", "Warning: load CPA proxy bindings failed: %v", err)
+		return
+	}
+	files, err := cpaAuthList(ctx, cfg)
+	if err != nil {
+		logger.LegacyPrintf("service.admin", "Warning: list CPA proxy bindings failed: %v", err)
+		return
+	}
+
+	counts := make(map[int64]int64)
+	names := make(map[int64][]string)
+	for _, auth := range files {
+		metadata, metadataErr := cpaAuthMetadata(ctx, cfg, auth.Name)
+		if metadataErr != nil {
+			logger.LegacyPrintf("service.admin", "Warning: load CPA proxy binding failed for %s: %v", auth.Name, metadataErr)
+			return
+		}
+		proxyID := int64(cpaNumber(metadata, "sub2_proxy_id", 0))
+		if proxyID <= 0 {
+			continue
+		}
+		counts[proxyID]++
+		label := auth.Email
+		if label == "" {
+			label = auth.Name
+		}
+		names[proxyID] = append(names[proxyID], label)
+	}
+
+	for i := range proxies {
+		count := counts[proxies[i].ID]
+		proxies[i].CPACredentialCount = &count
+		proxies[i].CPACredentialNames = names[proxies[i].ID]
+	}
 }
 
 func (s *adminServiceImpl) GetProxy(ctx context.Context, id int64) (*Proxy, error) {
@@ -152,13 +204,31 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 		proxy.ExpiryWarnDays = *input.ExpiryWarnDays
 	}
 
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
+	revert, err := syncCPAProxy(ctx, proxy)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.proxyRepo.Update(ctx, proxy); err != nil {
+		if restoreErr := revert(); restoreErr != nil {
+			return nil, restoreErr
+		}
 		return nil, err
 	}
 	return proxy, nil
 }
 
 func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
+	_, bindings, bindingErr := cpaProxyBindings(ctx, id)
+	if bindingErr != nil {
+		return bindingErr
+	}
+	if len(bindings) > 0 {
+		return ErrProxyInUse
+	}
 	count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 	if err != nil {
 		return err
@@ -170,12 +240,23 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 }
 
 func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) (*ProxyBatchDeleteResult, error) {
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
 	result := &ProxyBatchDeleteResult{}
 	if len(ids) == 0 {
 		return result, nil
 	}
 
 	for _, id := range ids {
+		_, bindings, bindingErr := cpaProxyBindings(ctx, id)
+		if bindingErr != nil || len(bindings) > 0 {
+			reason := ErrProxyInUse.Error()
+			if bindingErr != nil {
+				reason = bindingErr.Error()
+			}
+			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{ID: id, Reason: reason})
+			continue
+		}
 		count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 		if err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{

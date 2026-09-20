@@ -305,9 +305,156 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 		SettingKeyPromptAuditConfig, string(rawNext)); err != nil {
 		return PublicConfig{}, err
 	}
+	if err := insertPromptPolicyVersion(ctx, tx, next, rawNext, actorID); err != nil {
+		return PublicConfig{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PublicConfig{}, err
 	}
+	return m.activatePersistedConfig(ctx, next, "updated")
+}
+
+func (m *ConfigManager) ListPolicyVersions(ctx context.Context, limit int) ([]PromptPolicyVersion, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("prompt audit config persistence unavailable")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT id,config_version,endpoint_order::text,COALESCE(created_by,0),created_at,
+		       COALESCE(config_snapshot->>'change_summary','')
+		FROM prompt_audit_policy_versions
+		ORDER BY config_version DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	versions := make([]PromptPolicyVersion, 0, limit)
+	for rows.Next() {
+		var version PromptPolicyVersion
+		var orderRaw string
+		if err := rows.Scan(&version.ID, &version.ConfigVersion, &orderRaw, &version.CreatedBy, &version.CreatedAt, &version.ChangeSummary); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(orderRaw), &version.EndpointOrder); err != nil {
+			return nil, fmt.Errorf("decode prompt audit endpoint order: %w", err)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return versions, nil
+}
+
+// RollbackPolicy restores an older snapshot as a new config version. Keeping
+// versions monotonic means readers never move backwards and the restored
+// endpoint array remains the exact runtime priority order.
+func (m *ConfigManager) RollbackPolicy(ctx context.Context, targetConfigVersion, expectedConfigVersion, actorID int64) (PublicConfig, error) {
+	if m == nil || m.db == nil || m.encryptor == nil {
+		return PublicConfig{}, errors.New("prompt audit config persistence unavailable")
+	}
+	if targetConfigVersion < 1 || expectedConfigVersion < 1 {
+		return PublicConfig{}, infraerrors.BadRequest("prompt_audit_invalid_policy_version", "策略版本无效")
+	}
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return PublicConfig{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, promptAuditConfigLockKey); err != nil {
+		return PublicConfig{}, err
+	}
+	current := DefaultStorageConfig()
+	var rawCurrent string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=$1 FOR UPDATE`, SettingKeyPromptAuditConfig).Scan(&rawCurrent)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return PublicConfig{}, err
+	}
+	if err == nil {
+		current, err = ParseStorageConfig(rawCurrent)
+		if err != nil {
+			return PublicConfig{}, err
+		}
+	}
+	if current.ConfigVersion != expectedConfigVersion {
+		return PublicConfig{}, infraerrors.Conflict(ErrorCodeConfigConflict, "提示词审计配置已被其他管理员更新")
+	}
+	if targetConfigVersion >= current.ConfigVersion {
+		return PublicConfig{}, infraerrors.BadRequest("prompt_audit_policy_version_not_older", "只能恢复到较早的策略版本")
+	}
+	var rawTarget string
+	err = tx.QueryRowContext(ctx, `
+		SELECT config_snapshot::text
+		FROM prompt_audit_policy_versions
+		WHERE config_version=$1`, targetConfigVersion).Scan(&rawTarget)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PublicConfig{}, infraerrors.NotFound("prompt_audit_policy_version_not_found", "策略版本不存在")
+	}
+	if err != nil {
+		return PublicConfig{}, err
+	}
+	next, err := ParseStorageConfig(rawTarget)
+	if err != nil {
+		return PublicConfig{}, err
+	}
+	next.ConfigVersion = current.ConfigVersion + 1
+	next.UpdatedAt = m.clock.Now()
+	next.UpdatedBy = actorID
+	next.ChangeSummary = rollbackChangeSummary(next, current.ConfigVersion, targetConfigVersion)
+	rawNext, err := json.Marshal(next)
+	if err != nil {
+		return PublicConfig{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
+		SettingKeyPromptAuditConfig, string(rawNext)); err != nil {
+		return PublicConfig{}, err
+	}
+	if err := insertPromptPolicyVersion(ctx, tx, next, rawNext, actorID); err != nil {
+		return PublicConfig{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PublicConfig{}, err
+	}
+	return m.activatePersistedConfig(ctx, next, "rolled_back")
+}
+
+func insertPromptPolicyVersion(ctx context.Context, tx *sql.Tx, next storageConfig, rawNext []byte, actorID int64) error {
+	endpointOrder := make([]string, 0, len(next.Endpoints))
+	for _, endpoint := range next.Endpoints {
+		endpointOrder = append(endpointOrder, endpoint.ID)
+	}
+	orderJSON, err := json.Marshal(endpointOrder)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO prompt_audit_policy_versions (config_version,config_snapshot,endpoint_order,created_by)
+		VALUES ($1,$2::jsonb,$3::jsonb,$4)
+		ON CONFLICT (config_version) DO NOTHING`,
+		next.ConfigVersion, string(rawNext), string(orderJSON), nullableID(actorID))
+	return err
+}
+
+func rollbackChangeSummary(cfg storageConfig, fromVersion, targetVersion int64) string {
+	var summary map[string]any
+	if err := json.Unmarshal([]byte(changeSummary(cfg)), &summary); err != nil {
+		summary = map[string]any{}
+	}
+	summary["rollback_from_config_version"] = fromVersion
+	summary["rollback_target_config_version"] = targetVersion
+	raw, _ := json.Marshal(summary)
+	return string(raw)
+}
+
+func (m *ConfigManager) activatePersistedConfig(ctx context.Context, next storageConfig, status string) (PublicConfig, error) {
 	// Install the snapshot with the current global gate, not merely the value
 	// cached when this process last reloaded Prompt Audit configuration.
 	riskControlEnabled := m.currentRiskControlEnabled()
@@ -328,7 +475,7 @@ func (m *ConfigManager) Save(ctx context.Context, req UpdateConfigRequest, actor
 	m.clearLoadError()
 	m.logInvalidTokenEndpoints(previous, active)
 	LogInfo(EventConfigUpdated, map[string]any{
-		"config_version": next.ConfigVersion, "status": "updated",
+		"config_version": next.ConfigVersion, "status": status,
 	})
 	if m.redis != nil {
 		if err := m.redis.Publish(ctx, ConfigInvalidationChannel, strconv.FormatInt(next.ConfigVersion, 10)).Err(); err != nil {
@@ -344,26 +491,53 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 	if err := validateUpdateConfigRequest(req); err != nil {
 		return storageConfig{}, err
 	}
+	promptChunkConcurrency := current.PromptChunkConcurrency
+	if promptChunkConcurrency == 0 {
+		promptChunkConcurrency = DefaultPromptChunkConcurrency
+	}
+	if req.PromptChunkConcurrency != nil {
+		promptChunkConcurrency = *req.PromptChunkConcurrency
+	}
 	currentByID := make(map[string]StorageEndpoint, len(current.Endpoints))
 	for _, endpoint := range current.Endpoints {
 		currentByID[endpoint.ID] = endpoint
 	}
 	next := storageConfig{
-		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled, BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
+		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled,
+		BlockingAuditMode:      normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly),
+		BackgroundAuditMode:    requestedBackgroundAuditMode(req),
+		BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
+		AdaptiveEnabled: req.AdaptiveEnabled, AdaptiveCollectWhenDisabled: req.AdaptiveCollectWhenDisabled,
+		AdaptiveAllowSampleRate: req.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: req.AdaptiveRiskSampleRate,
+		OutputAuditEnabled: req.OutputAuditEnabled, OutputAllowSampleRate: req.OutputAllowSampleRate, OutputRiskSampleRate: req.OutputRiskSampleRate,
 		Strategy: strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
-		QueueCapacity: req.QueueCapacity, Scanners: append([]string(nil), req.Scanners...),
+		PromptChunkConcurrency: promptChunkConcurrency,
+		QueueCapacity:          req.QueueCapacity, Scanners: append([]string(nil), req.Scanners...),
 		AllGroups: req.AllGroups, GroupIDs: append([]int64(nil), req.GroupIDs...),
-		ConfigVersion: current.ConfigVersion, UpdatedBy: actorID,
+		WhitelistEmails: append([]string(nil), current.WhitelistEmails...),
+		ConfigVersion:   current.ConfigVersion, UpdatedBy: actorID,
 		Endpoints: make([]StorageEndpoint, 0, len(req.Endpoints)),
 	}
+	if req.WhitelistEmails != nil {
+		next.WhitelistEmails = append([]string(nil), (*req.WhitelistEmails)...)
+	}
 	for _, endpoint := range req.Endpoints {
-		baseURL, err := NormalizeBaseURL(endpoint.BaseURL)
-		if err != nil {
-			return storageConfig{}, err
+		protocol := strings.TrimSpace(endpoint.Protocol)
+		if protocol == "" {
+			protocol = EndpointProtocolOpenAICompatible
+		}
+		baseURL := ""
+		if protocol == EndpointProtocolOpenAICompatible {
+			var err error
+			baseURL, err = NormalizeBaseURL(endpoint.BaseURL)
+			if err != nil {
+				return storageConfig{}, err
+			}
 		}
 		stored := StorageEndpoint{
 			ID: strings.TrimSpace(endpoint.ID), Name: strings.TrimSpace(endpoint.Name),
-			Protocol: strings.TrimSpace(endpoint.Protocol), BaseURL: baseURL, Model: strings.TrimSpace(endpoint.Model),
+			Protocol: protocol, Adapter: strings.TrimSpace(endpoint.Adapter), BaseURL: baseURL, Model: strings.TrimSpace(endpoint.Model),
+			AccountID: endpoint.AccountID,
 			TimeoutMS: endpoint.TimeoutMS, InputLimit: endpoint.InputLimit, Enabled: endpoint.Enabled,
 		}
 		if stored.Protocol == "" {
@@ -377,6 +551,8 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 			return storageConfig{}, infraerrors.BadRequest("prompt_audit_credential_reentry_required", "切换节点地址或协议后必须重新输入或清除凭据")
 		}
 		switch {
+		case isInternalEndpointProtocol(protocol):
+			stored.TokenCiphertext = ""
 		case endpoint.ClearToken:
 			stored.TokenCiphertext = ""
 		case strings.TrimSpace(endpoint.Token) != "":
@@ -527,6 +703,7 @@ func (m *ConfigManager) clearLoadError() bool {
 func cloneStorageConfig(cfg storageConfig) storageConfig {
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
+	cfg.WhitelistEmails = append([]string(nil), cfg.WhitelistEmails...)
 	cfg.Endpoints = append([]StorageEndpoint(nil), cfg.Endpoints...)
 	return cfg
 }
@@ -534,6 +711,7 @@ func cloneStorageConfig(cfg storageConfig) storageConfig {
 func cloneActiveConfig(cfg ActiveConfig) ActiveConfig {
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
+	cfg.WhitelistEmails = append([]string(nil), cfg.WhitelistEmails...)
 	cfg.Endpoints = append([]ActiveEndpoint(nil), cfg.Endpoints...)
 	return cfg
 }

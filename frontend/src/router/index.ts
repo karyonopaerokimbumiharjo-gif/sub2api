@@ -600,7 +600,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/risk-control',
     name: 'AdminRiskControl',
-    component: () => import('@/views/admin/RiskControlView.vue'),
+    redirect: '/admin/prompt-audit',
     meta: {
       requiresAuth: true,
       requiresAdmin: true,

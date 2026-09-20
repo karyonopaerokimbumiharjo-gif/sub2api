@@ -712,6 +712,33 @@ func (_u *UsageLogUpdate) ClearFirstTokenMs() *UsageLogUpdate {
 	return _u
 }
 
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdate) SetPromptAuditLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetPromptAuditLatencyMs()
+	_u.mutation.SetPromptAuditLatencyMs(v)
+	return _u
+}
+
+// SetNillablePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillablePromptAuditLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetPromptAuditLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddPromptAuditLatencyMs adds value to the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdate) AddPromptAuditLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddPromptAuditLatencyMs(v)
+	return _u
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdate) ClearPromptAuditLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearPromptAuditLatencyMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdate) SetUserAgent(v string) *UsageLogUpdate {
 	_u.mutation.SetUserAgent(v)
@@ -1076,6 +1103,11 @@ func (_u *UsageLogUpdate) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.PromptAuditLatencyMs(); ok {
+		if err := usagelog.PromptAuditLatencyMsValidator(v); err != nil {
+			return &ValidationError{Name: "prompt_audit_latency_ms", err: fmt.Errorf(`ent: validator failed for field "UsageLog.prompt_audit_latency_ms": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -1308,6 +1340,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.PromptAuditLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPromptAuditLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.PromptAuditLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -2226,6 +2267,33 @@ func (_u *UsageLogUpdateOne) ClearFirstTokenMs() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetPromptAuditLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetPromptAuditLatencyMs()
+	_u.mutation.SetPromptAuditLatencyMs(v)
+	return _u
+}
+
+// SetNillablePromptAuditLatencyMs sets the "prompt_audit_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillablePromptAuditLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetPromptAuditLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddPromptAuditLatencyMs adds value to the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddPromptAuditLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddPromptAuditLatencyMs(v)
+	return _u
+}
+
+// ClearPromptAuditLatencyMs clears the value of the "prompt_audit_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearPromptAuditLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearPromptAuditLatencyMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdateOne) SetUserAgent(v string) *UsageLogUpdateOne {
 	_u.mutation.SetUserAgent(v)
@@ -2603,6 +2671,11 @@ func (_u *UsageLogUpdateOne) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.PromptAuditLatencyMs(); ok {
+		if err := usagelog.PromptAuditLatencyMsValidator(v); err != nil {
+			return &ValidationError{Name: "prompt_audit_latency_ms", err: fmt.Errorf(`ent: validator failed for field "UsageLog.prompt_audit_latency_ms": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -2852,6 +2925,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.PromptAuditLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPromptAuditLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.PromptAuditLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)

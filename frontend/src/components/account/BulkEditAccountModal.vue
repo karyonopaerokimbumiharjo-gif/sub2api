@@ -193,44 +193,6 @@
         </p>
       </div>
 
-      <!-- Base URL (API Key only) -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-base-url-label"
-            class="input-label mb-0"
-            for="bulk-edit-base-url-enabled"
-          >
-            {{ t('admin.accounts.baseUrl') }}
-          </label>
-          <input
-            v-model="enableBaseUrl"
-            id="bulk-edit-base-url-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-base-url"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <input
-          v-model="baseUrl"
-          id="bulk-edit-base-url"
-          type="text"
-          :disabled="!enableBaseUrl"
-          class="input"
-          :class="!enableBaseUrl && 'cursor-not-allowed opacity-50'"
-          :placeholder="t('admin.accounts.bulkEdit.baseUrlPlaceholder')"
-          aria-labelledby="bulk-edit-base-url-label"
-        />
-        <GrokBaseUrlPresets
-          v-if="allTargetsGrok"
-          class="mt-2"
-          @select="baseUrl = $event; enableBaseUrl = true"
-        />
-        <p class="input-hint">
-          {{ t('admin.accounts.bulkEdit.baseUrlNotice') }}
-        </p>
-      </div>
-
       <!-- Model restriction -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -662,33 +624,6 @@
           <p v-else class="text-xs text-gray-500 dark:text-gray-400">
             {{ t('admin.accounts.headerOverride.bulkDisableHint') }}
           </p>
-        </div>
-      </div>
-
-      <!-- Proxy -->
-      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-        <div class="mb-3 flex items-center justify-between">
-          <label
-            id="bulk-edit-proxy-label"
-            class="input-label mb-0"
-            for="bulk-edit-proxy-enabled"
-          >
-            {{ t('admin.accounts.proxy') }}
-          </label>
-          <input
-            v-model="enableProxy"
-            id="bulk-edit-proxy-enabled"
-            type="checkbox"
-            aria-controls="bulk-edit-proxy-body"
-            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-        </div>
-        <div id="bulk-edit-proxy-body" :class="!enableProxy && 'pointer-events-none opacity-50'">
-          <ProxySelector
-            v-model="proxyId"
-            :proxies="proxies"
-            aria-labelledby="bulk-edit-proxy-label"
-          />
         </div>
       </div>
 
@@ -1489,7 +1424,6 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
-import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -1506,7 +1440,6 @@ import {
   HEADER_OVERRIDES_CREDENTIAL_KEY,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
-import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -1546,12 +1479,6 @@ const targetMode = computed(() => props.target?.mode ?? 'selected')
 const targetPreviewCount = computed(() => props.target?.previewCount ?? props.accountIds.length)
 const targetSelectedPlatforms = computed(() => props.target?.selectedPlatforms ?? props.selectedPlatforms)
 const targetSelectedTypes = computed(() => props.target?.selectedTypes ?? props.selectedTypes)
-// Grok 快捷端点仅在所选账号全部为 grok 平台时展示（其他平台不显示）
-const allTargetsGrok = computed(
-  () =>
-    targetSelectedPlatforms.value.length > 0 &&
-    targetSelectedPlatforms.value.every((p) => p === 'grok')
-)
 const isMixedPlatform = computed(() => targetSelectedPlatforms.value.length > 1)
 
 const allOpenAIPassthroughCapable = computed(() => {

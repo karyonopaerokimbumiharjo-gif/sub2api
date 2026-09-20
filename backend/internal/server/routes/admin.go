@@ -3,6 +3,7 @@ package routes
 
 import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -138,10 +139,14 @@ func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		promptAudit.GET("/config", h.Admin.PromptAudit.GetConfig)
 		promptAudit.PUT("/config", h.Admin.PromptAudit.UpdateConfig)
+		promptAudit.GET("/policy-versions", h.Admin.PromptAudit.ListPolicyVersions)
+		promptAudit.POST("/policy-versions/:config_version/rollback", h.Admin.PromptAudit.RollbackPolicy)
 		promptAudit.POST("/endpoints/probe", h.Admin.PromptAudit.ProbeEndpoint)
 		promptAudit.GET("/runtime", h.Admin.PromptAudit.GetRuntime)
 		promptAudit.GET("/events", h.Admin.PromptAudit.ListEvents)
 		promptAudit.GET("/events/:id", h.Admin.PromptAudit.GetEvent)
+		promptAudit.GET("/adaptive-samples", h.Admin.PromptAudit.ListAdaptiveSamples)
+		promptAudit.POST("/adaptive-samples/:id/review", h.Admin.PromptAudit.ReviewAdaptiveSample)
 		promptAudit.DELETE("/events/:id", h.Admin.PromptAudit.DeleteEvent)
 		promptAudit.POST("/events/batch-delete", h.Admin.PromptAudit.BatchDelete)
 		promptAudit.POST("/events/delete-preview", h.Admin.PromptAudit.DeletePreview)
@@ -365,12 +370,12 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/ollama-cloud-usage/settings", h.Admin.Account.GetOllamaCloudUsageSettings)
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
-		accounts.POST("", h.Admin.Account.Create)
-		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)
+		accounts.POST("", h.Admin.OpenAIOAuth.ImportCPAAccounts)
+		accounts.POST("/:id/duplicate", adminhandler.DirectAccountBackendRemoved)
 		accounts.POST("/check-mixed-channel", h.Admin.Account.CheckMixedChannel)
-		accounts.POST("/import/codex-session", h.Admin.Account.ImportCodexSession)
-		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
-		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
+		accounts.POST("/import/codex-session", h.Admin.OpenAIOAuth.ImportCPAAccounts)
+		accounts.POST("/sync/crs", adminhandler.DirectAccountBackendRemoved)
+		accounts.POST("/sync/crs/preview", adminhandler.DirectAccountBackendRemoved)
 		accounts.PUT("/:id", h.Admin.Account.Update)
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
@@ -385,7 +390,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/test", h.Admin.Account.Test)
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
-		accounts.POST("/:id/apply-oauth-credentials", h.Admin.Account.ApplyOAuthCredentials)
+		accounts.POST("/:id/apply-oauth-credentials", adminhandler.DirectAccountBackendRemoved)
 		accounts.POST("/:id/set-privacy", h.Admin.Account.SetPrivacy)
 		accounts.POST("/:id/refresh-tier", h.Admin.Account.RefreshTier)
 		accounts.GET("/:id/stats", h.Admin.Account.GetStats)
@@ -403,10 +408,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
 		accounts.POST("/:id/models/sync-upstream", h.Admin.Account.SyncUpstreamModels)
-		accounts.POST("/batch", h.Admin.Account.BatchCreate)
+		accounts.POST("/batch", adminhandler.DirectAccountBackendRemoved)
 		// 账号导出泄露上游凭证原文——要求 step-up 2FA
 		accounts.GET("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportData)
-		accounts.POST("/data", h.Admin.Account.ImportData)
+		accounts.POST("/data", h.Admin.OpenAIOAuth.ImportCPAAccounts)
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
@@ -418,7 +423,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/antigravity/default-model-mapping", h.Admin.Account.GetAntigravityDefaultModelMapping)
 
 		// Spark 影子账号
-		accounts.POST("/:id/shadow", h.Admin.OpenAIOAuth.CreateShadow)
+		accounts.POST("/:id/shadow", adminhandler.DirectAccountBackendRemoved)
 
 		// Claude OAuth routes
 		accounts.POST("/generate-auth-url", h.Admin.OAuth.GenerateAuthURL)
@@ -448,12 +453,19 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		openai.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
+		openai.POST("/import-to-cpa", h.Admin.OpenAIOAuth.ImportOAuthToCPA)
+		openai.GET("/cpa/credentials", h.Admin.OpenAIOAuth.ListCPACredentials)
+		openai.PUT("/cpa/credentials", h.Admin.OpenAIOAuth.UpdateCPACredential)
+		openai.POST("/import-cpa-files", h.Admin.OpenAIOAuth.ImportCPAAccounts)
+		openai.GET("/cpa/bridge-options", h.Admin.OpenAIOAuth.CPABridgeOptions)
+		openai.POST("/ensure-cpa-bridge", h.Admin.OpenAIOAuth.EnsureCPAQuotaBridge)
 		openai.POST("/accounts/:id/refresh", h.Admin.OpenAIOAuth.RefreshAccountToken)
-		openai.POST("/create-from-oauth", h.Admin.OpenAIOAuth.CreateAccountFromOAuth)
-		openai.POST("/create-from-codex-pat", h.Admin.OpenAIOAuth.CreateAccountFromCodexPAT)
+		openai.POST("/create-from-oauth", adminhandler.DirectAccountBackendRemoved)
+		openai.POST("/create-from-codex-pat", adminhandler.DirectAccountBackendRemoved)
 		openai.GET("/accounts/:id/quota", h.Admin.OpenAIOAuth.QueryQuota)
 		openai.POST("/accounts/:id/quota/refresh", h.Admin.OpenAIOAuth.RefreshQuota)
 		openai.POST("/accounts/:id/reset-quota", h.Admin.OpenAIOAuth.ResetQuota)
+		openai.PUT("/accounts/:id/auto-reset", h.Admin.OpenAIOAuth.UpdateQuotaAutoReset)
 	}
 }
 

@@ -8,6 +8,8 @@ import PromptAuditView from '../PromptAuditView.vue'
 const mocks = vi.hoisted(() => ({
   getConfig: vi.fn(), updateConfig: vi.fn(), probeEndpoint: vi.fn(), getRuntime: vi.fn(), listEvents: vi.fn(),
   getEvent: vi.fn(), deleteEvent: vi.fn(), batchDeleteEvents: vi.fn(), previewDelete: vi.fn(), deleteEventsByFilter: vi.fn(), listGroups: vi.fn(),
+  listOpenAIOAuthAccounts: vi.fn(), listAdaptiveSamples: vi.fn(), reviewAdaptiveSample: vi.fn(),
+  listPolicyVersions: vi.fn(), rollbackPolicy: vi.fn(),
   showSuccess: vi.fn(), showError: vi.fn(),
 }))
 
@@ -19,9 +21,11 @@ vi.mock('vue-i18n', async () => {
 })
 
 const baseConfig = (): PromptAuditConfig => ({
-  enabled: true, blocking_enabled: false, blocking_latest_turn_only: false, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
-  worker_count: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: true, group_ids: [],
-  endpoints: [{ id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', base_url: 'http://127.0.0.1:8000', model: 'guard-model', timeout_ms: 3000, input_limit: 4000, enabled: true, has_token: true, token_status: 'configured' }],
+  enabled: true, blocking_enabled: false, blocking_audit_mode: 'incremental_full', blocking_latest_turn_only: true, store_pass_events: false, effective_mode: 'async_audit', strategy: 'priority',
+  adaptive_enabled: false, adaptive_collect_when_disabled: true, adaptive_allow_sample_rate: 5, adaptive_risk_sample_rate: 100,
+  output_audit_enabled: false, output_allow_sample_rate: 5, output_risk_sample_rate: 100,
+  worker_count: 4, prompt_chunk_concurrency: 4, queue_capacity: 100, scanners: SCANNER_CATALOG.map((item) => item.id), all_groups: true, group_ids: [],
+  endpoints: [{ id: 'guard-1', name: 'Guard One', protocol: 'openai_compatible', adapter: 'qwen3guard', base_url: 'http://127.0.0.1:8000', model: 'guard-model', account_id: 0, timeout_ms: 3000, input_limit: 4000, enabled: true, has_token: true, token_status: 'configured' }],
   config_version: 7, updated_at: '2026-07-16T00:00:00Z', updated_by: 1, change_summary: '{}',
 })
 const runtime = (): PromptAuditRuntime => ({
@@ -30,12 +34,19 @@ const runtime = (): PromptAuditRuntime => ({
   queue: { staging: 0, queued: 0, processing: 1, retry: 0, done: 5, failed: 0, active: 1 },
   processed_total: 5, failed_total: 0, enqueued_total: 5, dropped_total: 0, database_status: 'ok', redis_status: 'ok', endpoints: {},
   guard_metrics: { total: 1, allowed: 1, flagged: 0, blocked: 0, unavailable: 0, invalid: 0, timeouts: 0, failovers: 0, bulkhead_full: 0, record_failed: 0 },
+  audit_usage: {
+    today: { invocations: 1, successes: 1, failures: 0, invalid: 0, input_tokens: 10, output_tokens: 2, cache_creation_tokens: 0, cache_read_tokens: 0, estimated_cost_usd: 0.001, priced_invocations: 1 },
+    last_7_days: { invocations: 1, successes: 1, failures: 0, invalid: 0, input_tokens: 10, output_tokens: 2, cache_creation_tokens: 0, cache_read_tokens: 0, estimated_cost_usd: 0.001, priced_invocations: 1 },
+    all_time: { invocations: 1, successes: 1, failures: 0, invalid: 0, input_tokens: 10, output_tokens: 2, cache_creation_tokens: 0, cache_read_tokens: 0, estimated_cost_usd: 0.001, priced_invocations: 1 },
+    by_account: [],
+  },
+  adaptive: { pending: 0, shadow_match: 0, disagreement: 0, shadow_failed: 0, reviewed_allow: 0, reviewed_block: 0, total: 0 },
 })
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const RuntimeStub = defineComponent({ props: ['runtime', 'loading', 'error'], emits: ['refresh'], template: '<div data-test="runtime">{{ error }}</div>' })
 const EndpointStub = defineComponent({
-  props: ['endpoints', 'probeResults', 'probingIds'], emits: ['update:endpoints', 'probe'],
+  props: ['endpoints', 'oauthAccounts', 'probeResults', 'probingIds'], emits: ['update:endpoints', 'probe'],
   template: '<div data-test="endpoint"><button data-test="inject-secret" @click="$emit(\'update:endpoints\', endpoints.map((e) => ({ ...e, token: \'PROMPT_AUDIT_CANARY_SECRET_DO_NOT_PERSIST\' })))">secret</button><button data-test="probe" @click="$emit(\'probe\', endpoints[0])">probe</button></div>',
 })
 const PolicyStub = defineComponent({ props: ['draft', 'groups'], emits: ['update:draft'], template: '<div data-test="policy" />' })
@@ -43,6 +54,14 @@ const EventsStub = defineComponent({
   props: ['events', 'filters', 'selectedIds', 'loading', 'error', 'total', 'page', 'pageSize'],
   emits: ['filters-change', 'search', 'selection', 'page', 'page-size', 'view', 'delete', 'batch-delete', 'preview-delete'],
   template: '<div data-test="events"><button data-test="preview" @click="$emit(\'preview-delete\')">preview</button><button data-test="change-filter" @click="$emit(\'filters-change\', { ...filters, keyword: \'changed\' })">change</button><button data-test="delete-one" @click="$emit(\'delete\', 5)">delete</button><button data-test="select-batch" @click="$emit(\'selection\', [5, 6])">select</button><button data-test="delete-batch" @click="$emit(\'batch-delete\')">batch</button></div>',
+})
+const AdaptiveStub = defineComponent({
+  props: ['samples', 'status'], emits: ['review', 'status'],
+  template: '<div data-test="adaptive"><button data-test="review-adaptive" @click="$emit(\'review\', 9, \'block\')">review</button></div>',
+})
+const PolicyHistoryStub = defineComponent({
+  props: ['versions', 'currentVersion', 'disabled', 'rollingBack'], emits: ['refresh', 'rollback'],
+  template: '<div data-test="policy-history"><button data-test="rollback-v6" @click="$emit(\'rollback\', 6)">rollback</button></div>',
 })
 const DetailStub = defineComponent({ props: ['show', 'event', 'loading'], emits: ['close'], template: '<div data-test="detail" />' })
 const ConfirmStub = defineComponent({ props: ['show', 'title', 'message'], emits: ['confirm', 'cancel'], template: '<div v-if="show" data-test="confirm"><button data-test="confirm-action" @click="$emit(\'confirm\')">confirm</button></div>' })
@@ -54,7 +73,7 @@ const FilterDeleteStub = defineComponent({
 
 function mountView() {
   return mount(PromptAuditView, {
-    global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, EventWorkspace: EventsStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
+    global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, PolicyHistory: PolicyHistoryStub, EventWorkspace: EventsStub, AdaptiveWorkspace: AdaptiveStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
   })
 }
 
@@ -64,7 +83,12 @@ describe('PromptAuditView', () => {
     mocks.getConfig.mockResolvedValue(baseConfig())
     mocks.getRuntime.mockResolvedValue(runtime())
     mocks.listGroups.mockResolvedValue([])
+    mocks.listOpenAIOAuthAccounts.mockResolvedValue([{ id: 16, name: 'gmailpro', email: 'owner@example.com', status: 'active', schedulable: true }])
     mocks.listEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+    mocks.listAdaptiveSamples.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
+    mocks.listPolicyVersions.mockResolvedValue([{ id: 6, config_version: 6, endpoint_order: ['guard-1'], created_by: 1, created_at: '2026-07-15T00:00:00Z', change_summary: '{}' }])
+    mocks.rollbackPolicy.mockResolvedValue({ ...baseConfig(), config_version: 8 })
+    mocks.reviewAdaptiveSample.mockResolvedValue({ id: 9, review_status: 'block' })
     mocks.updateConfig.mockImplementation(async () => ({ ...baseConfig(), config_version: 8 }))
     mocks.probeEndpoint.mockResolvedValue({ ok: true, status: 'healthy', message: 'ok', latency_ms: 2, http_status: 200, retryable: false, checked_at: '2026-07-16T00:00:00Z', token_applied: true })
     mocks.previewDelete.mockResolvedValue({ matched_count: 2, filter_summary: {}, snapshot_max_id: 10, filter_hash: 'a'.repeat(64), confirmation_token: 'opaque-confirmation', expires_at: '2026-07-16T00:05:00Z' })
@@ -73,17 +97,43 @@ describe('PromptAuditView', () => {
     mocks.batchDeleteEvents.mockResolvedValue({ deleted_events: 2, deleted_jobs: 2 })
   })
 
-  it('starts config, runtime, groups, and events loads independently', async () => {
+  it('starts config, runtime, groups, OAuth accounts, and events loads independently', async () => {
     mocks.getRuntime.mockRejectedValue(new Error('runtime offline'))
     const wrapper = mountView()
     expect(mocks.getConfig).toHaveBeenCalledOnce()
     expect(mocks.getRuntime).toHaveBeenCalledOnce()
     expect(mocks.listGroups).toHaveBeenCalledOnce()
+    expect(mocks.listOpenAIOAuthAccounts).toHaveBeenCalledOnce()
     expect(mocks.listEvents).toHaveBeenCalledOnce()
+    expect(mocks.listAdaptiveSamples).toHaveBeenCalledWith('review_pending', 1, 20)
+    expect(mocks.listPolicyVersions).toHaveBeenCalledWith(20)
     await flushPromises()
     expect(wrapper.get('[data-test="runtime"]').text()).toContain('runtime offline')
     expect(wrapper.find('[data-test="endpoint"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="events"]').exists()).toBe(true)
+  })
+
+  it('confirms policy rollback and restores it as a new config version', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await wrapper.get('[data-test="rollback-v6"]').trigger('click')
+    expect(wrapper.find('[data-test="confirm"]').exists()).toBe(true)
+    await wrapper.get('[data-test="confirm-action"]').trigger('click')
+    await flushPromises()
+    expect(mocks.rollbackPolicy).toHaveBeenCalledWith(6, 7)
+    expect(mocks.showSuccess).toHaveBeenCalledWith('admin.promptAudit.messages.policyRolledBack')
+  })
+
+  it('reviews adaptive candidates from the dedicated tab', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-adaptive"]').trigger('click')
+    expect(wrapper.get('[data-test="tab-panel-adaptive"]').attributes('style') || '').not.toContain('display: none')
+    await wrapper.get('[data-test="review-adaptive"]').trigger('click')
+    await flushPromises()
+    expect(mocks.reviewAdaptiveSample).toHaveBeenCalledWith(9, 'block')
+    expect(mocks.showSuccess).toHaveBeenCalledWith('admin.promptAudit.messages.adaptiveReviewed')
   })
 
   it('separates configuration and audit events into page tabs', async () => {
@@ -126,13 +176,13 @@ describe('PromptAuditView', () => {
     expect(wrapper.find('[data-test="confirm"]').exists()).toBe(true)
     await wrapper.get('[data-test="confirm-action"]').trigger('click')
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes('aria-checked')).toBe('true')
-    await wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').trigger('click')
-    expect(wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-test="blocking-audit-mode-fast_latest"]').trigger('click')
+    expect(wrapper.get('[data-test="blocking-audit-mode-fast_latest"]').attributes('aria-pressed')).toBe('true')
     await wrapper.get('[data-test="enabled-toggle"]').trigger('click')
     expect(wrapper.get('[data-test="enabled-toggle"]').attributes('aria-checked')).toBe('false')
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes('aria-checked')).toBe('false')
     expect(wrapper.get('[data-test="blocking-toggle"]').attributes()).toHaveProperty('disabled')
-    expect(wrapper.get('[data-test="blocking-latest-turn-only-toggle"]').attributes()).toHaveProperty('disabled')
+    expect(wrapper.get('[data-test="blocking-audit-mode-fast_latest"]').attributes()).toHaveProperty('disabled')
   })
 
   it('clears plaintext token state after a successful save', async () => {
@@ -178,8 +228,10 @@ describe('PromptAuditView', () => {
     await flushPromises()
     await wrapper.get('[data-test="tab-config"]').trigger('click')
     const switches = wrapper.findAll('[role="switch"]')
-    expect(switches).toHaveLength(4)
+    expect(switches).toHaveLength(3)
     expect(switches.every((item) => Boolean(item.attributes('aria-label')))).toBe(true)
+    expect(wrapper.get('[data-test="blocking-audit-mode"]').attributes('role')).toBeUndefined()
+    expect(wrapper.findAll('[data-test^="blocking-audit-mode-"]')).toHaveLength(3)
     expect(wrapper.html()).toContain('fixed inset-x-0 bottom-0')
     expect(wrapper.html()).toContain('flex-wrap')
   })

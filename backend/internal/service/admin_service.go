@@ -187,6 +187,7 @@ type UpdateUserInput struct {
 	AllowedGroups *[]int64 // 使用指针区分"未提供"和"设置为空数组"
 	// RestrictPublicGroups 指针区分"未提供"和"显式开关"。
 	RestrictPublicGroups *bool
+	PromptAuditBypass    *bool // nil preserves the current audit policy
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
@@ -677,6 +678,7 @@ const (
 	proxyQualityResponseHeaderTimeout = 10 * time.Second
 	proxyQualityMaxBodyBytes          = int64(8 * 1024)
 	proxyQualityClientUserAgent       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+	DefaultBalanceRedeemValidityDays  = 30
 )
 
 var ErrRPMStatusUnavailable = infraerrors.New(http.StatusNotImplemented, "RPM_STATUS_UNAVAILABLE", "RPM cache not available")

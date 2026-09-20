@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -206,6 +207,45 @@ func TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedAccounts(t *testing
 	acc, err := svc.selectAccountForModelWithPlatform(ctx, nil, "", "", nil, PlatformOpenAI)
 	require.Error(t, err, "无分组 Key 不应调度到已分组账号")
 	require.Nil(t, acc)
+}
+
+func TestGroupIsolation_InternalAccountPool_CanScheduleGroupedAccount(t *testing.T) {
+	accounts := []Account{
+		{ID: 22, Platform: PlatformAntigravity, Priority: 1, Status: StatusActive, Schedulable: true,
+			AccountGroups: []AccountGroup{{GroupID: 5}}},
+	}
+	repo := newGroupAwareMockRepo(accounts)
+	svc := &GatewayService{
+		accountRepo:       repo,
+		cache:             &mockGatewayCacheForPlatform{},
+		cfg:               testConfig(),
+		schedulerSnapshot: &SchedulerSnapshotService{},
+	}
+
+	ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformAntigravity)
+	ctx = context.WithValue(ctx, ctxkey.InternalAccountPool, true)
+	selected, _, err := svc.listSchedulableAccounts(ctx, nil, PlatformAntigravity, true)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, int64(22), selected[0].ID)
+}
+
+func TestGroupIsolation_ForcePlatformAlone_CannotScheduleGroupedAccount(t *testing.T) {
+	accounts := []Account{
+		{ID: 22, Platform: PlatformAntigravity, Priority: 1, Status: StatusActive, Schedulable: true,
+			AccountGroups: []AccountGroup{{GroupID: 5}}},
+	}
+	repo := newGroupAwareMockRepo(accounts)
+	svc := &GatewayService{
+		accountRepo: repo,
+		cache:       &mockGatewayCacheForPlatform{},
+		cfg:         testConfig(),
+	}
+
+	ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformAntigravity)
+	selected, _, err := svc.listSchedulableAccounts(ctx, nil, PlatformAntigravity, true)
+	require.NoError(t, err)
+	require.Empty(t, selected)
 }
 
 func TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedAccounts(t *testing.T) {

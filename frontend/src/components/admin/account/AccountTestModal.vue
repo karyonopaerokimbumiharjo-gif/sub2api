@@ -1,7 +1,7 @@
 <template>
   <BaseDialog
     :show="show"
-    :title="t('admin.accounts.testAccountConnection')"
+    :title="pelicanTest ? t('admin.accounts.pelicanTestTitle') : t('admin.accounts.testAccountConnection')"
     width="normal"
     @close="handleClose"
   >
@@ -280,6 +280,24 @@
         </div>
       </div>
 
+      <div v-if="pelicanTest && pelicanHtml" class="space-y-2">
+        <div class="flex items-center justify-between text-xs font-medium text-gray-600 dark:text-gray-300">
+          <span>{{ t('admin.accounts.pelicanPreview') }}</span>
+          <span class="text-[10px] font-normal text-emerald-600 dark:text-emerald-400">{{ t('admin.accounts.pelicanPreviewPlaying') }}</span>
+        </div>
+        <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-500 dark:bg-dark-700">
+          <iframe
+            :srcdoc="pelicanHtml"
+            sandbox="allow-scripts"
+            class="h-[360px] w-full bg-white"
+            :title="t('admin.accounts.pelicanPreview')"
+          />
+        </div>
+      </div>
+      <div v-else-if="pelicanTest && status === 'success'" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-300">
+        {{ t('admin.accounts.pelicanPreviewUnavailable') }}
+      </div>
+
       <!-- Image Lightbox -->
       <Teleport to="body">
         <Transition name="fade">
@@ -393,6 +411,7 @@ interface PreviewMedia {
 const props = defineProps<{
   show: boolean
   account: Account | null
+  pelicanTest?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -412,6 +431,7 @@ let abortController: AbortController | null = null
 const generatedImages = ref<PreviewMedia[]>([])
 const generatedAudios = ref<PreviewMedia[]>([])
 const generatedVideos = ref<PreviewMedia[]>([])
+const pelicanHtml = ref('')
 const previewImageUrl = ref('')
 const testMode = ref<'default' | 'compact'>('default')
 const grokTestMode = ref<'text' | 'image' | 'video' | 'search' | 'tts' | 'stt' | 'realtime'>('text')
@@ -497,6 +517,7 @@ const modelOptionsForMode = computed(() => {
 })
 
 const supportsPromptInput = computed(() => {
+  if (props.pelicanTest) return true
   if (!isGrokAccount.value) {
     return supportsImageTest.value
   }
@@ -597,6 +618,7 @@ const clearMediaUploads = () => {
 }
 
 const promptInputLabel = computed(() => {
+  if (props.pelicanTest) return t('admin.accounts.pelicanPromptLabel')
   if (supportsGrokVideoTest.value || grokTestMode.value === 'video') {
     return t('admin.accounts.videoPromptLabel')
   }
@@ -613,6 +635,7 @@ const promptInputLabel = computed(() => {
 })
 
 const promptInputPlaceholder = computed(() => {
+  if (props.pelicanTest) return t('admin.accounts.pelicanPromptPlaceholder')
   if (grokTestMode.value === 'video') {
     return t('admin.accounts.videoPromptPlaceholder')
   }
@@ -629,6 +652,7 @@ const promptInputPlaceholder = computed(() => {
 })
 
 const promptInputHint = computed(() => {
+  if (props.pelicanTest) return t('admin.accounts.pelicanTestHint')
   if (grokTestMode.value === 'video') {
     return t('admin.accounts.videoTestHint')
   }
@@ -651,6 +675,7 @@ const promptInputHint = computed(() => {
 })
 
 const testModeSummary = computed(() => {
+  if (props.pelicanTest) return t('admin.accounts.pelicanTestMode')
   if (isGrokAccount.value) {
     switch (grokTestMode.value) {
       case 'video':
@@ -704,6 +729,10 @@ const sortTestModels = (models: ClaudeModel[]) => {
 const applyDefaultPromptForMode = () => {
   if (!supportsPromptInput.value) return
   if (testPrompt.value.trim()) return
+  if (props.pelicanTest) {
+    testPrompt.value = t('admin.accounts.pelicanPromptDefault')
+    return
+  }
   if (grokTestMode.value === 'video') {
     testPrompt.value = t('admin.accounts.videoPromptDefault')
   } else if (grokTestMode.value === 'image' || supportsImageTest.value) {
@@ -742,6 +771,7 @@ watch(
       grokTestMode.value = 'text'
       resetState()
       await loadAvailableModels()
+      applyDefaultPromptForMode()
       if (isGrokAccount.value) {
         pickDefaultModelForMode()
         applyDefaultPromptForMode()
@@ -772,7 +802,9 @@ const loadAvailableModels = async () => {
       : models
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
+      if (props.account.platform === 'openai') {
+        selectedModelId.value = availableModels.value.find((m) => m.id === 'gpt-6-astra')?.id || availableModels.value[0].id
+      } else if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
@@ -798,7 +830,33 @@ const resetState = () => {
   generatedImages.value = []
   generatedAudios.value = []
   generatedVideos.value = []
+  pelicanHtml.value = ''
   previewImageUrl.value = ''
+}
+
+const extractPelicanHtml = (value: string): string => {
+  let html = value.trim()
+  if (!html) return ''
+  // Models may still wrap the document in prose or a Markdown fence. Extract
+  // the fenced payload first, then discard any leading/trailing explanation.
+  const fenced = html.match(/```(?:html|xml)?\s*([\s\S]*?)\s*```/i)
+  if (fenced?.[1]) html = fenced[1].trim()
+  const documentStart = html.search(/<!doctype\s+html|<html[\s>]|<svg[\s>]/i)
+  if (documentStart >= 0) html = html.slice(documentStart).trim()
+
+  // Do not expose a half-streamed document to the iframe. Wait for a closing
+  // document tag (or a complete SVG fragment that we can safely wrap).
+  const documentEnd = html.search(/<\/html\s*>/i)
+  if (documentEnd >= 0 && /<svg[\s>]/i.test(html)) {
+    return html.slice(0, documentEnd + html.slice(documentEnd).match(/<\/html\s*>/i)![0].length).trim()
+  }
+  const svgStart = html.search(/<svg[\s>]/i)
+  const svgEnd = html.search(/<\/svg\s*>/i)
+  if (svgStart >= 0 && svgEnd > svgStart) {
+    const svg = html.slice(svgStart, svgEnd + html.slice(svgEnd).match(/<\/svg\s*>/i)![0].length).trim()
+    return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;min-height:100%;overflow:hidden}body{display:grid;place-items:center;background:#fff}</style></head><body>${svg}</body></html>`
+  }
+  return ''
 }
 
 const handleClose = () => {
@@ -982,6 +1040,10 @@ const handleEvent = (event: {
     case 'content':
       if (event.text) {
         streamingContent.value += event.text
+        if (props.pelicanTest) {
+          const html = extractPelicanHtml(streamingContent.value)
+          if (html) pelicanHtml.value = html
+        }
         scrollToBottom()
       }
       break
@@ -1023,6 +1085,10 @@ const handleEvent = (event: {
       break
 
     case 'test_complete':
+      if (props.pelicanTest && streamingContent.value) {
+        const html = extractPelicanHtml(streamingContent.value)
+        if (html) pelicanHtml.value = html
+      }
       // Move streaming content to output lines
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')

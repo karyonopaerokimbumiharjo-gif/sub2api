@@ -37,6 +37,11 @@ func supplementUnmappedOpenAIModels(accounts []Account, models []string) []strin
 	}
 	for i := range accounts {
 		account := &accounts[i]
+		// CPA supplies its own authoritative catalog. Supplementing an unmapped
+		// bridge with static defaults would advertise models absent upstream.
+		if ValidateCPAAccount(account) == nil {
+			continue
+		}
 		if account.Platform == PlatformOpenAI && len(account.GetModelMapping()) == 0 {
 			return dedupeAndSortModelIDs(slices.Concat(models, openai.DefaultModelIDs()))
 		}

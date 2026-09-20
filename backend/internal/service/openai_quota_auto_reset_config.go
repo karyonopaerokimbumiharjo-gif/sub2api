@@ -38,6 +38,12 @@ func ResolveOpenAIAutoResetCreditConfig(account *Account) OpenAIAutoResetCreditC
 	if !isOpenAIAutoResetCreditAccount(account) || account.Extra == nil {
 		return config
 	}
+	// Existing installations can retain the CPA-compatible reset worker. Never
+	// let both workers consume credits for the same account after an upgrade.
+	// The explicitly configured legacy worker takes precedence until disabled.
+	if resolveAccountExtraBool(account.Extra, openAIQuotaAutoResetEnabledKey) {
+		return config
+	}
 	config.Enabled = resolveAccountExtraBool(account.Extra, OpenAIAutoResetCreditEnabledExtraKey)
 	if value, ok := resolveAccountExtraNumber(account.Extra, OpenAIAutoResetCredit5hThresholdExtraKey); ok && isValidOpenAIAutoResetThreshold(value) {
 		config.Threshold5h = value

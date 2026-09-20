@@ -116,8 +116,14 @@
       </div>
     </template>
 
-    <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
-    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token')">
+    <!-- OpenAI OAuth and explicitly configured compatible quota bridges -->
+    <template v-else-if="isOpenAIUsageAccount">
+      <div v-if="error || usageInfo?.error" role="alert" class="mb-1 max-w-[260px] text-xs text-amber-600 dark:text-amber-400">
+        {{ error || t('admin.accounts.usageWindow.quotaRefreshFailed') }}
+      </div>
+      <div v-if="usageInfo?.quota_updated_at" class="mb-1 text-[10px] text-gray-400">
+        {{ t('admin.accounts.usageWindow.quotaFetchedAt') }} {{ new Date(usageInfo.quota_updated_at).toLocaleString() }}
+      </div>
       <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
         <div
           v-for="ticket in codexTurnTickets"
@@ -135,6 +141,7 @@
           v-if="usageInfo?.five_hour"
           label="5h"
           :utilization="usageInfo.five_hour.utilization"
+          :utilization-unavailable="usageInfo.five_hour.utilization_unavailable"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
           :show-now-when-idle="true"
@@ -144,6 +151,7 @@
           v-if="usageInfo?.seven_day"
           label="7d"
           :utilization="usageInfo.seven_day.utilization"
+          :utilization-unavailable="usageInfo.seven_day.utilization_unavailable"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
           :estimated-total-cost="openAISevenDayEstimatedTotalCost"
@@ -155,7 +163,11 @@
           refresh button is rendered via the pre-actions slot so the user sees a
           single row of related buttons instead of two stacked rows.
         -->
-        <OpenAIQuotaResetCell :account="account" @account-updated="handleQuotaResetAccountUpdated">
+        <OpenAIQuotaResetCell
+          v-if="account.type === 'oauth' || isOpenAIQuotaBridge"
+          :account="account"
+          @account-updated="handleQuotaResetAccountUpdated"
+        >
           <template #pre-actions>
             <button
               type="button"
@@ -181,6 +193,30 @@
             </button>
           </template>
         </OpenAIQuotaResetCell>
+        <div v-else class="flex items-center gap-1.5 mt-0.5">
+          <button
+            type="button"
+            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="activeQueryLoading"
+            @click="loadActiveUsage"
+          >
+            <svg
+              class="h-2.5 w-2.5"
+              :class="{ 'animate-spin': activeQueryLoading }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            {{ t('admin.accounts.usageWindow.activeQuery') }}
+          </button>
+        </div>
       </div>
       <div v-else-if="loading" class="space-y-1.5">
         <div class="flex items-center gap-1">
@@ -198,11 +234,20 @@
         <div class="text-xs text-gray-400">-</div>
         <!-- Always allow on-demand upstream quota query, even before local data exists. -->
         <OpenAIQuotaResetCell
-          v-if="account.type === 'oauth'"
+          v-if="account.type === 'oauth' || isOpenAIQuotaBridge"
           :account="account"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
         />
+        <button
+          v-else
+          type="button"
+          class="mt-1 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="activeQueryLoading"
+          @click="loadActiveUsage"
+        >
+          {{ t('admin.accounts.usageWindow.activeQuery') }}
+        </button>
       </div>
     </template>
 
@@ -732,8 +777,24 @@ let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
 let visibilityObserver: IntersectionObserver | null = null
 
+const isOpenAIQuotaBridge = computed(() => {
+  return (
+    props.account.platform === 'openai' &&
+    props.account.type === 'apikey' &&
+    props.account.extra?.openai_quota_via_compatible_upstream === true
+  )
+})
+
+const isOpenAIUsageAccount = computed(() => {
+  return (
+    props.account.platform === 'openai' &&
+    (props.account.type === 'oauth' || props.account.type === 'setup-token' || isOpenAIQuotaBridge.value)
+  )
+})
+
 // Show usage windows for OAuth and Setup Token accounts
 const showUsageWindows = computed(() => {
+  if (isOpenAIQuotaBridge.value) return true
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
   // CN providers: apikey 账号也有滚动用量窗口（coding plan）或余额（payg），
@@ -764,7 +825,7 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth'
   }
   if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
+    return props.account.type === 'oauth' || isOpenAIQuotaBridge.value
   }
   return false
 })
@@ -796,7 +857,7 @@ const geminiUsageAvailable = computed(() => {
 })
 
 const hasOpenAIUsageFallback = computed(() => {
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
+  if (!isOpenAIUsageAccount.value) return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
@@ -1501,9 +1562,11 @@ const attachVisibilityObserver = () => {
 
 const loadActiveUsage = async () => {
   activeQueryLoading.value = true
+  error.value = null
   try {
     usageInfo.value = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
   } catch (e: any) {
+    error.value = t('admin.accounts.usageWindow.quotaRefreshFailed')
     console.error('Failed to load active usage:', e)
   } finally {
     activeQueryLoading.value = false

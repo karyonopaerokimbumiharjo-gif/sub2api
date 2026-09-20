@@ -41,7 +41,10 @@
       </span>
 
       <!-- Progress bar container -->
-      <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+      <span v-if="utilizationUnavailable" class="text-[10px] text-gray-400">
+        {{ t('admin.accounts.usageWindow.quotaUnavailable') }}
+      </span>
+      <div v-else class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
         <div
           :class="['h-full transition-all duration-300', barClass]"
           :style="{ width: barWidth }"
@@ -49,12 +52,12 @@
       </div>
 
       <!-- Percentage -->
-      <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
+      <span v-if="!utilizationUnavailable" :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
         {{ displayPercent }}
       </span>
 
       <!-- Reset time -->
-      <span v-if="shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
+      <span v-if="!utilizationUnavailable && shouldShowResetTime" class="shrink-0 text-[10px] text-gray-400">
         {{ formatResetTime }}
       </span>
     </div>
@@ -72,6 +75,7 @@ const props = withDefaults(
   defineProps<{
     label: string
     utilization: number // Percentage (0-100+)
+    utilizationUnavailable?: boolean
     resetsAt?: string | null
     color: 'indigo' | 'emerald' | 'purple' | 'amber'
     windowStats?: WindowStats | null
