@@ -1,3 +1,4 @@
+export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone'
 export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
 export type PromptDecision = 'pass' | 'flag' | 'critical'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
@@ -5,7 +6,7 @@ export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export interface PromptAuditEndpoint {
   id: string
   name: string
-  protocol: 'openai_compatible' | 'typesafe_systemone' | 'typesafe_systemone'
+  protocol: PromptAuditProtocol
   base_url: string
   model: string
   timeout_ms: number
@@ -58,7 +59,7 @@ export interface PromptAuditUpdateRequest {
   endpoints: Array<{
     id: string
     name: string
-    protocol: 'openai_compatible'
+    protocol: PromptAuditProtocol
     base_url: string
     model: string
     token?: string
