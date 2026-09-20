@@ -5,7 +5,7 @@ export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export interface PromptAuditEndpoint {
   id: string
   name: string
-  protocol: 'openai_compatible'
+  protocol: 'openai_compatible' | 'typesafe_systemone' | 'typesafe_systemone'
   base_url: string
   model: string
   timeout_ms: number
