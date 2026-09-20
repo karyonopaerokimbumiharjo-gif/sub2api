@@ -5,7 +5,7 @@
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-400">{{ t('nav.securityAudit') }}</p>
           <h1 class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{{ t('admin.promptAudit.title') }}</h1>
-          <p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-dark-300">{{ t('admin.promptAudit.description') }}</p>
+          <p class="mt-2 max-w-3xl text-sm text-gray-500 dark:text-dark-300">{{ auditDescription(locale) }}</p>
         </div>
         <div v-if="draft" class="text-right text-xs text-gray-500 dark:text-dark-400">
           <p>{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}</p>
@@ -144,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -170,8 +170,17 @@ import type {
   PromptProbeResult,
 } from './types'
 import { buildUpdateRequest, cloneData, configToDraft, draftFingerprint, emptyEventFilters } from './viewModel'
+import { auditDescription, createLatestRequestGate } from './securityViewModel'
 
 const { t, locale } = useI18n()
+const eventsGate = createLatestRequestGate()
+const detailGate = createLatestRequestGate()
+const previewGate = createLatestRequestGate()
+onBeforeUnmount(() => {
+  eventsGate.invalidate()
+  detailGate.invalidate()
+  previewGate.invalidate()
+})
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events'
 const activeTab = ref<PromptAuditPageTab>('events')
@@ -273,16 +282,21 @@ async function loadGroups() {
   finally { loading.groups = false }
 }
 async function loadEvents() {
+  const ticket = eventsGate.begin()
+  const query = cloneData(appliedFilters.value)
+  const page = events.page
+  const pageSize = events.page_size
   loading.events = true
   loadErrors.events = ''
   try {
-    const result = await promptAuditAPI.listEvents(appliedFilters.value, events.page, events.page_size)
+    const result = await promptAuditAPI.listEvents(query, page, pageSize)
+    if (!eventsGate.isCurrent(ticket)) return
     Object.assign(events, result)
     selectedEventIds.value = []
   } catch (error) {
-    loadErrors.events = errorMessage(error, 'admin.promptAudit.errors.loadEvents')
+    if (eventsGate.isCurrent(ticket)) loadErrors.events = errorMessage(error, 'admin.promptAudit.errors.loadEvents')
   } finally {
-    loading.events = false
+    if (eventsGate.isCurrent(ticket)) loading.events = false
   }
 }
 async function loadInitial() {
@@ -311,12 +325,15 @@ function resetDraft() {
   if (serverConfig.value) draft.value = cloneData(serverConfig.value)
 }
 async function saveConfig() {
-  if (!draft.value || !dirty.value) return
+  if (!draft.value || !dirty.value || loading.saving) return
+  const submitted = draftFingerprint(draft.value)
+  const request = buildUpdateRequest(draft.value)
   loading.saving = true
   try {
-    const saved = await promptAuditAPI.updateConfig(buildUpdateRequest(draft.value))
+    const saved = await promptAuditAPI.updateConfig(request)
     serverConfig.value = configToDraft(saved)
-    draft.value = configToDraft(saved)
+    if (draftFingerprint(draft.value) === submitted) draft.value = configToDraft(saved)
+    else if (draft.value) draft.value.config_version = saved.config_version
     appStore.showSuccess(t('admin.promptAudit.messages.saved'))
     await loadRuntime()
   } catch (error) {
@@ -355,14 +372,28 @@ function applyEventFilters(value: PromptEventFilters) {
 function changePage(value: number) { events.page = value; void loadEvents() }
 function changePageSize(value: number) { events.page_size = value; events.page = 1; void loadEvents() }
 async function openEvent(id: number) {
+  const ticket = detailGate.begin()
   showEventDetail.value = true
   loading.detail = true
   activeEvent.value = null
-  try { activeEvent.value = await promptAuditAPI.getEvent(id) }
-  catch (error) { appStore.showError(errorMessage(error, 'admin.promptAudit.errors.loadDetail')); showEventDetail.value = false }
-  finally { loading.detail = false }
+  try {
+    const event = await promptAuditAPI.getEvent(id)
+    if (detailGate.isCurrent(ticket)) activeEvent.value = event
+  } catch (error) {
+    if (detailGate.isCurrent(ticket)) {
+      appStore.showError(errorMessage(error, 'admin.promptAudit.errors.loadDetail'))
+      showEventDetail.value = false
+    }
+  } finally {
+    if (detailGate.isCurrent(ticket)) loading.detail = false
+  }
 }
-function closeEventDetail() { showEventDetail.value = false; activeEvent.value = null }
+function closeEventDetail() {
+  detailGate.invalidate()
+  showEventDetail.value = false
+  activeEvent.value = null
+  loading.detail = false
+}
 function requestSingleDelete(id: number) { deleteRequest.mode = 'single'; deleteRequest.ids = [id] }
 function requestBatchDelete() { if (selectedEventIds.value.length) { deleteRequest.mode = 'batch'; deleteRequest.ids = [...selectedEventIds.value] } }
 function clearDeleteRequest() { deleteRequest.mode = ''; deleteRequest.ids = [] }
@@ -380,6 +411,8 @@ async function confirmIDDelete() {
   finally { loading.deleting = false }
 }
 function clearDeletePreview() {
+  previewGate.invalidate()
+  loading.previewing = false
   deletePreview.value = null
   deletePreviewFilters.value = null
 }
@@ -392,29 +425,41 @@ function closeFilterDelete() {
   clearDeletePreview()
 }
 async function runFilterDeletePreview(value: PromptEventFilters) {
+  const ticket = previewGate.begin()
+  const criteria = cloneData(value)
+  deletePreview.value = null
+  deletePreviewFilters.value = null
   loading.previewing = true
   try {
-    deletePreview.value = await promptAuditAPI.previewDelete(value)
-    deletePreviewFilters.value = cloneData(value)
+    const preview = await promptAuditAPI.previewDelete(criteria)
+    if (!previewGate.isCurrent(ticket)) return
+    deletePreview.value = preview
+    deletePreviewFilters.value = criteria
   } catch (error) {
-    clearDeletePreview()
-    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.previewDelete'))
-  } finally { loading.previewing = false }
+    if (previewGate.isCurrent(ticket)) {
+      clearDeletePreview()
+      appStore.showError(errorMessage(error, 'admin.promptAudit.errors.previewDelete'))
+    }
+  } finally {
+    if (previewGate.isCurrent(ticket)) loading.previewing = false
+  }
 }
 async function confirmFilterDelete(filters?: PromptEventFilters) {
   if (loading.deleting) return
   loading.deleting = true
   try {
-    let preview = deletePreview.value
-    let previewFilters = deletePreviewFilters.value ? cloneData(deletePreviewFilters.value) : null
-    // One-click path: no fresh preview (never requested, or cleared by a
-    // criteria change) — mint the confirmation token on the fly from the
-    // criteria the dialog just emitted, then delete in the same action.
-    if ((!preview || !previewFilters) && filters) {
-      preview = await promptAuditAPI.previewDelete(filters)
-      previewFilters = cloneData(filters)
+    const preview = deletePreview.value
+    const previewFilters = deletePreviewFilters.value ? cloneData(deletePreviewFilters.value) : null
+    // Never mint a destructive confirmation token in the delete action itself.
+    // The administrator must see and confirm the exact preview first.
+    if (!preview || !previewFilters || loading.previewing ||
+        (filters && JSON.stringify(filters) !== JSON.stringify(previewFilters))) {
+      clearDeletePreview()
+      appStore.showError(locale.value.startsWith('zh')
+        ? '请先预览当前筛选范围并核对数量，再确认删除。'
+        : 'Preview the current filters and inspect the count before confirming deletion.')
+      return
     }
-    if (!preview || !previewFilters) return
     const result = await promptAuditAPI.deleteEventsByFilter(previewFilters, preview)
     closeFilterDelete()
     appStore.showSuccess(t('admin.promptAudit.messages.deleted', { count: result.deleted_events }))
@@ -425,7 +470,9 @@ async function confirmFilterDelete(filters?: PromptEventFilters) {
   } finally { loading.deleting = false }
 }
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return '—'
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(parsed)
 }
 
 onMounted(loadInitial)
