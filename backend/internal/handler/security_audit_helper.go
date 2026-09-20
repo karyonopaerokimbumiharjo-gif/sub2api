@@ -113,11 +113,12 @@ func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securitya
 			}
 			logSecurityAuditStart(reqLog, request, len(body), false)
 			decision := coordinator.Check(c.Request.Context(), request)
-			if decision.Kind == securityaudit.DecisionAllow {
+			switch decision.Kind {
+			case securityaudit.DecisionAllow:
 				c.Set(securityAuditWSDedupeContextKey, securityAuditWSDedupeEntry{
 					stage: request.Stage, turn: turnNo, bodyHash: bodyHash, decision: decision,
 				})
-			} else if decision.Kind == securityaudit.DecisionBlock {
+			case securityaudit.DecisionBlock:
 				invalidateSecurityAuditContext(c, reqLog, gatewayService, apiKey, body)
 			}
 			logSecurityAuditDone(reqLog, request, decision, false)

@@ -54,14 +54,16 @@ func TestSnapshotRedactsCanariesAndPreservesHashOfScanText(t *testing.T) {
 	require.Empty(t, snapshot.Redacted().ScanText)
 }
 
-func TestSnapshotFullPromptKeepsUnredactedText(t *testing.T) {
+func TestSnapshotKeepsUnredactedTextOnlyForScanning(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":"PROMPT_CANARY_ABC123 email@example.com sk-secretvalue123"}]}`
 	snapshot, err := ExtractPromptSnapshot(Request{Protocol: "openai_chat_completions", Body: []byte(body)})
 	require.NoError(t, err)
-	// The full prompt is stored verbatim for admin review, unlike the preview.
-	require.Contains(t, snapshot.FullPrompt, "PROMPT_CANARY_ABC123 email@example.com sk-secretvalue123")
+	// Raw text is available to the scanner but is never retained for admin review.
+	require.Contains(t, snapshot.ScanText, "PROMPT_CANARY_ABC123 email@example.com sk-secretvalue123")
+	require.Empty(t, snapshot.FullPrompt)
 	require.NotContains(t, snapshot.RedactedPreview, "PROMPT_CANARY_ABC123")
-	require.Equal(t, snapshot.FullPrompt, snapshot.Redacted().FullPrompt)
+	require.Empty(t, snapshot.Redacted().FullPrompt)
+	require.Empty(t, snapshot.Redacted().ScanText)
 }
 
 func TestBuildFullPromptStripsNULAndTruncates(t *testing.T) {
@@ -358,7 +360,7 @@ func TestResponsesOutputTextIncludedInFullAndLatestTurnSnapshots(t *testing.T) {
 	full, err := ExtractPromptSnapshot(req)
 	require.NoError(t, err)
 	require.Contains(t, full.ScanText, "captured previous assistant output")
-	require.Contains(t, full.FullPrompt, "captured previous assistant output")
+	require.Empty(t, full.FullPrompt)
 	require.Equal(t, 3, full.MessageCount)
 
 	latestTurn, err := ExtractBlockingPromptSnapshot(req, true)

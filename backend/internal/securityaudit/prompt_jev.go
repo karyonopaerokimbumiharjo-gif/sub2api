@@ -213,14 +213,14 @@ func jevDialContext(ctx context.Context, network, address string) (net.Conn, err
 
 var jevHTTPClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:                 nil,
-		DialContext:           jevDialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          16,
-		MaxIdleConnsPerHost:   16,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		Proxy:               nil,
+		DialContext:         jevDialContext,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 	},
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 }
@@ -299,19 +299,19 @@ func parseJevResponse(body []byte, endpoint ActiveEndpoint, ids []string) (*Norm
 	}
 
 	result := &NormalizedResult{
-		Decision: EventPass,
-		RiskLevel: RiskLow,
-		Action: ActionAllow,
-		Safety: "Safe",
-		Categories: []string{},
+		Decision:        EventPass,
+		RiskLevel:       RiskLow,
+		Action:          ActionAllow,
+		Safety:          "Safe",
+		Categories:      []string{},
 		MatchedScanners: []string{},
-		ScannerScores: map[string]float64{},
+		ScannerScores:   map[string]float64{},
 		ScannerEvidence: map[string]string{},
-		ScannerBackend: "typesafe-jev",
-		ScannerVersion: wire.Model,
+		ScannerBackend:  "typesafe-jev",
+		ScannerVersion:  wire.Model,
 		GuardEndpointID: endpoint.ID,
-		PolicyID: jevPolicyID,
-		PolicyVersion: 1,
+		PolicyID:        jevPolicyID,
+		PolicyVersion:   1,
 	}
 
 	uncertain := false

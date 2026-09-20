@@ -354,7 +354,11 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 				// Reuse a stored credential only when the probe targets the same
 				// normalized base URL. Otherwise an admin probe could exfiltrate
 				// the Guard token to an attacker-controlled HTTPS host.
-				if endpoint.BaseURL == baseURL && endpoint.Protocol == protocol {
+				storedProtocol := strings.TrimSpace(endpoint.Protocol)
+				if storedProtocol == "" {
+					storedProtocol = "openai_compatible"
+				}
+				if endpoint.BaseURL == baseURL && storedProtocol == protocol {
 					token = endpoint.Token
 				}
 				break

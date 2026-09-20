@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	PluginCapabilityOpenAIOAuthOutbound      = "openai.oauth.outbound_transport.v1"
+	PluginCapabilityOpenAIOAuthOutbound     = "openai.oauth.outbound_transport.v1"
 	PluginCapabilityOpenAICodexStateHarvest = "openai.codex.state_harvest.v1"
-	PluginStateDisabled                 = "disabled"
-	PluginStateStarting                 = "starting"
-	PluginStateEnabled                  = "enabled"
-	PluginStateError                    = "error"
-	PluginStateIncompatible             = "incompatible"
-	PluginSignatureTrusted              = "trusted"
-	PluginSignatureUnsigned             = "unsigned"
+	PluginStateDisabled                     = "disabled"
+	PluginStateStarting                     = "starting"
+	PluginStateEnabled                      = "enabled"
+	PluginStateError                        = "error"
+	PluginStateIncompatible                 = "incompatible"
+	PluginSignatureTrusted                  = "trusted"
+	PluginSignatureUnsigned                 = "unsigned"
 )
 
 var pluginIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)+$`)
@@ -188,7 +188,7 @@ func (m PluginManifest) Validate() error {
 	// must also own the outbound capability. This deliberately keeps one active
 	// transport/state provider and prevents competing plugins from racing.
 	if hasHarvest && !hasOutbound {
-		return errors.New("Codex state harvest 能力必须同时声明 OpenAI OAuth outbound transport")
+		return errors.New("codex state harvest 能力必须同时声明 OpenAI OAuth outbound transport")
 	}
 	runtimeEntry, ok := m.Runtimes[m.RuntimeKey()]
 	if !ok || !safePluginRelativePath(runtimeEntry.Path) {

@@ -968,10 +968,10 @@ func (m *PluginManager) RoundTripOpenAICodexHarvest(ctx context.Context, request
 		return nil, false, nil
 	}
 	if route.runtime.client.Exited() {
-		return nil, true, errors.New("Codex state harvest 插件进程已退出")
+		return nil, true, errors.New("codex state harvest 插件进程已退出")
 	}
 	if !route.runtime.beginRequest() {
-		return nil, true, errors.New("Codex state harvest 插件正在停止")
+		return nil, true, errors.New("codex state harvest 插件正在停止")
 	}
 	response, err := route.runtime.roundTrip(ctx, request, proxyURL, account)
 	if err != nil {
