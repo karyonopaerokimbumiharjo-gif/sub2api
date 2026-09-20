@@ -14,6 +14,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func securityAuditErrorPayload(decision *securityaudit.Decision, errType string) gin.H {
+	payload := gin.H{
+		"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
+	}
+	if decision != nil && decision.Kind == securityaudit.DecisionBlock {
+		payload["context_invalidated"] = true
+		payload["start_new_session"] = true
+	}
+	return payload
+}
+
 func (h *OpenAIGatewayHandler) openAISecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
 	if decision == nil {
 		return
@@ -26,9 +37,7 @@ func (h *OpenAIGatewayHandler) openAISecurityAuditError(c *gin.Context, decision
 	if decision.Kind == securityaudit.DecisionBlock {
 		errType = "permission_error"
 	}
-	c.JSON(securityAuditStatus(decision), gin.H{"error": gin.H{
-		"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
-	}})
+	c.JSON(securityAuditStatus(decision), gin.H{"error": securityAuditErrorPayload(decision, errType)})
 }
 
 func (h *GatewayHandler) openAISecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
@@ -43,9 +52,7 @@ func (h *GatewayHandler) openAISecurityAuditError(c *gin.Context, decision *secu
 	if decision.Kind == securityaudit.DecisionBlock {
 		errType = "permission_error"
 	}
-	c.JSON(securityAuditStatus(decision), gin.H{"error": gin.H{
-		"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
-	}})
+	c.JSON(securityAuditStatus(decision), gin.H{"error": securityAuditErrorPayload(decision, errType)})
 }
 
 func (h *GatewayHandler) responsesSecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
@@ -56,9 +63,7 @@ func (h *GatewayHandler) responsesSecurityAuditError(c *gin.Context, decision *s
 		h.responsesErrorResponse(c, securityAuditStatus(decision), securityAuditErrorCode(decision), securityAuditMessage(decision))
 		return
 	}
-	c.JSON(securityAuditStatus(decision), gin.H{"error": gin.H{
-		"type": "api_error", "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
-	}})
+	c.JSON(securityAuditStatus(decision), gin.H{"error": securityAuditErrorPayload(decision, "api_error")})
 }
 
 func (h *GatewayHandler) anthropicSecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
@@ -73,9 +78,7 @@ func (h *GatewayHandler) anthropicSecurityAuditError(c *gin.Context, decision *s
 	if decision.Kind == securityaudit.DecisionBlock {
 		errType = "permission_error"
 	}
-	c.JSON(securityAuditStatus(decision), gin.H{"type": "error", "error": gin.H{
-		"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
-	}})
+	c.JSON(securityAuditStatus(decision), gin.H{"type": "error", "error": securityAuditErrorPayload(decision, errType)})
 }
 
 func (h *OpenAIGatewayHandler) anthropicSecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
@@ -90,9 +93,7 @@ func (h *OpenAIGatewayHandler) anthropicSecurityAuditError(c *gin.Context, decis
 	if decision.Kind == securityaudit.DecisionBlock {
 		errType = "permission_error"
 	}
-	c.JSON(securityAuditStatus(decision), gin.H{"type": "error", "error": gin.H{
-		"type": errType, "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision),
-	}})
+	c.JSON(securityAuditStatus(decision), gin.H{"type": "error", "error": securityAuditErrorPayload(decision, errType)})
 }
 
 func googleSecurityAuditError(c *gin.Context, decision *securityaudit.Decision) {
@@ -136,7 +137,7 @@ func writeSecurityAuditWSError(ctx context.Context, conn *coderws.Conn, decision
 	}
 	payload, err := json.Marshal(gin.H{
 		"event_id": "evt_prompt_guard_rejected", "type": "error",
-		"error": gin.H{"type": "invalid_request_error", "code": securityAuditErrorCode(decision), "message": securityAuditMessage(decision)},
+		"error": securityAuditErrorPayload(decision, "invalid_request_error"),
 	})
 	if err != nil {
 		return
