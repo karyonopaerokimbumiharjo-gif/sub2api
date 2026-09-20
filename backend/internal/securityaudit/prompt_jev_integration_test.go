@@ -32,3 +32,17 @@ func TestJevSupportsEveryConfiguredScanner(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, len(AllScannerIDs))
 }
+
+func TestJevConfigSavePreservesNativeOriginAndCredential(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	req := promptAuditUpdateRequest(1, 1, "")
+	req.Endpoints = []UpdateEndpoint{{ID: "native-jev", Name: "Jev", Protocol: JevProtocol, BaseURL: JevBaseURL + "/v1", Model: DefaultJevModel, Token: "synthetic-jev-token", TimeoutMS: 30000, InputLimit: 4000, Enabled: true}}
+	saved, err := manager.buildNextStorage(DefaultStorageConfig(), req, 9)
+	require.NoError(t, err)
+	require.Equal(t, JevBaseURL, saved.Endpoints[0].BaseURL)
+	require.Equal(t, "enc:synthetic-jev-token", saved.Endpoints[0].TokenCiphertext)
+	req.Endpoints[0].Token = ""
+	savedAgain, err := manager.buildNextStorage(saved, req, 9)
+	require.NoError(t, err)
+	require.Equal(t, saved.Endpoints[0].TokenCiphertext, savedAgain.Endpoints[0].TokenCiphertext)
+}

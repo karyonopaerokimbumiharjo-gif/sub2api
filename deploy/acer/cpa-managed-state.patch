@@ -1,0 +1,211 @@
+--- a/internal/runtime/executor/codex_executor_execute.go
++++ b/internal/runtime/executor/codex_executor_execute.go
+@@ -84,6 +84,13 @@
+ 	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg, opts.Headers)
+ 	applyModelHeaderOverrides(httpReq.Header, baseModel)
+ 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
++ // State is attached only after CPA has selected the actual credential.
++ authIndex := ""
++ if auth != nil { authIndex = auth.Index }
++ if stateErr := helps.ApplyManagedCodexState(httpReq.Header, authIndex, baseModel); stateErr != nil {
++  return resp, statusErr{code: http.StatusServiceUnavailable, msg: stateErr.Error()}
++ }
++
+ 	var authID, authLabel, authType, authValue string
+ 	if auth != nil {
+ 		authID = auth.ID
+@@ -255,6 +262,13 @@
+ 	applyCodexHeaders(httpReq, auth, apiKey, false, e.cfg, opts.Headers)
+ 	applyModelHeaderOverrides(httpReq.Header, baseModel)
+ 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
++ // State is attached only after CPA has selected the actual credential.
++ authIndex := ""
++ if auth != nil { authIndex = auth.Index }
++ if stateErr := helps.ApplyManagedCodexState(httpReq.Header, authIndex, baseModel); stateErr != nil {
++  return resp, statusErr{code: http.StatusServiceUnavailable, msg: stateErr.Error()}
++ }
++
+ 	var authID, authLabel, authType, authValue string
+ 	if auth != nil {
+ 		authID = auth.ID
+--- a/internal/runtime/executor/codex_executor_stream.go
++++ b/internal/runtime/executor/codex_executor_stream.go
+@@ -90,6 +90,13 @@
+ 	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg, opts.Headers)
+ 	applyModelHeaderOverrides(httpReq.Header, baseModel)
+ 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
++ // State is attached only after CPA has selected the actual credential.
++ authIndex := ""
++ if auth != nil { authIndex = auth.Index }
++ if stateErr := helps.ApplyManagedCodexState(httpReq.Header, authIndex, baseModel); stateErr != nil {
++  return nil, statusErr{code: http.StatusServiceUnavailable, msg: stateErr.Error()}
++ }
++
+ 	var authID, authLabel, authType, authValue string
+ 	if auth != nil {
+ 		authID = auth.ID
+--- a/internal/runtime/executor/codex_websockets_execute.go
++++ b/internal/runtime/executor/codex_websockets_execute.go
+@@ -20,6 +20,8 @@
+ )
+ 
+ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
++	// A pooled WS handshake cannot be updated when a credential state expires.
++ if helps.ManagedCodexStateConfigured() { return e.CodexExecutor.Execute(ctx, auth, req, opts) }
+ 	if ctx == nil {
+ 		ctx = context.Background()
+ 	}
+--- a/internal/runtime/executor/codex_websockets_stream.go
++++ b/internal/runtime/executor/codex_websockets_stream.go
+@@ -21,6 +21,8 @@
+ 
+ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+ 	log.Debugf("Executing Codex Websockets stream request with auth ID: %s, model: %s", auth.ID, req.Model)
++	// A pooled WS handshake cannot be updated when a credential state expires.
++ if helps.ManagedCodexStateConfigured() { return e.CodexExecutor.ExecuteStream(ctx, auth, req, opts) }
+ 	if ctx == nil {
+ 		ctx = context.Background()
+ 	}
+--- /dev/null
++++ b/internal/runtime/executor/helps/managed_codex_state.go
+@@ -0,0 +1,77 @@
++package helps
++
++import (
++	"encoding/base64"
++	"encoding/binary"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"os"
++	"time"
++)
++
++var ErrManagedCodexState = errors.New("292 state unavailable for selected credential and model")
++
++type ManagedCodexState struct {
++	Enabled   bool                              `json:"enabled"`
++	UpdatedAt int64                             `json:"updated_at"`
++	Models    []string                          `json:"models"`
++	Entries   map[string]ManagedCodexStateEntry `json:"entries"`
++}
++type ManagedCodexStateEntry struct {
++	State     string `json:"state"`
++	ExpiresAt int64  `json:"expires_at"`
++}
++
++func ManagedCodexStateConfigured() bool { return os.Getenv("SUB2API_CODEX_STATE_FILE") != "" }
++
++// ApplyManagedCodexState reads an atomic, private snapshot written by the
++// credential-bound collector. Never reuse a state across credentials or models.
++func ApplyManagedCodexState(h http.Header, authIndex, model string) error {
++	path := os.Getenv("SUB2API_CODEX_STATE_FILE")
++	if path == "" {
++		return nil
++	}
++	raw, err := os.ReadFile(path)
++	if err != nil || len(raw) > 1<<20 {
++		return ErrManagedCodexState
++	}
++	var cfg ManagedCodexState
++	if json.Unmarshal(raw, &cfg) != nil {
++		return ErrManagedCodexState
++	}
++	return applyManagedCodexState(h, authIndex, model, cfg, time.Now().Unix())
++}
++func applyManagedCodexState(h http.Header, authIndex, model string, cfg ManagedCodexState, now int64) error {
++	if cfg.UpdatedAt > now+5 || now-cfg.UpdatedAt > 30 {
++		return ErrManagedCodexState
++	}
++	if !cfg.Enabled {
++		return nil
++	}
++	gated := false
++	for _, m := range cfg.Models {
++		if m == model {
++			gated = true
++			break
++		}
++	}
++	if !gated {
++		return nil
++	}
++	h.Del("X-Codex-Turn-State")
++	entry, ok := cfg.Entries[authIndex+"\x00"+model]
++	if !ok || authIndex == "" || entry.ExpiresAt <= now || entry.ExpiresAt > now+3600 || len(entry.State) != 292 {
++		return ErrManagedCodexState
++	}
++	decoded, err := base64.URLEncoding.DecodeString(entry.State)
++	if err != nil || len(decoded) != 217 || decoded[0] != 128 {
++		return ErrManagedCodexState
++	}
++	issued := int64(binary.BigEndian.Uint64(decoded[1:9]))
++	if issued > now+5 || issued <= now-3600 || entry.ExpiresAt > issued+3600 {
++		return ErrManagedCodexState
++	}
++	h.Set("X-Codex-Turn-State", entry.State)
++	return nil
++}
+--- /dev/null
++++ b/internal/runtime/executor/helps/managed_codex_state_test.go
+@@ -0,0 +1,60 @@
++package helps
++
++import (
++	"encoding/base64"
++	"encoding/binary"
++	"net/http"
++	"testing"
++)
++
++func TestManagedCodexStateCredentialModelAndExpiry(t *testing.T) {
++	const now int64 = 1800000000
++	raw := make([]byte, 217)
++	raw[0] = 128
++	binary.BigEndian.PutUint64(raw[1:9], uint64(now-10))
++	state := base64.URLEncoding.EncodeToString(raw)
++	good := ManagedCodexState{Enabled: true, UpdatedAt: now, Models: []string{"gpt-6-astra"}, Entries: map[string]ManagedCodexStateEntry{"auth-a\x00gpt-6-astra": {State: state, ExpiresAt: now + 3590}}}
++	for _, tc := range []struct {
++		name, auth, model  string
++		mutate             func(*ManagedCodexState)
++		wantErr, wantState bool
++	}{
++		{"matching", "auth-a", "gpt-6-astra", nil, false, true},
++		{"wrong credential", "auth-b", "gpt-6-astra", nil, true, false},
++		{"unmanaged model", "auth-a", "gpt-5.6-luna", nil, false, false},
++		{"disabled", "auth-a", "gpt-6-astra", func(c *ManagedCodexState) { c.Enabled = false }, false, false},
++		{"stale controller", "auth-a", "gpt-6-astra", func(c *ManagedCodexState) { c.UpdatedAt = now - 31 }, true, false},
++		{"expired", "auth-a", "gpt-6-astra", func(c *ManagedCodexState) {
++			c.Entries["auth-a\x00gpt-6-astra"] = ManagedCodexStateEntry{State: state, ExpiresAt: now}
++		}, true, false},
++		{"312 rejected", "auth-a", "gpt-6-astra", func(c *ManagedCodexState) {
++			b := make([]byte, 233)
++			copy(b, raw)
++			c.Entries["auth-a\x00gpt-6-astra"] = ManagedCodexStateEntry{State: base64.URLEncoding.EncodeToString(b), ExpiresAt: now + 3590}
++		}, true, false},
++		{"future token", "auth-a", "gpt-6-astra", func(c *ManagedCodexState) {
++			b := append([]byte(nil), raw...)
++			binary.BigEndian.PutUint64(b[1:9], uint64(now+30))
++			c.Entries["auth-a\x00gpt-6-astra"] = ManagedCodexStateEntry{State: base64.URLEncoding.EncodeToString(b), ExpiresAt: now + 3590}
++		}, true, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			c := good
++			c.Entries = map[string]ManagedCodexStateEntry{}
++			for k, v := range good.Entries {
++				c.Entries[k] = v
++			}
++			if tc.mutate != nil {
++				tc.mutate(&c)
++			}
++			h := http.Header{}
++			err := applyManagedCodexState(h, tc.auth, tc.model, c, now)
++			if (err != nil) != tc.wantErr {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if (h.Get("X-Codex-Turn-State") != "") != tc.wantState {
++				t.Fatal("unexpected state injection")
++			}
++		})
++	}
++}

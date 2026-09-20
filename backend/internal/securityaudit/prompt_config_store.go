@@ -527,9 +527,9 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 			protocol = EndpointProtocolOpenAICompatible
 		}
 		baseURL := ""
-		if protocol == EndpointProtocolOpenAICompatible {
+		if protocol == EndpointProtocolOpenAICompatible || protocol == JevProtocol {
 			var err error
-			baseURL, err = NormalizeBaseURL(endpoint.BaseURL)
+			baseURL, err = normalizeAuditEndpointURL(protocol, endpoint.BaseURL)
 			if err != nil {
 				return storageConfig{}, err
 			}
