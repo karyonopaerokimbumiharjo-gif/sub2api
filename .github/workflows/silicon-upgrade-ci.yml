@@ -1,0 +1,30 @@
+name: Silicon upgrade validation
+on:
+  push:
+    branches: ['silicon/v0.2.7-jev-hardening-20260920']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: silicon-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export tracked source only
+        run: |
+          mkdir -p /tmp/silicon-source
+          git archive --format=tar.gz HEAD > /tmp/silicon-source/source.tar.gz
+          git rev-parse HEAD > /tmp/silicon-source/COMMIT
+          sha256sum /tmp/silicon-source/source.tar.gz > /tmp/silicon-source/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: silicon-source-${{ github.sha }}
+          path: /tmp/silicon-source/
+          retention-days: 3
+          if-no-files-found: error
