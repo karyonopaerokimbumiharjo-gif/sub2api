@@ -35,13 +35,20 @@ const (
 var ErrOpenAICodexTicketUnavailable = errors.New("codex turn-state ticket unavailable")
 
 type openAICodexTicket struct {
-	AccountID  int64     `json:"account_id"`
-	Model      string    `json:"model"`
-	State      string    `json:"state"`
-	Length     int       `json:"length"`
-	CapturedAt time.Time `json:"captured_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Attempts   int       `json:"attempts"`
+	AccountID             int64     `json:"account_id"`
+	Model                 string    `json:"model"`
+	State                 string    `json:"state"`
+	Length                int       `json:"length"`
+	Blocks                int       `json:"blocks,omitempty"`
+	IssuedAt              time.Time `json:"issued_at,omitempty"`
+	Fingerprint           string    `json:"fingerprint,omitempty"`
+	CredentialFingerprint string    `json:"credential_fingerprint,omitempty"`
+	PlanClass             string    `json:"plan_class,omitempty"`
+	Source                string    `json:"source,omitempty"`
+	RouteFingerprint      string    `json:"route_fingerprint,omitempty"`
+	CapturedAt            time.Time `json:"captured_at"`
+	ExpiresAt             time.Time `json:"expires_at"`
+	Attempts              int       `json:"attempts"`
 }
 
 func openAICodexTicketKey(accountID int64, model string) string {
@@ -66,7 +73,10 @@ func (s *OpenAIGatewayService) openAICodexTicketConfig() config.OpenAICodexTicke
 		cfg = s.cfg.Gateway.OpenAICodexTicket
 	}
 	if cfg.TargetLength <= 0 {
-		cfg.TargetLength = 292
+		cfg.TargetLength = openAICodexPersonalLength
+	}
+	if cfg.TeamTargetLength <= 0 {
+		cfg.TeamTargetLength = openAICodexTeamLength
 	}
 	if cfg.TTLSeconds <= 0 {
 		cfg.TTLSeconds = 3600
@@ -79,6 +89,21 @@ func (s *OpenAIGatewayService) openAICodexTicketConfig() config.OpenAICodexTicke
 	}
 	if cfg.HarvestAttemptTimeoutSeconds <= 0 {
 		cfg.HarvestAttemptTimeoutSeconds = 25
+	}
+	if cfg.HarvestMaxConcurrency <= 0 {
+		cfg.HarvestMaxConcurrency = 8
+	}
+	if cfg.HarvestMaxConcurrency > 32 {
+		cfg.HarvestMaxConcurrency = 32
+	}
+	if cfg.HarvestJitterSeconds < 0 {
+		cfg.HarvestJitterSeconds = 0
+	}
+	if cfg.HarvestJitterSeconds == 0 {
+		cfg.HarvestJitterSeconds = 3
+	}
+	if cfg.HarvestBackoffMaxSeconds <= 0 {
+		cfg.HarvestBackoffMaxSeconds = 300
 	}
 	if len(cfg.Models) == 0 {
 		cfg.Models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
@@ -102,7 +127,12 @@ func (s *OpenAIGatewayService) openAICodexTicketGatedModel(model string) bool {
 // OpenAICodexTicketStatus 是给管理端看的门票摘要，不含 state blob。
 type OpenAICodexTicketStatus struct {
 	Model            string     `json:"model"`
+	PlanClass        string     `json:"plan_class,omitempty"`
 	Length           int        `json:"length,omitempty"`
+	Blocks           int        `json:"blocks,omitempty"`
+	Fingerprint      string     `json:"fingerprint,omitempty"`
+	Source           string     `json:"source,omitempty"`
+	RouteFingerprint string    `json:"route_fingerprint,omitempty"`
 	Ready            bool       `json:"ready"`
 	RemainingSeconds int64      `json:"remaining_seconds"`
 	Blocked          bool       `json:"blocked"`
@@ -113,27 +143,29 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	if !cfg.Enabled || !isOpenAICodexTicketAccount(account) {
 		return nil
 	}
-	models, targetLen := cfg.Models, cfg.TargetLength
+	models := cfg.Models
 	if len(models) == 0 {
 		models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
 	}
-	if targetLen <= 0 {
-		targetLen = 292
-	}
+	policy := openAICodexPolicyForAccount(account, cfg)
 	out := make([]OpenAICodexTicketStatus, 0, len(models))
 	for _, model := range models {
 		model = normalizeOpenAICodexTicketModel(model)
 		if model == "" {
 			continue
 		}
-		status := OpenAICodexTicketStatus{Model: model}
+		status := OpenAICodexTicketStatus{Model: model, PlanClass: policy.PlanClass}
 		ticket := parseOpenAICodexTicketFromAny(0, model, nil)
 		if account != nil && account.Extra != nil {
 			ticket = parseOpenAICodexTicketFromAny(account.ID, model, account.Extra[openAICodexTicketExtraKey(model)])
 		}
-		if ticket.valid(now, targetLen) {
+		if ticket.validFor(account, cfg, now) {
 			status.Ready = true
 			status.Length = ticket.Length
+			status.Blocks = ticket.Blocks
+			status.Fingerprint = ticket.Fingerprint
+			status.Source = ticket.Source
+			status.RouteFingerprint = ticket.RouteFingerprint
 			remaining := int64(ticket.ExpiresAt.Sub(now) / time.Second)
 			if remaining < 0 {
 				remaining = 0
@@ -180,11 +212,40 @@ func (t *openAICodexTicket) valid(now time.Time, targetLen int) bool {
 	if t == nil {
 		return false
 	}
-	state := strings.TrimSpace(t.State)
-	if len(state) != targetLen || t.Length != targetLen || !strings.HasPrefix(state, openAICodexTicketStatePrefix) {
+	shape, err := parseOpenAICodexStateShape(t.State)
+	if err != nil || shape.Length != targetLen || t.Length != targetLen {
 		return false
 	}
-	if t.ExpiresAt.IsZero() || !now.Before(t.ExpiresAt) {
+	expectedBlocks := openAICodexPersonalBlocks
+	if targetLen == openAICodexTeamLength {
+		expectedBlocks = openAICodexTeamBlocks
+	}
+	if shape.Blocks != expectedBlocks || t.ExpiresAt.IsZero() || !now.Before(t.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+func (t *openAICodexTicket) validFor(account *Account, cfg config.OpenAICodexTicketConfig, now time.Time) bool {
+	if t == nil || account == nil || account.ID <= 0 || (t.AccountID > 0 && t.AccountID != account.ID) {
+		return false
+	}
+	policy := openAICodexPolicyForAccount(account, cfg)
+	shape, err := parseOpenAICodexStateShape(t.State)
+	if err != nil || !openAICodexStateAccepted(shape, policy, now) {
+		return false
+	}
+	if t.Model == "" || normalizeOpenAICodexTicketModel(t.Model) == "" {
+		return false
+	}
+	if !t.ExpiresAt.IsZero() && !now.Before(t.ExpiresAt) {
+		return false
+	}
+	currentCredential := openAICodexCredentialFingerprint(account)
+	if t.CredentialFingerprint != "" && currentCredential != "" && t.CredentialFingerprint != currentCredential {
+		return false
+	}
+	if t.Fingerprint != "" && t.Fingerprint != shape.Fingerprint {
 		return false
 	}
 	return true
@@ -206,10 +267,7 @@ func (s *OpenAIGatewayService) lookupOpenAICodexTicket(account *Account, model s
 		return nil
 	}
 	key := openAICodexTicketKey(account.ID, model)
-	targetLen := 292
-	if s != nil {
-		targetLen = s.openAICodexTicketConfig().TargetLength
-	}
+	cfg := s.openAICodexTicketConfig()
 	now := time.Now()
 	var mem *openAICodexTicket
 	if raw, ok := s.openaiCodexTickets.Load(key); ok {
@@ -219,11 +277,11 @@ func (s *OpenAIGatewayService) lookupOpenAICodexTicket(account *Account, model s
 	if account.Extra != nil {
 		extra = parseOpenAICodexTicketFromAny(account.ID, model, account.Extra[openAICodexTicketExtraKey(model)])
 	}
-	if extra.valid(now, targetLen) && (mem == nil || extra.CapturedAt.After(mem.CapturedAt)) {
+	if extra.validFor(account, cfg, now) && (mem == nil || extra.CapturedAt.After(mem.CapturedAt)) {
 		s.openaiCodexTickets.Store(key, extra)
 		return extra
 	}
-	if mem.valid(now, targetLen) {
+	if mem.validFor(account, cfg, now) {
 		return mem
 	}
 	if extra != nil {
@@ -256,6 +314,12 @@ func parseOpenAICodexTicketFromAny(accountID int64, model string, raw any) *open
 	if ticket.Length == 0 {
 		ticket.Length = len(ticket.State)
 	}
+	if shape, err := parseOpenAICodexStateShape(ticket.State); err == nil {
+		ticket.Length = shape.Length
+		ticket.Blocks = shape.Blocks
+		ticket.IssuedAt = shape.IssuedAt
+		ticket.Fingerprint = shape.Fingerprint
+	}
 	if ticket.State == "" {
 		return nil
 	}
@@ -269,6 +333,18 @@ func (s *OpenAIGatewayService) storeOpenAICodexTicket(ctx context.Context, accou
 	model := normalizeOpenAICodexTicketModel(ticket.Model)
 	ticket.Model = model
 	ticket.AccountID = account.ID
+	if shape, err := parseOpenAICodexStateShape(ticket.State); err == nil {
+		ticket.Length = shape.Length
+		ticket.Blocks = shape.Blocks
+		ticket.IssuedAt = shape.IssuedAt
+		ticket.Fingerprint = shape.Fingerprint
+		policy := openAICodexPolicyForAccount(account, s.openAICodexTicketConfig())
+		ticket.PlanClass = policy.PlanClass
+		if ticket.ExpiresAt.IsZero() || ticket.ExpiresAt.After(shape.IssuedAt.Add(policy.TTL)) {
+			ticket.ExpiresAt = shape.IssuedAt.Add(policy.TTL)
+		}
+	}
+	ticket.CredentialFingerprint = openAICodexCredentialFingerprint(account)
 	s.openaiCodexTickets.Store(openAICodexTicketKey(account.ID, model), ticket)
 	if s.accountRepo == nil {
 		return
@@ -299,7 +375,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	}
 	cfg := s.openAICodexTicketConfig()
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	if ticket.valid(time.Now(), cfg.TargetLength) {
+	if ticket.validFor(account, cfg, time.Now()) {
 		h.Set(openAICodexTurnStateHeader, ticket.State)
 		return nil
 	}
@@ -354,7 +430,7 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 		return false
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	return !ticket.valid(time.Now(), cfg.TargetLength)
+	return !ticket.validFor(account, cfg, time.Now())
 }
 
 func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, account *Account, token, model, proxyURL string, attemptTimeout time.Duration) (state string, status int, err error) {
@@ -504,7 +580,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 				continue
 			}
 			// 已有一张有效且未临近过期的票 → 本周期不打，省得白刷。
-			if t := s.lookupOpenAICodexTicket(&account, model); t.valid(now, cfg.TargetLength) && !t.needsRefresh(now, refreshBefore) {
+			if t := s.lookupOpenAICodexTicket(&account, model); t.validFor(&account, cfg, now) && !t.needsRefresh(now, refreshBefore) {
 				continue
 			}
 			acc := account
