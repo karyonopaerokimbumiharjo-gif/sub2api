@@ -1226,12 +1226,21 @@ func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 // 门票默认有效 3600 秒，临近过期前 refresh_before_seconds 重新打票。
 type OpenAICodexTicketConfig struct {
 	Enabled                      bool     `mapstructure:"enabled"`
+	// TargetLength is retained as the legacy/personal 292 shape setting.
 	TargetLength                 int      `mapstructure:"target_length"`
+	TeamTargetLength             int      `mapstructure:"team_target_length"`
 	TTLSeconds                   int      `mapstructure:"ttl_seconds"`
 	RefreshBeforeSeconds         int      `mapstructure:"refresh_before_seconds"`
+	// HarvestProxyURL is the live/admin override-compatible primary route.
 	HarvestProxyURL              string   `mapstructure:"harvest_proxy_url"`
+	// HarvestProxyURLs adds a bounded route pool. The primary URL above is
+	// prepended when non-empty and duplicate routes are removed.
+	HarvestProxyURLs             []string `mapstructure:"harvest_proxy_urls"`
 	HarvestProbeIntervalSeconds  int      `mapstructure:"harvest_probe_interval_seconds"`
 	HarvestAttemptTimeoutSeconds int      `mapstructure:"harvest_attempt_timeout_seconds"`
+	HarvestMaxConcurrency        int      `mapstructure:"harvest_max_concurrency"`
+	HarvestJitterSeconds         int      `mapstructure:"harvest_jitter_seconds"`
+	HarvestBackoffMaxSeconds     int      `mapstructure:"harvest_backoff_max_seconds"`
 	FailClosed                   bool     `mapstructure:"fail_closed"`
 	Models                       []string `mapstructure:"models"`
 }
