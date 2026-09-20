@@ -6,6 +6,8 @@ import type {
   PromptEventFilters,
 } from './types'
 
+import { JEV_BASE_URL, JEV_MODEL, JEV_PROTOCOL } from './securityViewModel'
+
 export const DEFAULT_GUARD_MODEL = 'sileader/qwen3guard:0.6b'
 
 export const SCANNER_CATALOG = [
@@ -44,12 +46,12 @@ export function createDefaultEndpoint(index = 1): PromptAuditEndpointDraft {
   return {
     id: `guard-${Date.now()}-${index}`,
     name: `Guard ${index}`,
-    protocol: 'openai_compatible',
-    base_url: 'http://127.0.0.1:8000',
-    model: DEFAULT_GUARD_MODEL,
+    protocol: JEV_PROTOCOL,
+    base_url: JEV_BASE_URL,
+    model: JEV_MODEL,
     timeout_ms: 3000,
     input_limit: 4000,
-    enabled: true,
+    enabled: false,
     has_token: false,
     token_status: 'missing',
     token: '',
@@ -73,9 +75,9 @@ export function buildUpdateRequest(draft: PromptAuditDraft): PromptAuditUpdateRe
     endpoints: draft.endpoints.map((endpoint) => ({
       id: endpoint.id.trim(),
       name: endpoint.name.trim(),
-      protocol: 'openai_compatible',
+      protocol: endpoint.protocol,
       base_url: endpoint.base_url.trim(),
-      model: endpoint.model.trim() || DEFAULT_GUARD_MODEL,
+      model: endpoint.model.trim() || (endpoint.protocol === JEV_PROTOCOL ? JEV_MODEL : DEFAULT_GUARD_MODEL),
       token: endpoint.token.trim() || undefined,
       clear_token: endpoint.clear_token,
       timeout_ms: Number(endpoint.timeout_ms),
