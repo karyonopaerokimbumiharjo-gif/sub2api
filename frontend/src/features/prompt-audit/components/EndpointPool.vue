@@ -56,6 +56,7 @@
           <div class="min-w-0 xl:block">
             <p class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 xl:hidden">{{ t('admin.promptAudit.pool.model') }}</p>
             <p class="truncate text-sm font-medium text-gray-700 dark:text-dark-200" :title="endpoint.model">{{ endpoint.model }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ endpoint.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : 'Qwen3Guard · Chat Completions' }}</p>
           </div>
 
           <div>
@@ -93,7 +94,16 @@
     </div>
 
     <BaseDialog :show="Boolean(editing)" :title="editingIndex < 0 ? t('admin.promptAudit.pool.add') : t('admin.promptAudit.pool.edit')" width="wide" @close="closeEditor">
-      <form v-if="editing" class="grid gap-4 sm:grid-cols-2" @submit.prevent="saveEditor">
+      <form v-if="editing" ref="formRef" class="grid gap-4 sm:grid-cols-2" @submit.prevent="saveEditor">
+        <p v-if="editorError" role="alert" class="text-sm text-red-600 dark:text-red-300 sm:col-span-2">{{ editorError }}</p>
+        <label class="space-y-1 text-sm sm:col-span-2">
+          <span>{{ locale.startsWith('zh') ? '审查服务商 / 协议' : 'Audit provider / protocol' }}</span>
+          <select :value="editing.protocol" class="input w-full" data-test="audit-provider" @change="selectProvider">
+            <option value="typesafe_systemone">TypeSafe Jev · System One</option>
+            <option value="openai_compatible">Qwen3Guard · OpenAI compatible</option>
+          </select>
+          <span class="block text-xs text-gray-500">{{ locale.startsWith('zh') ? '切换服务商会清除待提交凭据并暂停节点；需重新配置，不会自动改动线上配置。' : 'Changing providers clears the draft credential and disables the node. Save explicitly after reconfiguring it.' }}</span>
+        </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.pool.name') }}</span>
           <input v-model="editing.name" class="input w-full" required :aria-label="t('admin.promptAudit.pool.name')" />
@@ -104,7 +114,7 @@
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200 sm:col-span-2">
           <span>{{ t('admin.promptAudit.pool.baseUrl') }}</span>
-          <input v-model="editing.base_url" class="input w-full" required inputmode="url" :aria-label="t('admin.promptAudit.pool.baseUrl')" />
+          <input v-model="editing.base_url" class="input w-full" required inputmode="url" :readonly="editing.protocol === 'typesafe_systemone'" :aria-label="t('admin.promptAudit.pool.baseUrl')" />
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200 sm:col-span-2">
           <span>{{ t('admin.promptAudit.pool.apiKey') }}</span>
@@ -125,7 +135,7 @@
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.pool.inputLimit') }}</span>
-          <input v-model.number="editing.input_limit" class="input w-full" type="number" min="128" max="100000" required :aria-label="t('admin.promptAudit.pool.inputLimit')" />
+          <input v-model.number="editing.input_limit" class="input w-full" type="number" min="128" :max="editing.protocol === 'typesafe_systemone' ? 4000 : 100000" required :aria-label="t('admin.promptAudit.pool.inputLimit')" />
         </label>
       </form>
       <template #footer>
@@ -144,6 +154,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PromptAuditEndpointDraft, PromptProbeResult } from '../types'
 import { cloneData, createDefaultEndpoint } from '../viewModel'
+import { changeAuditProvider, validateAuditEndpoint, auditEndpointError } from '../securityViewModel'
 
 const props = defineProps<{
   endpoints: PromptAuditEndpointDraft[]
@@ -154,24 +165,40 @@ const emit = defineEmits<{
   (event: 'update:endpoints', value: PromptAuditEndpointDraft[]): void
   (event: 'probe', endpoint: PromptAuditEndpointDraft): void
 }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const formRef = ref<HTMLFormElement | null>(null)
+const editorError = ref('')
 const editing = ref<PromptAuditEndpointDraft | null>(null)
 const editingIndex = ref(-1)
 
 function openCreate() {
+  editorError.value = ''
   editingIndex.value = -1
   editing.value = createDefaultEndpoint(props.endpoints.length + 1)
 }
 function openEdit(endpoint: PromptAuditEndpointDraft) {
+  editorError.value = ''
   editingIndex.value = props.endpoints.findIndex((item) => item.id === endpoint.id)
   editing.value = cloneData(endpoint)
 }
 function closeEditor() {
   editing.value = null
+  editorError.value = ''
   editingIndex.value = -1
 }
+function selectProvider(event: Event) {
+  if (!editing.value) return
+  const value = (event.target as HTMLSelectElement).value
+  if (value !== 'typesafe_systemone' && value !== 'openai_compatible') return
+  editing.value = changeAuditProvider(editing.value, value)
+  editorError.value = ''
+}
+
 function saveEditor() {
-  if (!editing.value?.id.trim() || !editing.value.name.trim() || !editing.value.base_url.trim()) return
+  if (!editing.value || !formRef.value?.reportValidity()) return
+  const code = validateAuditEndpoint(editing.value, props.endpoints, editingIndex.value)
+  editorError.value = code ? auditEndpointError(code, locale.value) : ''
+  if (code) return
   const next = props.endpoints.map((item) => cloneData(item))
   const value = cloneData(editing.value)
   if (value.token.trim()) value.clear_token = false
