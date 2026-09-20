@@ -117,6 +117,7 @@ type PromptSnapshot struct {
 
 func (s PromptSnapshot) Redacted() PromptSnapshot {
 	s.ScanText = ""
+	s.FullPrompt = ""
 	return s
 }
 
