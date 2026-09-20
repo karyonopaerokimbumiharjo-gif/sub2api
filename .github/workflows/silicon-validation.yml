@@ -1,0 +1,66 @@
+name: Silicon validation
+on:
+  push:
+    branches: ['silicon/v0.2.7-jev-hardening-20260920']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: silicon-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: git archive --format=tar.gz HEAD > "$RUNNER_TEMP/silicon-source.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: silicon-source-${{ github.sha }}
+          path: ${{ runner.temp }}/silicon-source.tar.gz
+          retention-days: 3
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Build backend
+        working-directory: backend
+        run: go build ./...
+      - name: Unit and race tests
+        working-directory: backend
+        run: go test -tags unit -race -count=1 ./internal/securityaudit/... ./internal/silicon/... ./internal/jev/...
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install locked dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck and build
+        working-directory: frontend
+        run: pnpm build
+      - name: Frontend regression tests
+        working-directory: frontend
+        run: pnpm test:run
