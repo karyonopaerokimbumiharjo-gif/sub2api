@@ -45,6 +45,7 @@ running Silicon image based only on the successful checks below.
 | PostgreSQL schema rehearsal | Restored the current production schema and all 300 migration records to a disposable database; application migrator succeeded twice, ending with 303 records |
 | Revocation persistence | Real PostgreSQL test passed: idempotent writes, reopen with a new connection, unrelated key isolation, and errors on an unavailable connection |
 | Service startup smoke | Health, administrator login, embedded homepage, audit config/runtime, account list, and user list returned 200 in isolation; synthetic Redis and a synthetic administrator were used |
+| Live Jev enhanced compaction | Passed native classification and protected-context invariants; the sample retained every item, so no compression gain is claimed |
 | Live Jev acceptance | `jev-1.13.0`: English/Chinese benign and defensive fixtures returned Allow; English/Chinese credential-theft fixtures returned Block (6/6) |
 
 The Jev credential is supplied only at execution time from the existing local
