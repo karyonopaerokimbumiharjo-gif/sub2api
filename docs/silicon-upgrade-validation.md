@@ -42,6 +42,7 @@ running Silicon image based only on the successful checks below.
 | Frontend typecheck/build | Passed; bundle-size warnings remain |
 | Full frontend regression run | 303 files / 2244 tests passed; two additional Jev editor regression cases were then added and the affected 14-test suite passed |
 | Focused backend regression | Security audit, Jev, GPT-6J, Codex state, CPA, and balance-grant selections passed in service, securityaudit, and handler packages |
+| Full physical backup and upgrade rehearsal | All 27 encrypted parts passed size/SHA-256 checks; gzip CRC and PostgreSQL 18.6 `pg_verifybackup` passed. Recovery completed with networking disabled. Two migration passes succeeded; core identity/entitlement table counts and content fingerprints and the usage-log count were unchanged |
 | PostgreSQL schema rehearsal | Restored the current production schema and all 300 migration records to a disposable database; application migrator succeeded twice, ending with 303 records |
 | Revocation persistence | Real PostgreSQL test passed: idempotent writes, reopen with a new connection, unrelated key isolation, and errors on an unavailable connection |
 | Service startup smoke | Health, administrator login, embedded homepage, audit config/runtime, account list, and user list returned 200 in isolation; synthetic Redis and a synthetic administrator were used |
@@ -68,17 +69,21 @@ or false-positive rate.
    OAuth/plan-aware state capture and user-distribution acceptance test remains
    outstanding. Token length or envelope shape alone does not establish model
    capability or response quality.
-4. Full business-data restore was interrupted by an SSH stream ending early.
-   The schema-only rehearsal is valid, but is not a full backup-restore test.
-   The partial restore remains isolated and must not be used for deployment.
-5. The historical migration record `149_user_balance_grants.sql` exists in the
-   database but its original file was not found in the copied source. The row
-   is preserved, not rewritten. All present applied files matched their stored
-   checksums during rehearsal; the historical source still needs reconciliation.
-6. Enhanced compaction is an optional pre-pass for explicit HTTP compaction
+4. Enhanced compaction is an optional pre-pass for explicit HTTP compaction
    requests. It preserves user/system/developer/tool items and recent context,
    and retains the original input on classifier failure. It does not rewrite
    opaque server-side `previous_response_id` state or ordinary WebSocket turns.
+
+## Historical migration provenance
+
+The applied `149_user_balance_grants.sql` record was retained unchanged. Its
+original source file was absent both from the copied source tree and from the
+running image's embedded migration names. The current
+`151_user_balance_grants.sql` was recovered from the running ELF binary and
+exactly matches the source file's trimmed SHA-256. Both the schema-only and full
+physical-backup rehearsals passed without rewriting migration checksums or
+history. This establishes upgrade compatibility; it does not reconstruct the
+missing historical migration text.
 
 ## Focused reproduction
 
