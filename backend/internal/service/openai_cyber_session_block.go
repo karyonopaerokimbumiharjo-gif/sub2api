@@ -23,6 +23,33 @@ type CyberSessionBlockStore interface {
 
 const cyberSessionTranscriptLookupOverflowBlockKey = "transcript_lookup_limit_exceeded"
 
+const securityAuditSessionBlockNamespace = "prompt_guard:"
+
+func securityAuditSessionBlockKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	return securityAuditSessionBlockNamespace + key
+}
+
+func securityAuditSessionBlockKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		namespaced := securityAuditSessionBlockKey(key)
+		if namespaced == "" {
+			continue
+		}
+		if _, ok := seen[namespaced]; ok {
+			continue
+		}
+		seen[namespaced] = struct{}{}
+		out = append(out, namespaced)
+	}
+	return out
+}
+
 // CyberSessionExplicitBlockKey returns an inexpensive exact key when the
 // client supplies a stable session signal.
 func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) string {
@@ -155,8 +182,10 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 		ttl = configuredTTL
 	}
 	var firstErr error
-	if store := s.cyberSessionBlockStore(); store != nil && len(keys) > 0 {
-		if err := store.SetCyberSessionBlocked(ctx, scopeKey, keys, ttl); err != nil {
+	namespacedKeys := securityAuditSessionBlockKeys(keys)
+	namespacedScope := securityAuditSessionBlockKey(scopeKey)
+	if store := s.cyberSessionBlockStore(); store != nil && len(namespacedKeys) > 0 {
+		if err := store.SetCyberSessionBlocked(ctx, namespacedScope, namespacedKeys, ttl); err != nil {
 			firstErr = err
 			logger.LegacyPrintf("service.openai_gateway", "security audit session block write failed: err=%v", err)
 		}
@@ -181,6 +210,59 @@ func (s *OpenAIGatewayService) InvalidateSecurityAuditSession(
 		}
 	}
 	return firstErr
+}
+
+// FindSecurityAuditSessionInvalidatedForRequest checks the independent prompt-guard
+// invalidation namespace. It deliberately ignores cyber_session_block_enabled so
+// a blocking audit verdict cannot be re-enabled by an older persisted setting.
+func (s *OpenAIGatewayService) FindSecurityAuditSessionInvalidatedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, clientIP, userAgent string) string {
+	if s == nil {
+		return ""
+	}
+	store := s.cyberSessionBlockStore()
+	if store == nil {
+		return ""
+	}
+	direct := securityAuditSessionBlockKeys([]string{
+		CyberSessionPreviousResponseBlockKey(apiKeyID, body),
+		CyberSessionExplicitBlockKey(apiKeyID, c, body),
+	})
+	if len(direct) > 0 {
+		key, err := store.FindCyberSessionBlocked(ctx, direct)
+		if err != nil {
+			logger.LegacyPrintf("service.openai_gateway", "security audit direct session read failed: err=%v", err)
+			return ""
+		}
+		if key != "" {
+			return key
+		}
+	}
+	scopeKey := securityAuditSessionBlockKey(CyberSessionScopeKey(apiKeyID, clientIP, userAgent))
+	if scopeKey == "" {
+		return ""
+	}
+	active, err := store.IsCyberSessionScopeActive(ctx, scopeKey)
+	if err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "security audit session scope read failed: err=%v", err)
+		return ""
+	}
+	if !active {
+		return ""
+	}
+	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
+	if transcript.lookupKeysTruncated {
+		return securityAuditSessionBlockKey(cyberSessionTranscriptLookupOverflowBlockKey)
+	}
+	keys := securityAuditSessionBlockKeys(transcript.lookupKeys)
+	if len(keys) == 0 {
+		return ""
+	}
+	key, err := store.FindCyberSessionBlocked(ctx, keys)
+	if err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "security audit session block batch read failed: err=%v", err)
+		return ""
+	}
+	return key
 }
 
 // FindCyberSessionBlockedForRequest applies explicit-first lookup followed by
