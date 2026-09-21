@@ -45,7 +45,10 @@ func (s *RoutingPromptScanner) Scan(ctx context.Context, endpoint ActiveEndpoint
 		if s == nil || s.openAI == nil || endpoint.AccountID != 0 {
 			return nil, &GuardError{Code: ErrorCodeUnavailable}
 		}
-		return s.openAI.scanJev(ctx, endpoint, chunk, enabledScanners)
+		started := time.Now()
+		result, err := s.openAI.scanJev(ctx, endpoint, chunk, enabledScanners)
+		s.recordCompatibleInvocation(ctx, endpoint, nil, err, time.Since(started))
+		return result, err
 	}
 	if (endpoint.Protocol != "" && endpoint.Protocol != EndpointProtocolOpenAICompatible) || endpoint.AccountID != 0 {
 		return nil, &GuardError{Code: ErrorCodeUnavailable, Cause: cpapolicy.Required()}

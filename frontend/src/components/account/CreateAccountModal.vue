@@ -1,10 +1,9 @@
 <template>
-  <BaseDialog :show="show" :title="text('导入 CPA 账号', 'Import CPA account')" width="wide" @close="close">
+  <BaseDialog :show="show" :title="text('导入账号', 'Import account')" width="wide" @close="close">
     <div class="space-y-5">
       <p class="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200" data-testid="cpa-only-notice">
-        {{ text('授权凭证导入 CPA 账号池，不会自动创建或恢复业务桥接账号。对外调用仍需单独配置本站桥接、分组和计费。', 'Credentials are imported into the CPA pool without creating or restoring a business bridge. Serving requests still requires this site’s bridge, groups and billing configuration.') }}
+        {{ text('导入授权后自动识别真实账号、合并重复授权并同步到账号列表。分组和调用设置可在账号行内编辑。', 'Imported credentials are deduplicated by identity and synchronized to the account list. Edit groups and routing on each account.') }}
       </p>
-      <CPABridgeSetup :show="show" :disabled="busy" :refresh-key="bridgeRefresh" @updated="routingWarning = false; emit('created')" />
       <div class="flex gap-2" role="tablist">
         <button v-for="tab in tabs" :key="tab.id" type="button" class="btn" :class="mode === tab.id ? 'btn-primary' : 'btn-secondary'" :disabled="busy" :data-testid="`cpa-tab-${tab.id}`" role="tab" :aria-selected="mode === tab.id" @click="mode = tab.id">{{ tab.label }}</button>
       </div>
@@ -40,7 +39,7 @@
     <template #footer>
       <div class="flex justify-end gap-3">
         <button type="button" class="btn btn-secondary" :disabled="busy" @click="close">{{ t('common.close') }}</button>
-        <button type="button" class="btn btn-primary" :disabled="busy || oauth.loading.value" data-testid="cpa-import-submit" @click="submit">{{ busy ? text('正在导入…', 'Importing…') : text('导入 CPA', 'Import into CPA') }}</button>
+        <button type="button" class="btn btn-primary" :disabled="busy || oauth.loading.value" data-testid="cpa-import-submit" @click="submit">{{ busy ? text('正在导入…', 'Importing…') : text('导入账号', 'Import account') }}</button>
       </div>
     </template>
   </BaseDialog>
@@ -50,8 +49,8 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import {syncCPAAccounts} from '@/api/admin/accounts'
 import CPARuntimeFields from './CPARuntimeFields.vue'
-import CPABridgeSetup from './CPABridgeSetup.vue'
 import { useCPAText } from './cpaRuntimeText'
 import type { CPACredentialUpdate } from '@/api/admin/accounts'
 import { adminAPI } from '@/api/admin'
@@ -110,6 +109,7 @@ async function submit() {
   error.value = summary.value = ''
   routingWarning.value = false
   let imported = 0
+  const importedAuthNames: string[] = []
   const failures: string[] = []
   try {
     if (mode.value === 'json') {
@@ -117,6 +117,7 @@ async function submit() {
       if (!contents.length) throw new Error(text('请选择文件或粘贴授权 JSON。', 'Select files or paste authorization JSON.'))
       const result = await adminAPI.accounts.importCPAAuthFiles(contents, runtime.value)
       imported = result.created + result.updated
+      for(const item of result.items || []) {const name=(item as {auth_name?:string}).auth_name;if(name)importedAuthNames.push(name)}
       routingWarning.value = (result.items || []).some((item) => item.action !== 'failed' && !item.account_id)
       for (const item of result.errors || []) failures.push(`#${item.index}: ${item.message}`)
     } else if (mode.value === 'refresh') {
@@ -130,6 +131,7 @@ async function submit() {
           credentials.refresh_token ||= tokens[index]
           const result = await adminAPI.accounts.importOpenAIOAuthToCPA(credentials, runtime.value)
           routingWarning.value ||= result.bridge_account_id === 0
+          importedAuthNames.push(result.auth_name)
           imported++
         } catch (err) { failures.push(`#${index + 1}: ${extractApiErrorMessage(err, 'Import failed')}`) }
       }
@@ -142,11 +144,13 @@ async function submit() {
       if (!tokenInfo) throw new Error(oauth.error.value || 'OAuth exchange failed')
       const result = await adminAPI.accounts.importOpenAIOAuthToCPA(oauth.buildCredentials(tokenInfo), runtime.value)
       routingWarning.value = result.bridge_account_id === 0
+      importedAuthNames.push(result.auth_name)
       imported = 1
     }
-    summary.value = imported > 0 ? text(`已导入 CPA：${imported} 个账号。`, `Imported into CPA: ${imported} account(s).`) : ''
+    summary.value = imported > 0 ? text(`已处理 ${imported} 份授权，实际账号数以列表去重结果为准。`, `Processed ${imported} credentials; the account list deduplicates identities.`) : ''
     error.value = failures.join('\n')
     if (imported > 0) {
+      try { await syncCPAAccounts(importedAuthNames); routingWarning.value = false } catch { failures.push(text('授权已导入，但业务账号同步失败。请保留文件并重试同步。', 'Credentials imported, but account synchronization failed. Retry synchronization.')); error.value = failures.join('\n') }
       bridgeRefresh.value++
       emit('created')
       if (!failures.length) { content.value = refreshTokens.value = callback.value = ''; fileContents.value = [] }

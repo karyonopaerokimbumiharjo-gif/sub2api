@@ -87,6 +87,12 @@
                 {{ isLikelyModelVariant(row) ? t('usage.modelVariant') : t('usage.modelMismatch') }}
               </span>
             </div>
+            <div v-if="row.upstream_response_model && row.upstream_response_model === sentUpstreamModel(row)" data-testid="upstream-model-confirmed" class="break-all pl-3 text-[11px] text-green-700 dark:text-green-400" :title="modelAuditTitle(row)">
+              {{ t('usage.upstreamModelConfirmed') }}: {{ row.upstream_response_model }}
+            </div>
+            <div v-else-if="!row.upstream_response_model && (row.model === 'gpt-6j' || (row.upstream_model && row.upstream_model !== row.model))" data-testid="upstream-model-unconfirmed" class="pl-3 text-[11px] text-gray-500">
+              {{ t('usage.upstreamModelUnconfirmed') }}
+            </div>
           </div>
         </template>
 

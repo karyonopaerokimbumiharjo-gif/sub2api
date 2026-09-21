@@ -146,8 +146,7 @@ func (s *OpenAIQuotaService) tryAutoResetAccount(ctx context.Context, account *A
 		(account.Type != AccountTypeOAuth && !account.IsOpenAICompatibleQuotaBridge()) ||
 		account.Status != StatusActive ||
 		account.IsShadow() ||
-		!resolveAccountExtraBool(account.Extra, openAIQuotaAutoResetEnabledKey) ||
-		!hasObservedExhaustedOpenAIWindow(account) {
+		!resolveAccountExtraBool(account.Extra, openAIQuotaAutoResetEnabledKey) {
 		return
 	}
 	if attemptedAt, ok := accountExtraTime(account.Extra, openAIQuotaAutoResetLastAttemptAtKey); ok &&
@@ -180,7 +179,7 @@ func (s *OpenAIQuotaService) tryAutoResetAccount(ctx context.Context, account *A
 			slog.Warn("openai_quota_auto_reset_persist_query_failed", "account_id", account.ID, "error", err)
 		}
 	}
-	windowKey := exhaustedOpenAIWindowKey(usage.RateLimit, now)
+	windowKey := sevenDayAutoResetWindowKey(usage.RateLimit, account, now)
 	if windowKey == "" {
 		s.recordAutoResetResult(ctx, account.ID, "not_exhausted", "", now, nil)
 		return
@@ -343,4 +342,29 @@ func accountExtraTime(extra map[string]any, key string) (time.Time, bool) {
 		return time.Unix(unixSeconds, 0), true
 	}
 	return time.Time{}, false
+}
+
+// Use fresh upstream usage and the user-configured percentage, never the 5h window.
+func sevenDayAutoResetWindowKey(rateLimit *OpenAIRateLimit, account *Account, now time.Time) string {
+	if rateLimit == nil {
+		return ""
+	}
+	threshold := 1.0
+	if value, ok := resolveAccountExtraNumber(account.Extra, OpenAIAutoResetCredit7dThresholdExtraKey); ok && isValidOpenAIAutoResetThreshold(value) {
+		threshold = value
+	}
+	for _, window := range []*OpenAIRateLimitWindow{rateLimit.PrimaryWindow, rateLimit.SecondaryWindow} {
+		if window == nil || window.LimitWindowSeconds != 7*24*60*60 || !(window.UsedPercent >= threshold*100) {
+			continue
+		}
+		resetAt := window.ResetAt
+		if resetAt <= 0 && window.ResetAfterSeconds > 0 {
+			resetAt = (now.Unix() + window.ResetAfterSeconds) / 60 * 60
+		}
+		if resetAt <= now.Unix() {
+			continue
+		}
+		return fmt.Sprintf("7d:%d:%d", window.LimitWindowSeconds, resetAt)
+	}
+	return ""
 }

@@ -1001,7 +1001,7 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  const model = gpt6JMode.value ? 'gpt-6-astra' : selectCodexCatalogModel('gpt-5.5')
+  const model = gpt6JMode.value ? 'gpt-6j' : selectCodexCatalogModel('gpt-5.5')
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content

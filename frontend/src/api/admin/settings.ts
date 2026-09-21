@@ -961,6 +961,7 @@ export interface UpdateSettingsRequest {
   openai_codex_user_agent?: string;
   openai_codex_client_version?: string;
   openai_codex_version_auto_sync_enabled?: boolean;
+  openai_codex_ticket_models?: string[];
   openai_codex_ticket_enabled?: boolean;
   openai_codex_ticket_harvest_proxy_url?: string;
   // codex_cli_only 加固

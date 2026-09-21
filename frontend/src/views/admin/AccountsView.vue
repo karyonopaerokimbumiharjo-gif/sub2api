@@ -1,7 +1,8 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="accounts-page-layout">
       <template #filters>
+        <AccountRuntimePanel ref="runtimePanel" summary-only />
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
             v-model:searchQuery="params.search"
@@ -17,7 +18,7 @@
             @create="showCreate = true"
           >
             <template #after>
-              <button class="btn btn-secondary" @click="showCPA = true">{{ cpaText('title') }}</button>
+
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -89,12 +90,7 @@
                           {{ t('admin.accounts.dataActions') }}
                         </div>
                       </div>
-                      <button class="account-tools-menu-item" @click="openImportData">
-                        <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-                          <Icon name="upload" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
-                      </button>
+
                       <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
                         <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
                           <Icon name="download" size="sm" />
@@ -427,6 +423,8 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button v-if="row.extra?.cpa_identity" type="button" class="btn btn-secondary text-xs" :disabled="cpaEnabling === row.id" @click="handleCPAEnabled(row)">{{ row.status === 'active' ? '停用账号' : '启用账号' }}</button>
+              <button v-if="row.extra?.cpa_identity" class="btn btn-secondary text-xs" @click="selectedCPAAuth = String(row.extra.openai_quota_bridge_auth_name || ''); showCPA = true">授权 / 出口</button>
               <button
                 type="button"
                 :title="t('admin.accounts.testConnection')"
@@ -464,15 +462,15 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
-    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
+    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload(); runtimePanel?.refresh()" />
+    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated($event); runtimePanel?.refresh()" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" :pelican-test="pelicanTest" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
-    <CPACredentialsModal :show="showCPA" @close="showCPA = false" />
+    <CPACredentialsModal :auth-name="selectedCPAAuth" :show="showCPA" @close="showCPA = false" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
-    <CreateAccountModal :show="showImportData" @close="showImportData = false" @created="reload" />
+    <CreateAccountModal :show="showImportData" @close="showImportData = false" @created="reload(); runtimePanel?.refresh()" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -501,7 +499,8 @@
 
 <script setup lang="ts">
 import CPACredentialsModal from '@/components/account/CPACredentialsModal.vue'
-import { useCPAText } from '@/components/account/cpaRuntimeText'
+import AccountRuntimePanel from '@/components/account/AccountRuntimePanel.vue'
+const runtimePanel = ref<InstanceType<typeof AccountRuntimePanel> | null>(null)
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -605,7 +604,7 @@ const selTypes = computed<AccountType[]>(() => {
 })
 const showCreate = ref(false)
 const showCPA = ref(false)
-const cpaText = useCPAText()
+const selectedCPAAuth = ref('')
 const showEdit = ref(false)
 const showImportData = ref(false)
 const showExportDataDialog = ref(false)
@@ -1522,10 +1521,7 @@ const toggleAccountToolsDropdown = () => {
   showAccountToolsDropdown.value = nextVisible
 }
 
-const openImportData = () => {
-  closeAccountToolsDropdown()
-  showImportData.value = true
-}
+
 
 const openExportDataDialogFromMenu = () => {
   closeAccountToolsDropdown()
@@ -2456,8 +2452,19 @@ const confirmCreateSparkShadow = async () => {
     appStore.showError(error?.response?.data?.message || t('admin.accounts.createSparkShadowFailed'))
   }
 }
+const cpaEnabling = ref<number | null>(null)
+const handleCPAEnabled = async (account: Account) => {
+  cpaEnabling.value = account.id
+  try {
+    await adminAPI.accounts.update(account.id, {status: account.status === 'active' ? 'inactive' : 'active'})
+    await Promise.all([load(), runtimePanel.value?.refresh()])
+    appStore.showSuccess('账号和对应授权状态已同步')
+  } catch (error: any) {
+    appStore.showError(error?.response?.data?.message || '账号启停失败，请刷新后重试')
+  } finally { cpaEnabling.value = null }
+}
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
-const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error) } }
+const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error); appStore.showError((error as any)?.response?.data?.message || '删除未完成，请重试') } }
 const handleToggleSchedulable = async (a: Account) => {
   const nextSchedulable = !a.schedulable
   togglingSchedulable.value = a.id
@@ -2592,6 +2599,24 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Runtime summaries share the page flow so short viewports retain a usable table. */
+.accounts-page-layout {
+  height: auto;
+  min-height: calc(100vh - 8rem);
+}
+.accounts-page-layout :deep(.layout-section-scrollable) {
+  flex: none;
+  min-height: 24rem;
+}
+.accounts-page-layout :deep(.table-scroll-container) {
+  height: auto;
+  min-height: 24rem;
+}
+.accounts-page-layout :deep(.table-wrapper) {
+  min-height: 20rem;
+  max-height: 65vh;
+}
+
 .account-tools-menu-item {
   @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700;
 }

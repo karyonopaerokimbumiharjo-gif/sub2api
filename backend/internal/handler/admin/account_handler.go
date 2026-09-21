@@ -2806,11 +2806,23 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			h.accountTestService != nil {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 			defer cancel()
-			ids, err := h.accountTestService.FetchUpstreamSupportedModels(ctx, account)
+            var ids []string
+            var err error
+            if account.Status != service.StatusActive {
+                ids,err = service.CPACodexModelCatalog(ctx)
+            } else {
+                ids,err = h.accountTestService.FetchUpstreamSupportedModels(ctx, account)
+            }
 			if err != nil {
 				slog.Warn("account_models_upstream_failed", "account_id", accountID)
-				response.Error(c, http.StatusBadGateway, "Failed to fetch current upstream model list")
+				response.Error(c, http.StatusBadGateway, "无法读取执行后端模型目录，请检查 CPA 连接后重新加载")
 				return
+			}
+			for _, id := range ids {
+				if id == "gpt-6-astra" {
+					ids = append(ids, "gpt-6j")
+					break
+				}
 			}
 			response.Success(c, openai.ModelsFromIDs(ids))
 			return

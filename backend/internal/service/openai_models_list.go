@@ -305,6 +305,15 @@ func (s *OpenAIGatewayService) FetchPinnedOpenAIModelsList(ctx context.Context, 
 			}
 		}
 	}
+	if _, hasAstra := byID["gpt-6-astra"]; hasAstra {
+		if _, exists := byID["gpt-6j"]; !exists {
+			raw := json.RawMessage(`{"id":"gpt-6j","object":"model","owned_by":"pegasusailabs"}`)
+			byID["gpt-6j"] = raw
+			modelIDs = append(modelIDs, "gpt-6j")
+			models = append(models, raw)
+		}
+	}
+
 	if group.ModelAllowlistEnabled() {
 		models = selectModelCatalogEntries(byID, group.ModelAllowlist.FilterForListing(modelIDs))
 	}

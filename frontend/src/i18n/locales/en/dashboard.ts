@@ -364,6 +364,8 @@ export default {
     requestedModel: 'Requested',
     upstreamModel: 'Upstream',
 	  sentUpstreamModel: 'Sent upstream',
+      upstreamModelConfirmed: 'Confirmed response model',
+      upstreamModelUnconfirmed: 'Actual response model unconfirmed',
 	  upstreamResponseModel: 'Upstream response',
 	  upstreamModelMismatch: 'Response model mismatch',
 	  modelVariant: 'Possible version variant',

@@ -229,6 +229,9 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 			return nil, err
 		}
 		for key, value := range fields {
+			if input.ProxyID == nil && (key == "proxy_url" || key == "sub2_proxy_id") {
+				continue
+			}
 			if key != "name" {
 				payload[key] = value
 			}
@@ -370,7 +373,7 @@ func (s *OpenAIQuotaService) findOpenAIQuotaBridge(ctx context.Context, manageme
 	var bridge *Account
 	for i := range accounts {
 		candidate := &accounts[i]
-		if !candidate.IsOpenAICompatibleQuotaBridge() {
+		if candidate.GetExtraString("cpa_identity") != "" || !candidate.IsOpenAICompatibleQuotaBridge() {
 			continue
 		}
 		origin, originErr := openAIQuotaBridgeOrigin(candidate.GetCredential("base_url"))

@@ -73,7 +73,7 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 	if !hasEnabled && !has5h && !has7d {
 		return normalized, nil
 	}
-	if platform != PlatformOpenAI || accountType != AccountTypeOAuth || isShadow {
+	if platform != PlatformOpenAI || isShadow || (accountType != AccountTypeOAuth && !(accountType == AccountTypeAPIKey && has7d && !hasEnabled && !has5h)) {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_AUTO_RESET_CREDIT_ACCOUNT_INVALID", "automatic reset credits are only supported for OpenAI OAuth parent accounts")
 	}
 

@@ -485,6 +485,17 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
+	for _, model := range settings.OpenAICodexTicketModels {
+		if model != "gpt-6-astra" && model != "gpt-5.6-sol" && model != "gpt-5.6-terra" {
+			return nil, infraerrors.BadRequest("INVALID_CODEX_COLLECTION_MODEL", "unsupported collection model: "+model)
+		}
+	}
+	models := settings.OpenAICodexTicketModels
+	if models == nil {
+		models = []string{}
+	}
+	encodedModels, _ := json.Marshal(models)
+	updates["openai_codex_ticket_models"] = string(encodedModels)
 	updates[SettingKeyOpenAICodexTicketEnabled] = strconv.FormatBool(settings.OpenAICodexTicketEnabled)
 	if err := ValidateOpenAICodexTicketHarvestProxyURL(settings.OpenAICodexTicketHarvestProxyURL); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_CODEX_HARVEST_PROXY", err.Error())

@@ -41,3 +41,27 @@ of Git. The source VPS remains unchanged and can serve as the fallback site.
   no direct route is included in the harvest pool.
 - State shape does not establish upstream model identity; Sub2API's GPT-6J
   response guard still independently rejects a returned model mismatch.
+
+
+## Unified account management
+
+Each distinct Codex identity now has a Sub2API account with its own groups,
+limits and usage. The internal provisioning connection is paused and excluded
+from paginated account listings. Explicit synchronization preserves existing
+business account disablement and group selection. Imported credentials are
+synchronized from the import dialog; duplicate files do not increase identity
+counts.
+
+Apply `cpa-account-binding.patch` in addition to the managed-state patch. Copy
+`cpa-account-binding-test.go.txt` to `sdk/api/handlers/sub2_account_pin_test.go`
+before running the CPA pin tests. The scheduler writes the trusted identity
+header after removing client/custom overrides. CPA gives it precedence over
+session affinity and fails when the identity cannot be selected.
+
+Deploy `state_slots.py` alongside `cpa-state-collector.py`. The collector keeps
+one active and one distinct newer standby per credential/model. It preserves a
+healthy active, promotes a valid standby within the refresh window or after
+expiry, and replenishes the empty standby slot. The admin endpoint exposes only
+lengths, expiry, heartbeat and bounded probe events. This controller performs
+time-based promotion; it does not implement the local gateway's response-strike
+or model-mismatch feedback promotion.

@@ -15,12 +15,14 @@ describe('CPA credential settings', () => {
       { id: 4, name: 'disabled', status: 'inactive' }
     ] as Proxy[]
     const wrapper = mount(CPARuntimeFields, { props: { modelValue, proxies } })
-    expect(wrapper.findAll('option').map(o => o.attributes('value'))).toEqual(['', '1'])
+    expect(wrapper.findAll('option').map(o => o.attributes('value'))).toEqual(['', '0', '1'])
     await wrapper.get('select').setValue('1')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([{ ...modelValue, proxy_id: 1 }])
     await wrapper.get('input[type="checkbox"]').setValue(false)
     expect(wrapper.emitted('update:modelValue')?.[1]).toEqual([{ ...modelValue, disabled: true }])
     await wrapper.findAll('input[type="number"]')[2].setValue('3')
     expect(wrapper.emitted('update:modelValue')?.[2]).toEqual([{ ...modelValue, request_retry: 3 }])
+    await wrapper.get('select').setValue('0')
+    expect(wrapper.emitted('update:modelValue')?.[3]).toEqual([{ ...modelValue, proxy_id: 0 }])
   })
 })

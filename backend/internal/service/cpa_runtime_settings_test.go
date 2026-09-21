@@ -83,6 +83,9 @@ func TestCPARuntimeRoundTripAndRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "never-return")
 	require.NotContains(t, string(encoded), "old-proxy")
+	_, err = s.UpdateCPACredential(ctx, CPACredentialUpdate{Name: "bound.json", Priority: 2, Weight: 1})
+	require.NoError(t, err)
+	require.Equal(t, "http://old-proxy:8080", metadata["proxy_url"], "an unrelated update must preserve egress")
 	id := int64(9)
 	input := CPACredentialUpdate{Name: "bound.json", ProxyID: &id, Priority: 7, Weight: 3, RequestRetry: 2, Disabled: true}
 	result, err := s.UpdateCPACredential(ctx, input)
@@ -102,7 +105,8 @@ func TestCPARuntimeRoundTripAndRollback(t *testing.T) {
 	require.Equal(t, float64(7), metadata["priority"])
 	require.True(t, disabled)
 	failStatus = false
-	input.ProxyID = nil
+	direct := int64(0)
+	input.ProxyID = &direct
 	input.Priority = 4
 	result, err = s.UpdateCPACredential(ctx, input)
 	require.NoError(t, err)
@@ -186,4 +190,15 @@ func TestCPAImportAppliesRuntimeAndReauthorizationPreservesIt(t *testing.T) {
 	require.Equal(t, "renewed-token", metadata["refresh_token"])
 	require.Equal(t, true, metadata["disabled"])
 	require.Equal(t, float64(3), metadata["weight"])
+}
+
+func TestCPAIdentityDoesNotCountDuplicateFilesAsAccounts(t *testing.T) {
+	a := openAIQuotaBridgeAuthFile{Name: "first.json", Provider: "codex", Email: "a@example.com"}
+	a.IDToken.ChatGPTAccountID = "account-one"
+	first := cpaSettings(a, nil)
+	a.Name = "second.json"
+	require.Equal(t, first.Identity, cpaSettings(a, nil).Identity)
+	a.IDToken.ChatGPTAccountID = "account-two"
+	require.NotEqual(t, first.Identity, cpaSettings(a, nil).Identity)
+	require.NotContains(t, first.Identity, "account-one")
 }

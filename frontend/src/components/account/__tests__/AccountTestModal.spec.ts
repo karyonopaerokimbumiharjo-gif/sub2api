@@ -118,6 +118,18 @@ describe('AccountTestModal', () => {
     localStorage.clear()
   })
 
+  it('loads models when initially mounted open and displays API error messages', async () => {
+    getAvailableModelsMock.mockRejectedValue({message:'授权不可用，请检查授权状态'})
+    const wrapper = mount(AccountTestModal, {
+      props: {show:true,account:buildAccount()},
+      global:{stubs:{BaseDialog:BaseDialogStub,Select:SelectStub,TextArea:TextAreaStub,Icon:true}}
+    })
+    await flushPromises()
+    expect(getAvailableModelsMock).toHaveBeenCalledWith(1)
+    expect(wrapper.find('[role="alert"]').text()).toContain('授权不可用，请检查授权状态')
+    wrapper.unmount()
+  })
+
   it('selects GPT-6 Astra from the current upstream catalog', async () => {
     getAvailableModelsMock.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },

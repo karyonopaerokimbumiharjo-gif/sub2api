@@ -53,6 +53,7 @@ type CodexSessionImportResult struct {
 }
 
 type CodexSessionImportItem struct {
+ AuthName string `json:"auth_name,omitempty"`
 	Index     int    `json:"index"`
 	Name      string `json:"name,omitempty"`
 	Action    string `json:"action"`

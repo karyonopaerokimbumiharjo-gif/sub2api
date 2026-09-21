@@ -6,7 +6,7 @@
     </button>
     <slot name="after"></slot>
     <slot name="beforeCreate"></slot>
-    <button @click="$emit('create')" class="btn btn-primary">{{ t('admin.accounts.createAccount') }}</button>
+    <button @click="$emit('create')" class="btn btn-primary">{{ locale.startsWith('zh') ? '导入账号' : 'Import account' }}</button>
     <slot name="afterCreate"></slot>
   </div>
 </template>
@@ -18,5 +18,5 @@ import Icon from '@/components/icons/Icon.vue'
 defineProps(['loading'])
 defineEmits(['refresh', 'create'])
 
-const { t } = useI18n()
+const { locale } = useI18n()
 </script>

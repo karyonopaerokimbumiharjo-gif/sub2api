@@ -40,7 +40,7 @@ func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestM
 	c.Request.Header.Del(gpt6JModeHeader)
 	c.Request.Header.Del(gpt6JEnhancedCompactionHeader)
 
-	mode := gpt6JRequestMode{Enabled: modeValue == gpt6JModeValue}
+	mode := gpt6JRequestMode{Enabled: modeValue == gpt6JModeValue || strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j")}
 	if rawEnhanced != "" {
 		enabled, err := strconv.ParseBool(rawEnhanced)
 		if err != nil {
@@ -51,7 +51,7 @@ func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestM
 	if mode.EnhancedCompaction && !mode.Enabled {
 		return mode, errGPT6JCompactionNoMode
 	}
-	if mode.Enabled && !strings.EqualFold(strings.TrimSpace(requestedModel), gpt6JUpstreamModel) {
+	if mode.Enabled && !strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j") && !strings.EqualFold(strings.TrimSpace(requestedModel), gpt6JUpstreamModel) {
 		return mode, errGPT6JWrongModel
 	}
 	if mode.Enabled {

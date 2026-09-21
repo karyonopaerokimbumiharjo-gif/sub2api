@@ -52,3 +52,14 @@ func TestGPT6JRejectsWrongModelAndStandaloneCompression(t *testing.T) {
 		require.ErrorIs(t, err, errGPT6JInvalidToggle)
 	})
 }
+
+func TestGPT6JNamedModelActivatesGuardWithoutHeaders(t *testing.T) {
+ c,_:=gin.CreateTestContext(httptest.NewRecorder());c.Request=httptest.NewRequest("POST","/v1/responses",nil)
+ mode,err:=parseGPT6JRequestMode(c,"gpt-6j");require.NoError(t,err);require.True(t,mode.Enabled);require.True(t,c.GetBool(gpt6JContextKey))
+}
+
+func TestGPT6JNamedModelKeepsEnhancedCompaction(t *testing.T) {
+ c,_:=gin.CreateTestContext(httptest.NewRecorder());c.Request=httptest.NewRequest("POST","/v1/responses",nil)
+ c.Request.Header.Set(gpt6JEnhancedCompactionHeader,"true")
+ mode,err:=parseGPT6JRequestMode(c,"gpt-6j");require.NoError(t,err);require.True(t,mode.Enabled);require.True(t,mode.EnhancedCompaction)
+}

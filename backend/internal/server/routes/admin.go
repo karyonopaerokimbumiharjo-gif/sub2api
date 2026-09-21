@@ -454,6 +454,8 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
 		openai.POST("/import-to-cpa", h.Admin.OpenAIOAuth.ImportOAuthToCPA)
+		openai.POST("/cpa/sync-accounts", h.Admin.OpenAIOAuth.SyncCPAAccounts)
+		openai.GET("/cpa/state-status", h.Admin.OpenAIOAuth.CPAStateStatus)
 		openai.GET("/cpa/credentials", h.Admin.OpenAIOAuth.ListCPACredentials)
 		openai.PUT("/cpa/credentials", h.Admin.OpenAIOAuth.UpdateCPACredential)
 		openai.POST("/import-cpa-files", h.Admin.OpenAIOAuth.ImportCPAAccounts)
@@ -707,6 +709,7 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
+		usage.GET("/execution-traces", h.Admin.Usage.ExecutionTrace)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)

@@ -67,8 +67,11 @@ func (s *RoutingPromptScanner) recordCompatibleInvocation(ctx context.Context, e
 	value := PromptAuditInvocation{
 		RequestID: meta.RequestID, ConfigVersion: meta.ConfigVersion,
 		GuardEndpointID: endpoint.ID, GuardEndpointName: endpoint.Name,
-		Protocol: EndpointProtocolOpenAICompatible, Model: endpoint.Model,
+		Protocol: endpoint.Protocol, Model: endpoint.Model,
 		Status: "success", LatencyMS: latency.Milliseconds(),
+	}
+	if value.Protocol == "" {
+		value.Protocol = EndpointProtocolOpenAICompatible
 	}
 	// A CPA node is a transport, not a known underlying OAuth account. Do not
 	// assign its usage to an arbitrary email or charge the requesting user again.

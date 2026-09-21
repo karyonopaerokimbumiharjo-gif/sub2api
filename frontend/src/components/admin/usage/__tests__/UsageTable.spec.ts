@@ -533,6 +533,15 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).not.toContain('↳')
   })
 
+  it.each([['gpt-6-astra', 'upstream-model-confirmed'], ['', 'upstream-model-unconfirmed']])('distinguishes routed Astra from response evidence %s', (actual, marker) => {
+    const wrapper = mount(UsageTable, {
+      props: {data: [{request_id: 'route-evidence', model: 'gpt-6j', upstream_model: 'gpt-6-astra', upstream_response_model: actual, upstream_model_mismatch: actual ? false : null}], loading: false, columns: []},
+      global: {stubs: {DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true}},
+    })
+    expect(wrapper.find(`[data-testid="${marker}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="${actual ? 'upstream-model-unconfirmed' : 'upstream-model-confirmed'}"]`).exists()).toBe(false)
+  })
+
 	it.each([
 		{
 			name: 'possible version variant',

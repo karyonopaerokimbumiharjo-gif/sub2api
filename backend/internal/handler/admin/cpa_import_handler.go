@@ -30,7 +30,7 @@ func (h *OpenAIOAuthHandler) currentCPABridge(ctx context.Context) (*service.Acc
 	var found *service.Account
 	for i := range accounts {
 		a := &accounts[i]
-		if a.IsOpenAICompatibleQuotaBridge() && cpapolicy.ValidateBaseURL(a.GetCredential("base_url")) == nil {
+		if a.GetExtraString("cpa_identity") == "" && a.IsOpenAICompatibleQuotaBridge() && cpapolicy.ValidateBaseURL(a.GetCredential("base_url")) == nil {
 			if found != nil {
 				return nil, infraerrors.New(http.StatusConflict, "CPA_BRIDGE_AMBIGUOUS", "存在多个桥接，请先在账号管理中核对")
 			}
@@ -196,6 +196,7 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 		}
 		var message string
 		var accountID int64
+ var authName string
 		var name string
 		if raw, ok := entry.Value.(map[string]any); ok && isProviderCPAFile(raw) {
 			var imported *service.OpenAICPAImportResult
@@ -211,6 +212,7 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 				message = infraerrors.Message(importErr)
 			} else {
 				name, accountID = imported.Email, imported.BridgeAccountID
+ authName = imported.AuthName
 			}
 		} else {
 			// CPA Codex files use expired; auth.json uses tokens + JWT claims.
@@ -234,6 +236,7 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 					message = infraerrors.Message(importErr)
 				} else {
 					name, accountID = imported.Email, imported.BridgeAccountID
+ authName = imported.AuthName
 				}
 			}
 		}
@@ -243,7 +246,7 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 			result.Errors = append(result.Errors, CodexSessionImportMessage{Index: entry.Index, Message: message})
 		} else {
 			result.Created++
-			result.Items = append(result.Items, CodexSessionImportItem{Index: entry.Index, Name: name, Action: "imported_cpa", AccountID: accountID})
+			result.Items = append(result.Items, CodexSessionImportItem{Index: entry.Index, Name: name, AuthName: authName, Action: "imported_cpa", AccountID: accountID})
 		}
 	}
 	response.Success(c, result)

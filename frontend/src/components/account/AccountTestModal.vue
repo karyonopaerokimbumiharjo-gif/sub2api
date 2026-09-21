@@ -41,6 +41,11 @@
         </span>
       </div>
 
+      <p v-if="account && account.status !== 'active'" role="status" class="text-sm text-amber-700">账号已停用。可查看模型目录；正式调用前请在账号行启用账号。模型目录不代表授权已通过测试。</p>
+      <div v-if="modelLoadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+        {{ modelLoadError }}
+        <button type="button" class="ml-2 underline" :disabled="loadingModels" @click="loadAvailableModels">重新加载模型</button>
+      </div>
       <div class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.selectTestModel') }}
@@ -281,6 +286,7 @@ const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
 const availableModels = ref<ClaudeModel[]>([])
+const modelLoadError = ref('')
 const selectedModelId = ref('')
 const testPrompt = ref('')
 const loadingModels = ref(false)
@@ -320,21 +326,6 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
-// Load available models when modal opens
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      testPrompt.value = ''
-      testMode.value = 'default'
-      resetState()
-      await loadAvailableModels()
-    } else {
-      abortStream()
-    }
-  }
-)
-
 watch(selectedModelId, () => {
   if (supportsImageTest.value && !testPrompt.value.trim()) {
     testPrompt.value = t('admin.accounts.imagePromptDefault')
@@ -345,12 +336,14 @@ const loadAvailableModels = async () => {
   if (!props.account) return
 
   loadingModels.value = true
+  modelLoadError.value = ''
   selectedModelId.value = '' // Reset selection before loading
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
     availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
       ? sortTestModels(models)
       : models
+    if (!models.length) modelLoadError.value = '执行后端没有返回可用模型，请检查授权是否启用。'
     // Default selection by platform
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'openai') {
@@ -365,7 +358,8 @@ const loadAvailableModels = async () => {
     }
   } catch (error) {
     console.error('Failed to load available models:', error)
-    // Fallback to empty list
+    modelLoadError.value = (error as {message?: string})?.message || (error as {response?: {data?: {message?: string}}})?.response?.data?.message || '获取模型失败，请检查账号和授权状态后重试。'
+    // Keep failure visible instead of an unexplained empty dropdown
     availableModels.value = []
     selectedModelId.value = ''
   } finally {
@@ -561,6 +555,23 @@ const copyOutput = () => {
   const text = outputLines.value.map((l) => l.text).join('\n')
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
+// Load available models when modal opens
+watch(
+  () => [props.show, props.account?.id] as const,
+  async ([newVal]) => {
+    if (newVal && props.account) {
+      testPrompt.value = ''
+      testMode.value = 'default'
+      resetState()
+      await loadAvailableModels()
+    } else {
+      abortStream()
+    }
+  },
+  { immediate: true }
+)
+
+
 </script>
 
 <style>

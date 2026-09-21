@@ -84,7 +84,7 @@
         />
       </button>
       <label
-        v-if="account.type === 'oauth'"
+        v-if="visible"
         class="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400"
         :title="t('admin.accounts.openaiQuotaReset.autoResetThresholdTooltip')"
       >
@@ -541,6 +541,7 @@ const toggleAutoReset = async () => {
       autoResetThresholdPercent.value = threshold
       const updated = await updateAccount(props.account.id, {
         extra: {
+          ...props.account.extra,
           auto_reset_credit_enabled: nextValue,
           auto_reset_credit_7d_threshold: threshold / 100,
           // Ensure the legacy all-window worker cannot override the 7d-only setting.
@@ -550,6 +551,11 @@ const toggleAutoReset = async () => {
       autoResetEnabled.value = updated.extra?.auto_reset_credit_enabled === true
       emit('account-updated', updated)
     } else {
+      if (nextValue) {
+        const threshold = normalizeAutoResetThreshold(autoResetThresholdPercent.value)
+        const updated = await updateAccount(props.account.id, { extra: { ...props.account.extra, auto_reset_credit_7d_threshold: threshold / 100 } })
+        emit('account-updated', updated)
+      }
       const settings = await setOpenAIQuotaAutoReset(props.account.id, nextValue)
       autoResetEnabled.value = settings.enabled
     }
@@ -569,14 +575,14 @@ const toggleAutoReset = async () => {
 }
 
 const saveAutoResetThreshold = async () => {
-  if (props.account.type !== 'oauth' || autoResetSaving.value || isShadow.value) return
+  if (!visible.value || autoResetSaving.value || isShadow.value) return
   const threshold = normalizeAutoResetThreshold(autoResetThresholdPercent.value)
   autoResetThresholdPercent.value = threshold
   autoResetSaving.value = true
   error.value = null
   try {
     const updated = await updateAccount(props.account.id, {
-      extra: { auto_reset_credit_7d_threshold: threshold / 100 }
+      extra: { ...props.account.extra, auto_reset_credit_7d_threshold: threshold / 100 }
     })
     emit('account-updated', updated)
     resetMessage.value = t('admin.accounts.openaiQuotaReset.autoResetThresholdSaved')
@@ -623,7 +629,7 @@ watch(
 watch(
   () => props.account.extra?.auto_reset_credit_7d_threshold,
   (threshold) => {
-    if (props.account.type === 'oauth') {
+    if (visible.value) {
       autoResetThresholdPercent.value = normalizeAutoResetThreshold(
         typeof threshold === 'number' ? threshold * 100 : 100
       )

@@ -104,7 +104,7 @@ func (g *GuardEvaluator) evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 		return nil, &GuardError{Code: ErrorCodeUnavailable}
 	}
 	inputLimit := minimumInputLimit(endpoints)
-	chunks := SplitRunes(snapshot.ScanText, inputLimit)
+	chunks := splitPromptAuditChunks(snapshot.ScanText, inputLimit, endpoints)
 	if len(chunks) == 0 {
 		if g.metrics != nil {
 			g.metrics.Observe(DecisionAllow, g.clock.Now().Sub(start))

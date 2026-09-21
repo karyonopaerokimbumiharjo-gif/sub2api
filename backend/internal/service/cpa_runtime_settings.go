@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,16 +19,23 @@ import (
 // Runtime edits are deliberately allowlisted. OAuth tokens and proxy passwords
 // never enter a browser response or an arbitrary management API passthrough.
 type CPACredentialSettings struct {
-	Name            string `json:"name"`
-	Email           string `json:"email"`
-	Provider        string `json:"provider"`
-	Status          string `json:"status"`
-	Disabled        bool   `json:"disabled"`
-	ProxyID         *int64 `json:"proxy_id"`
-	ProxyConfigured bool   `json:"proxy_configured"`
-	Priority        int    `json:"priority"`
-	Weight          int    `json:"weight"`
-	RequestRetry    int    `json:"request_retry"`
+	Name              string  `json:"name"`
+	BusinessAccountID int64   `json:"business_account_id,omitempty"`
+	BusinessStatus    string  `json:"business_status,omitempty"`
+	Schedulable       bool    `json:"schedulable"`
+	GroupIDs          []int64 `json:"group_ids,omitempty"`
+	AuthID            string  `json:"auth_id"`
+	Identity          string  `json:"identity"`
+	Unavailable       bool    `json:"unavailable"`
+	Email             string  `json:"email"`
+	Provider          string  `json:"provider"`
+	Status            string  `json:"status"`
+	Disabled          bool    `json:"disabled"`
+	ProxyID           *int64  `json:"proxy_id"`
+	ProxyConfigured   bool    `json:"proxy_configured"`
+	Priority          int     `json:"priority"`
+	Weight            int     `json:"weight"`
+	RequestRetry      int     `json:"request_retry"`
 }
 
 type CPACredentialUpdate struct {
@@ -72,6 +81,20 @@ func cpaNumber(m map[string]any, key string, fallback int) int {
 
 func cpaSettings(auth openAIQuotaBridgeAuthFile, m map[string]any) CPACredentialSettings {
 	result := CPACredentialSettings{Name: auth.Name, Email: auth.Email, Provider: auth.Provider, Status: auth.Status, Disabled: auth.Disabled, Priority: cpaNumber(m, "priority", 0), Weight: cpaNumber(m, "weight", 1), RequestRetry: cpaNumber(m, "request_retry", 0)}
+	identity := strings.TrimSpace(auth.IDToken.ChatGPTAccountID)
+	if identity == "" {
+		identity, _ = m["account_id"].(string)
+	}
+	if identity == "" {
+		identity = strings.ToLower(strings.TrimSpace(auth.Email))
+	}
+	if identity == "" {
+		identity = auth.Name
+	}
+	digest := sha256.Sum256([]byte(auth.Provider + "\x00" + identity))
+	result.Identity = fmt.Sprintf("%x", digest[:16])
+	result.Unavailable = auth.Unavailable
+	result.AuthID = auth.ID
 	if id := cpaNumber(m, "sub2_proxy_id", 0); id > 0 {
 		n := int64(id)
 		result.ProxyID = &n
@@ -182,6 +205,11 @@ func (s *OpenAIQuotaService) UpdateCPACredential(ctx context.Context, input CPAC
 	if err != nil {
 		return nil, err
 	}
+	// Preserve unmanaged egress when editing unrelated settings.
+	if input.ProxyID == nil {
+		fields["proxy_url"] = old["proxy_url"]
+		fields["sub2_proxy_id"] = old["sub2_proxy_id"]
+	}
 	if err = patchCPARuntime(ctx, cfg, fields); err != nil {
 		return nil, err
 	}
@@ -221,6 +249,8 @@ func (s *OpenAIQuotaService) UpdateCPACredential(ctx context.Context, input CPAC
 	}
 	if input.ProxyID != nil {
 		expectedID = *input.ProxyID
+	} else {
+		expectedID = int64(cpaNumber(old, "sub2_proxy_id", 0))
 	}
 	if result.Disabled != input.Disabled || result.Priority != input.Priority || result.Weight != input.Weight || result.RequestRetry != input.RequestRetry || actualProxy != expectedProxy || actualID != expectedID {
 		return nil, infraerrors.New(http.StatusBadGateway, "CPA_SETTINGS_VERIFY_FAILED", "CPA 配置回读不一致，请刷新后核对")
@@ -349,4 +379,13 @@ func verifyCPAImportedRuntime(ctx context.Context, cfg openAIQuotaBridgeConfig, 
 		}
 	}
 	return nil
+}
+
+// CPAExecutionAPIKey is server-side provisioning data and must never enter a DTO.
+func (s *OpenAIQuotaService) CPAExecutionAPIKey(ctx context.Context) (string,error) {
+ cfg,err:=cpaRuntimeConfig();if err!=nil{return "",err}
+ var keys openAIQuotaBridgeAPIKeysResponse
+ if err=callOpenAIQuotaBridgeManagement(ctx,cfg,http.MethodGet,"/v0/management/api-keys",nil,&keys);err!=nil{return "",err}
+ for _,key:=range keys.Keys{if strings.TrimSpace(key)!=""{return strings.TrimSpace(key),nil}}
+ return "",infraerrors.BadRequest("CPA_EXECUTION_KEY_MISSING","执行后端未配置 API Key")
 }

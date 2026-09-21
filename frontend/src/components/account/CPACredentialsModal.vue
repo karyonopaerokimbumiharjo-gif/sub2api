@@ -24,7 +24,7 @@ import { useCPAText } from './cpaRuntimeText'
 import { listCPACredentials, updateCPACredential, type CPACredentialSettings, type CPACredentialUpdate } from '@/api/admin/accounts'
 import { getAll } from '@/api/admin/proxies'
 import type { Proxy } from '@/types'
-const props = defineProps<{show: boolean}>()
+const props = defineProps<{show: boolean; authName?: string}>()
 const emit = defineEmits<{close: []}>()
 const text = useCPAText()
 const items = ref<CPACredentialSettings[]>([])
@@ -37,7 +37,7 @@ function select(name: string) { selected.value = {...items.value.find(i => i.nam
 watch(() => props.show, async show => {
   if (!show) return
   error.value = ''; saved.value = false; loading.value = true
-  try { [items.value, proxies.value] = await Promise.all([listCPACredentials(), getAll()]); const first = items.value.find(i => !i.disabled) || items.value[0]; selected.value = first ? {...first} : null }
+  try { [items.value, proxies.value] = await Promise.all([listCPACredentials(), getAll()]); const first = items.value.find(i => i.name === props.authName) || items.value.find(i => !i.disabled) || items.value[0]; selected.value = first ? {...first} : null }
   catch (e) { error.value = message(e); selected.value = null }
   finally { loading.value = false }
 }, {immediate: true})

@@ -56,6 +56,9 @@
         </p>
       </div>
 
+      <p v-if="account && account.status !== 'active'" role="status" class="text-sm text-amber-700">账号已停用。模型目录可查看；正式调用前请在账号行启用账号。</p>
+      <div v-if="modelLoadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{{ modelLoadError }} <button type="button" class="underline" :disabled="loadingModels" @click="loadAvailableModels">重新加载模型</button></div>
+      <p v-if="selectedModelId === 'gpt-6j'" class="text-sm text-gray-500">此处检测账号的 GPT-6 Astra 上游连接；GPT6J 的 Jev 工具接续请通过 Responses API 调用，并在使用记录查看完整步骤。</p>
       <div v-if="showModelSelect" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.selectTestModel') }}
@@ -427,6 +430,7 @@ const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
 const loadingModels = ref(false)
+const modelLoadError = ref('')
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewMedia[]>([])
 const generatedAudios = ref<PreviewMedia[]>([])
@@ -762,26 +766,6 @@ const pickDefaultModelForMode = () => {
   selectedModelId.value = opts[0].id
 }
 
-watch(
-  () => props.show,
-  async (newVal) => {
-    if (newVal && props.account) {
-      testPrompt.value = ''
-      testMode.value = 'default'
-      grokTestMode.value = 'text'
-      resetState()
-      await loadAvailableModels()
-      applyDefaultPromptForMode()
-      if (isGrokAccount.value) {
-        pickDefaultModelForMode()
-        applyDefaultPromptForMode()
-      }
-    } else {
-      abortStream()
-    }
-  }
-)
-
 watch(grokTestMode, () => {
   if (!isGrokAccount.value) return
   testPrompt.value = ''
@@ -794,12 +778,15 @@ const loadAvailableModels = async () => {
   if (!props.account) return
 
   loadingModels.value = true
+  modelLoadError.value = ''
   selectedModelId.value = '' // Reset selection before loading
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
     availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
       ? sortTestModels(models)
       : models
+    availableModels.value = availableModels.value.map(m => ({...m, display_name: `${m.display_name || m.id} (${m.id})`}))
+    if (!models.length) modelLoadError.value = '执行后端没有返回模型，请检查授权状态后重新加载。'
     // Default selection by platform
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'openai') {
@@ -814,7 +801,8 @@ const loadAvailableModels = async () => {
     }
   } catch (error) {
     console.error('Failed to load available models:', error)
-    // Fallback to empty list
+    modelLoadError.value = (error as {message?:string})?.message || '模型加载失败，请检查授权和后端连接后重试。'
+    // Clear stale models on error
     availableModels.value = []
     selectedModelId.value = ''
   } finally {
@@ -1117,6 +1105,28 @@ const copyOutput = () => {
   const text = outputLines.value.map((l) => l.text).join('\n')
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
+watch(
+  () => [props.show, props.account?.id] as const,
+  async ([newVal]) => {
+    if (newVal && props.account) {
+      testPrompt.value = ''
+      testMode.value = 'default'
+      grokTestMode.value = 'text'
+      resetState()
+      await loadAvailableModels()
+      applyDefaultPromptForMode()
+      if (isGrokAccount.value) {
+        pickDefaultModelForMode()
+        applyDefaultPromptForMode()
+      }
+    } else {
+      abortStream()
+    }
+  },
+  { immediate: true }
+)
+
+
 </script>
 
 <style>

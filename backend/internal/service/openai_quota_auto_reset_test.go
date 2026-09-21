@@ -237,7 +237,7 @@ func TestOpenAIQuotaAutoResetService_ConcurrentInstancesConsumeOnce(t *testing.T
 			OpenAIAutoResetCredit5hThresholdExtraKey: 1.0,
 			OpenAIAutoResetCredit7dThresholdExtraKey: 1.0,
 			"codex_5h_used_percent":                  100.0,
-			"codex_7d_used_percent":                  10.0,
+			"codex_7d_used_percent":                  100.0,
 			"codex_usage_updated_at":                 now.Format(time.RFC3339),
 			"codex_5h_reset_at":                      now.Add(time.Hour).Format(time.RFC3339),
 			"codex_7d_reset_at":                      now.Add(24 * time.Hour).Format(time.RFC3339),
@@ -248,7 +248,7 @@ func TestOpenAIQuotaAutoResetService_ConcurrentInstancesConsumeOnce(t *testing.T
 		FetchedAt: now.Unix(),
 		RateLimit: &OpenAIRateLimit{
 			PrimaryWindow:   &OpenAIRateLimitWindow{UsedPercent: 100, LimitWindowSeconds: 5 * 60 * 60, ResetAfterSeconds: 3600, ResetAt: now.Add(time.Hour).Unix()},
-			SecondaryWindow: &OpenAIRateLimitWindow{UsedPercent: 10, LimitWindowSeconds: 7 * 24 * 60 * 60, ResetAfterSeconds: 86400, ResetAt: now.Add(24 * time.Hour).Unix()},
+			SecondaryWindow: &OpenAIRateLimitWindow{UsedPercent: 100, LimitWindowSeconds: 7 * 24 * 60 * 60, ResetAfterSeconds: 86400, ResetAt: now.Add(24 * time.Hour).Unix()},
 		},
 		RateLimitResetCredits: &OpenAIRateLimitResetCredits{
 			AvailableCount: 1,
@@ -270,7 +270,10 @@ func TestOpenAIQuotaAutoResetService_ConcurrentInstancesConsumeOnce(t *testing.T
 		defer wg.Done()
 		_ = serviceA.evaluateAccount(context.Background(), account.ID)
 	}()
-	<-quota.resetEntered
+	select {
+ case <-quota.resetEntered:
+ case <-time.After(2*time.Second): t.Fatal("automatic reset did not start")
+ }
 	go func() {
 		defer wg.Done()
 		_ = serviceB.evaluateAccount(context.Background(), account.ID)
@@ -299,9 +302,9 @@ func TestOpenAIQuotaAutoResetService_TimeoutRetryReusesRequestBody(t *testing.T)
 			OpenAIAutoResetCreditEnabledExtraKey:     true,
 			OpenAIAutoResetCredit5hThresholdExtraKey: 1.0,
 			OpenAIAutoResetCredit7dThresholdExtraKey: 1.0,
-			"codex_5h_used_percent":                  100.0,
+			"codex_7d_used_percent":                  100.0,
 			"codex_usage_updated_at":                 now.Format(time.RFC3339),
-			"codex_5h_reset_at":                      now.Add(time.Hour).Format(time.RFC3339),
+			"codex_7d_reset_at":                      now.Add(time.Hour).Format(time.RFC3339),
 		},
 	}
 	repo := &autoResetTestAccountRepo{account: account}
@@ -311,7 +314,7 @@ func TestOpenAIQuotaAutoResetService_TimeoutRetryReusesRequestBody(t *testing.T)
 		usage: &OpenAIQuotaUsage{
 			FetchedAt: now.Unix(),
 			RateLimit: &OpenAIRateLimit{
-				PrimaryWindow: &OpenAIRateLimitWindow{UsedPercent: 100, LimitWindowSeconds: 5 * 60 * 60, ResetAfterSeconds: 3600, ResetAt: now.Add(time.Hour).Unix()},
+				PrimaryWindow: &OpenAIRateLimitWindow{UsedPercent: 100, LimitWindowSeconds: 7 * 24 * 60 * 60, ResetAfterSeconds: 3600, ResetAt: now.Add(time.Hour).Unix()},
 			},
 			RateLimitResetCredits: &OpenAIRateLimitResetCredits{
 				AvailableCount: 1,

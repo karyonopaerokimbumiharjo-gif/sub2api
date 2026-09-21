@@ -139,3 +139,20 @@ func TestExhaustedOpenAIWindowKeyStableWithoutResetAt(t *testing.T) {
 	require.Equal(t, first, second)
 	require.NotEmpty(t, first)
 }
+
+func TestSevenDayAutoResetCustomPercentage(t *testing.T) {
+	now := time.Now()
+	account := &Account{Extra: map[string]any{OpenAIAutoResetCredit7dThresholdExtraKey: 0.8}}
+	weekly := &OpenAIRateLimitWindow{UsedPercent: 79.9, LimitWindowSeconds: 604800, ResetAt: now.Add(time.Hour).Unix()}
+	usage := &OpenAIRateLimit{PrimaryWindow: &OpenAIRateLimitWindow{UsedPercent: 100, LimitWindowSeconds: 18000}, SecondaryWindow: weekly}
+	require.Empty(t, sevenDayAutoResetWindowKey(usage, account, now))
+	weekly.UsedPercent = 80
+	require.NotEmpty(t, sevenDayAutoResetWindowKey(usage, account, now))
+	account.Extra[OpenAIAutoResetCredit7dThresholdExtraKey] = 0.95
+	require.Empty(t, sevenDayAutoResetWindowKey(usage, account, now))
+	weekly.UsedPercent = 95
+	require.NotEmpty(t, sevenDayAutoResetWindowKey(usage, account, now))
+	normalized, err := normalizeOpenAIAutoResetCreditExtra(PlatformOpenAI, AccountTypeAPIKey, false, map[string]any{OpenAIAutoResetCredit7dThresholdExtraKey: 0.8})
+	require.NoError(t, err)
+	require.Equal(t, 0.8, normalized[OpenAIAutoResetCredit7dThresholdExtraKey])
+}

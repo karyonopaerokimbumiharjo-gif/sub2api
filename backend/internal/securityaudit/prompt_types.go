@@ -14,6 +14,7 @@ const (
 
 	ErrorCodeBlocked               = "prompt_guard_blocked"
 	ErrorCodeUnavailable           = "prompt_guard_unavailable"
+	ErrorCodeReviewRequired        = "prompt_guard_review_required"
 	ErrorCodeInvalidResponse       = "prompt_guard_invalid_response"
 	ErrorCodeConfigConflict        = "prompt_audit_config_conflict"
 	ErrorCodeConfigUnavailable     = "prompt_audit_config_unavailable"

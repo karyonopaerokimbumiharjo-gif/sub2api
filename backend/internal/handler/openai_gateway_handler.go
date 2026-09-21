@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+ "github.com/Wei-Shaw/sub2api/internal/executiontrace"
 
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -469,6 +470,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	if gpt6jMode.Enabled {
+        defer beginGPT6JTrace(c, body)()
 		if h.securityAuditCoordinator == nil || !h.securityAuditCoordinator.JevBlockingReady() {
 			reqLog.Warn("openai.gpt6j_guard_unavailable")
 			h.errorResponse(c, http.StatusServiceUnavailable, "gpt6j_guard_unavailable", "GPT-6J requires a healthy blocking Jev safety policy")
@@ -551,6 +553,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body); decision != nil && !decision.AllowNextStage {
+        if gpt6jMode.Enabled {recordGPT6JTrace(c,executiontrace.Event{Stage:"guard_result",Reason:decision.ErrorCode})}
 		h.openAISecurityAuditError(c, decision)
 		return
 	}
@@ -663,6 +666,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
+ if gpt6jMode.Enabled && !legacyCompact && !nativeV2 && h.tryJevToolController(c,body,reqStream) { return }
 	c.Request = c.Request.WithContext(service.WithOpenAIGuardianParentAffinity(
 		c.Request.Context(), c, sessionHashBody, reqModel,
 	))
@@ -826,6 +830,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
+
+        if gpt6jMode.Enabled {
+            event:=executiontrace.Event{Stage:"gpt_response",AccountID:account.ID,Model:forwardModel,DurationMS:time.Since(forwardStart).Milliseconds(),StateSource:"未收到执行端注入凭据，不推断主备"}
+            if result!=nil {event.ActualModel=result.UpstreamResponseModel;event.ResponseID=result.ResponseID
+                for _,headers:=range []http.Header{result.UpstreamHeaders,result.ResponseHeaders} {switch headers.Get("X-Sub2API-State-Source") {case "active":event.StateSource="已注入 292 主用状态";case "promoted_standby":event.StateSource="已注入由备用提升的 292 状态";case "injected_292":event.StateSource="已注入 292；来源槽位未确认"}}
+            }
+            if err!=nil {event.Reason="上游调用失败或响应未通过验证"}
+            recordGPT6JTrace(c,event)
+        }
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
@@ -3577,6 +3590,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	streamStarted bool,
 	countTowardsSLA bool,
 ) {
+    recordGPT6JTrace(c,executiontrace.Event{Stage:"请求失败",Status:status,Reason:errType+":"+code})
 	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
 	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
@@ -3760,6 +3774,7 @@ func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverErr
 
 // errorResponse returns OpenAI API format error response
 func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType, message string) {
+    recordGPT6JTrace(c,executiontrace.Event{Stage:"请求失败",Status:status,Reason:errType})
 	// body-signal compact 心跳可能已把响应头提交为 200：JSON 错误体会与已
 	// 提交的 SSE 流交错，必须降级为 response.failed 终止事件（#3887）。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {

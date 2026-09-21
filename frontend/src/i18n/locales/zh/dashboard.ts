@@ -369,6 +369,8 @@ export default {
     requestedModel: '请求',
     upstreamModel: '上游',
 	  sentUpstreamModel: '发往上游',
+      upstreamModelConfirmed: '已确认返回模型',
+      upstreamModelUnconfirmed: '实际返回模型未确认',
 	  upstreamResponseModel: '上游响应',
 	  upstreamModelMismatch: '上游响应模型不一致',
 	  modelVariant: '疑似版本变体',

@@ -701,6 +701,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				normalizedExtra[key] = v
 			}
 		}
+        // Identity-bound execution metadata must survive partial UI setting updates.
+        for _, key := range []string{"cpa_identity", "cpa_auth_id", "cpa_connection_only", OpenAIQuotaViaCompatibleUpstreamExtraKey, OpenAIQuotaBridgeAuthNameExtraKey, OpenAIQuotaBridgeAuthEmailExtraKey} {
+            if _, provided := normalizedExtra[key]; !provided {if value, exists := account.Extra[key]; exists {normalizedExtra[key] = value}}
+        }
 		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
@@ -848,6 +852,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 
+ if input.Status != "" {
+  if err := setCPAAccountEnabled(ctx,account,input.Status==StatusActive);err!=nil{return nil,err}
+ }
 	billingSettingsAppliedAtomically := false
 	updater := s.accountBillingRepo
 	if updater == nil {
@@ -1154,6 +1161,9 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Schedulable = input.Schedulable
 	}
 
+ if input.Status!="" {
+  for _,account:=range cachedTargets {if err:=setCPAAccountEnabled(ctx,account,input.Status==StatusActive);err!=nil{return nil,err}}
+ }
 	// Run bulk update for column/jsonb fields first.
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
@@ -1271,6 +1281,10 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
+ account, err := s.accountRepo.GetByID(ctx,id)
+ if err != nil {return err}
+ if err := deleteCPAAccountAuthorizations(ctx,account); err != nil {return err}
+
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
 	if err != nil {

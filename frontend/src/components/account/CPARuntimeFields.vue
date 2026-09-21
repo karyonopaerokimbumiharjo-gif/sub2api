@@ -3,7 +3,8 @@
     <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="!modelValue.disabled" @change="change('disabled', !($event.target as HTMLInputElement).checked)" />{{ text('enabled') }}</label>
     <label class="block"><span class="input-label">{{ text('proxy') }}</span>
       <select class="input" :value="modelValue.proxy_id ?? ''" @change="change('proxy_id', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)">
-        <option value="">{{ text('direct') }}</option>
+        <option value="">保留当前出口</option>
+        <option value="0">{{ text('direct') }}</option>
         <option v-for="proxy in available" :key="proxy.id" :value="proxy.id">{{ proxy.name }}</option>
       </select>
       <span class="input-hint">{{ text('proxyHint') }}</span>

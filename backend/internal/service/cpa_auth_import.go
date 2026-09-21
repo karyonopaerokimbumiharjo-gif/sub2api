@@ -66,6 +66,9 @@ func (s *OpenAIQuotaService) ImportCPAAuthFileWithRuntime(ctx context.Context, r
 			return nil, err
 		}
 		for key, value := range fields {
+			if input.ProxyID == nil && (key == "proxy_url" || key == "sub2_proxy_id") {
+				continue
+			}
 			if key != "name" {
 				payload[key] = value
 			}

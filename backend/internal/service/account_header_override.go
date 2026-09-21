@@ -174,6 +174,23 @@ func (a *Account) HeaderOverrideValue(lowerName string) (string, bool) {
 // 可能存在非 canonical key），再按已知 wire casing 写入，避免产生重复头。
 // 账号未启用或不符合条件时为 no-op，可安全地在 OAuth/api_key 共用的构建器中调用。
 func (a *Account) ApplyHeaderOverrides(h http.Header) {
+	// Pin CPA execution to the scheduler-selected account. Never trust an inbound selector.
+	defer func() {
+		if h == nil {
+			return
+		}
+		for key := range h {
+			if strings.EqualFold(key, "X-Sub2API-CPA-Auth-ID") {
+				delete(h, key)
+			}
+		}
+		if a != nil && ValidateCPAAccount(a) == nil {
+			if id := a.GetExtraString("cpa_auth_id"); id != "" {
+				h.Set("X-Sub2API-CPA-Auth-ID", id)
+			}
+		}
+	}()
+
 	if h == nil {
 		return
 	}
