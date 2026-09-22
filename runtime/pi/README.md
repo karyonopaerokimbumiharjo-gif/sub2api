@@ -4,9 +4,13 @@ This is the private execution component of the existing Sub2API product. The acc
 
 The admin starts authorization with a Sub2API owner user ID. The runtime owns PKCE and state; the completed credentials carry `harness_kind=pi` and `pi_owner_user_id`. Only API keys owned by that user can use the account. Use a dedicated group to avoid unrelated users selecting this account. Per-account proxies and compact requests are currently rejected on this route.
 
-Requests enter the same `/v1/responses` endpoint. Sub2API obtains the account's token under its existing refresh/cache lock and calls the private runtime. Pi constructs its native headers, including `originator=pi`. Incoming Codex turn metadata and caller-supplied `previous_response_id` are rejected. This route does not relabel an arbitrary Codex request. It accepts Responses input plus function tools, reasoning and output options; it forces `stream=true` and `store=false` upstream. The gateway can still return an ordinary JSON response when the downstream request is nonstreaming.
+Requests enter the same `/v1/responses` endpoint. Sub2API obtains the account's token under its existing refresh/cache lock and calls the private runtime. Pi constructs its native headers, including `originator=pi`. Incoming Codex turn metadata and non-null caller-supplied `previous_response_id` are rejected. This route does not relabel an arbitrary Codex request. It accepts Responses input plus function tools, reasoning and output options; it forces `stream=true` and `store=false` upstream. The gateway returns an ordinary JSON Responses object with a JSON content type when the downstream request is nonstreaming.
 
-The session key is an HMAC over the owner, credential record, OAuth account, model and caller session. It is stable across token refresh and isolated across those bindings. A stable caller session header/cache key is required. Concurrent turns in one session return a conflict; serialize them. Pi owns cached WebSocket continuation, selecting delta input with `previous_response_id` only when all other request options and the previous input prefix match. Changing options legitimately causes full-context fallback. `pi_transport` in credentials accepts `auto`, `sse`, `websocket`, or `websocket-cached` (default `sse`).
+For a first request, explicit JSON `null` values for `previous_response_id`, `max_output_tokens` and `client_metadata` are treated as omitted fields. Non-null values keep their existing validation rules.
+
+The Pi Codex adapter has no verified mapping for the Responses `max_output_tokens` parameter. Requests that set a non-null value receive HTTP 400 with `unsupported_pi_field:max_output_tokens`; the limit is never silently discarded or presented as enforced. This must be checked before forwarding in the gateway as well as in this runtime.
+
+The session key is an HMAC over the owner, credential record, OAuth account, model and caller session. It is stable across token refresh and isolated across those bindings. A caller may omit `session-id` and `prompt_cache_key` for an independent one-shot Responses request; the gateway creates a fresh session for that call. For multi-turn full-input reuse, send the same stable session header or cache key on every turn. Concurrent turns in one session return a conflict; serialize them. Pi owns cached WebSocket continuation, selecting delta input with `previous_response_id` only when all other request options and the previous input prefix match. Changing options legitimately causes full-context fallback. `pi_transport` in credentials accepts `auto`, `sse`, `websocket`, or `websocket-cached` (default `sse`).
 
 ## Run locally
 
@@ -19,6 +23,8 @@ docker build -f runtime/pi/Dockerfile -t local/sub2api-pi-runtime:0.85.1 .
 ```
 
 Merge `deploy/docker-compose.pi.yml` with the existing Compose deployment. The secret file must be mode 0600 and readable by UID 1000 in both containers. The runtime needs outbound HTTPS/WSS but has no published host port. Browser OAuth runs through the existing admin form; paste the localhost callback URL back into that form. OAuth login sessions expire after ten minutes; only one pending browser login is supported by the SDK's fixed callback listener.
+
+The image healthcheck reads the private secret and calls the authenticated loopback `/health` endpoint. Compose waits for `service_healthy` before starting the gateway. This proves that this runtime process is ready to answer local requests; it does not prove that a particular OAuth account or the upstream model is healthy. Invalid, missing, or unreadable secrets and a stopped runtime fail the probe.
 
 The private runtime API is bearer authenticated:
 
@@ -40,10 +46,12 @@ The passive observer requires complete SSE frames and exact terminal event types
 
 `responses_upstream_audit` records ordinary gateway HTTP boundary evidence; `pi_upstream_audit` records the Pi SDK's actual final outbound evidence. Header and body turn metadata are inspected independently. Logs contain field presence, known identifier names, model declarations and turn-state presence/length, never credentials or original identifier/state values. These new audit fields are structured server logs, not a new dashboard screen.
 
-## Live acceptance on 2026-09-20
+## Live acceptance on 2026-09-23
 
-Native Pi SSE and WebSocket both returned complete responses and passed the function-call/tool-result exercise using the existing local OAuth access token. Both requested `gpt-6-astra`; the observed response model was `gpt-5.6-luna`. The runner correctly failed model acceptance. Do not treat HTTP 200, `originator=pi`, or a completed stream as proof of GPT-6 access. A fresh browser authorization and long-duration refresh still need live acceptance.
+Using an existing local OAuth access token, the native Pi SSE path completed two turns with a function call and tool-result continuation. The request and observed response model were both `gpt-6-astra`. Pi cancels the SSE reader after the terminal event, so the passive observer still reports `stream_interrupted=true`; semantic completion and model identity passed, while the transport did not observe EOF.
 
-The live cached-WebSocket follow-up did send `previous_response_id` and delta input (`connectionsReused=1`, `deltaRequests=1`), but its second response was interrupted with no complete terminal. This is **not** a passing delta-continuation acceptance. SSE is the product default until that live provider path passes. Local WebSocket fixtures pass reuse, delta and isolation. The runtime snapshots caller input so later array mutations cannot corrupt Pi's cached request baseline.
+The same two-turn exercise passed on the cached-WebSocket path with the observed `gpt-6-astra` model. The second turn reused the connection and sent delta input with `previous_response_id` (`connectionsReused=1`, `deltaRequests=1`). This is evidence for this token and execution path, not a fresh browser OAuth login or long-duration refresh test. The runtime snapshots caller input so later array mutations cannot corrupt Pi's cached request baseline.
+
+`@earendil-works/pi-ai` 0.87.0 has the same public Codex adapter/provider type declarations as the pinned 0.85.1, but its implementation changed. The pin remains 0.85.1 until local fixtures and real OAuth refresh, SSE, cached WebSocket continuation, tool results, and requested-versus-returned model checks pass against the candidate version.
 
 Pi's SSE parser deliberately cancels its reader after the first terminal event. If EOF was not observed, the passive audit records `stream_interrupted=true` even when `terminal_status=completed`; this must not be rewritten as a fully observed transport. The native live runner checks semantic completion/tool behavior separately from this transport flag. The standard gateway runner continues to require a non-interrupted stream.

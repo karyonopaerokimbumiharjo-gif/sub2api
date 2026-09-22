@@ -2,7 +2,9 @@ export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
 export type PromptBlockingAuditMode = 'fast_latest' | 'incremental_full' | 'full'
 export type PromptBackgroundAuditMode = 'off' | PromptBlockingAuditMode
 export type PromptDecision = 'pass' | 'flag' | 'critical'
+export type PromptEventDecision = PromptDecision | 'review_required'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
+export type PromptEventRiskLevel = PromptRiskLevel | 'unknown'
 export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone' | 'antigravity_internal' | 'openai_internal'
 export type PromptAuditAdapter = 'qwen3guard' | 'generic_llm'
 
@@ -306,9 +308,9 @@ export interface PromptAuditEvent {
   id: number
   job_id: number
   snapshot: PromptSnapshot
-  audit_status?: 'audited' | 'gap' | string
-  decision: PromptDecision
-  risk_level: PromptRiskLevel
+  audit_status?: 'audited' | 'gap' | 'bypass' | 'review_required' | string
+  decision: PromptEventDecision
+  risk_level: PromptEventRiskLevel
   action: 'Allow' | 'Warn' | 'Block' | string
   categories: string[]
   intent_categories: string[]

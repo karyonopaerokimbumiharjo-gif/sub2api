@@ -1232,16 +1232,6 @@ export const accountsAPI = {
 
 export default accountsAPI
 
-export interface CPAStateStatus {
- models?: string[]; available: boolean; reason?: string; enabled?: boolean; healthy?: boolean; updated_at?: number
- states?: {model:string; length:number; expires_at:number; ready:boolean; standby_present:boolean; standby_length:number; standby_expires_at:number; standby_ready:boolean}[]
- events?: {time:number; model:string; length:number; status:number; completed:boolean; accepted:boolean; reason?:string; action?:string; actual_model?:string}[]
-}
-export async function getCPAStateStatus(): Promise<CPAStateStatus> {
- const {data}=await apiClient.get<CPAStateStatus>('/admin/openai/cpa/state-status')
- return data
-}
-
 export async function syncCPAAccounts(authNames: string[] = []): Promise<{created:number;updated:number;identities:number}> {
  const {data}=await apiClient.post('/admin/openai/cpa/sync-accounts',{auth_names:authNames}, {timeout:120000})
  return data

@@ -32,7 +32,7 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 	}
 	aggregated := &NormalizedResult{
 		Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow,
-		ScannerBackend: "qwen3guard-openai", Categories: []string{}, IntentCategories: []string{},
+		Categories: []string{}, IntentCategories: []string{},
 		ContentCategories: []string{}, MatchedScanners: []string{},
 		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}, ChunkTotal: len(results),
 		LatencyMS: int(latency.Milliseconds()),
@@ -42,21 +42,22 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 	contentCategories := map[string]struct{}{}
 	matched := map[string]struct{}{}
 	unknown := map[string]struct{}{}
+	var selected *NormalizedResult
 	for _, result := range results {
 		if result == nil {
 			return nil, errors.New("prompt guard partial result is not allowed")
 		}
-		if resultSeverity(result.Decision) > resultSeverity(aggregated.Decision) {
+		// Keep the verdict and all provenance fields from one result. Mixing a
+		// hard-coded backend with another chunk's endpoint/version misattributes
+		// Jev and other providers in persisted audit events. Equal severity is
+		// resolved by stable chunk order.
+		if selected == nil || resultSeverity(result.Decision) > resultSeverity(selected.Decision) {
+			selected = result
 			aggregated.Decision = result.Decision
 			aggregated.RiskLevel = result.RiskLevel
 			aggregated.Action = result.Action
 			aggregated.Safety = result.Safety
-			aggregated.GuardEndpointID = result.GuardEndpointID
-			aggregated.ScannerVersion = result.ScannerVersion
-			aggregated.PolicyID = result.PolicyID
-			aggregated.PolicyVersion = result.PolicyVersion
-		}
-		if aggregated.GuardEndpointID == "" {
+			aggregated.ScannerBackend = result.ScannerBackend
 			aggregated.GuardEndpointID = result.GuardEndpointID
 			aggregated.ScannerVersion = result.ScannerVersion
 			aggregated.PolicyID = result.PolicyID

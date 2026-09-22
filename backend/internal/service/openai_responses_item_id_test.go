@@ -2,6 +2,7 @@ package service
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,8 @@ func TestOpenAIResponsesInputItemIDPrefixUsesObservedOutputContracts(t *testing.
 		{itemType: "tool_search_call", id: "fc_123", strip: true},
 		{itemType: "web_search_call", id: "ws_123", strip: false},
 		{itemType: "web_search_call", id: "item_123", strip: true},
+		{itemType: "web_search_call", id: "ws_" + strings.Repeat("x", 61), strip: false},
+		{itemType: "web_search_call", id: "ws_" + strings.Repeat("x", 62), strip: true},
 		{itemType: "custom_tool_call_output", id: "fc_123", strip: false},
 		{itemType: "custom_tool_call_output", id: "ctco_123", strip: true},
 		// Do not impose an inferred contract on output types for which there is
@@ -130,6 +133,19 @@ func TestSanitizeOpenAIResponsesInputItemIDsStripsEmptyKnownIDsOnly(t *testing.T
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(sanitized, "input.0.id").Exists())
 	require.True(t, gjson.GetBytes(sanitized, "input.1.id").Exists())
+}
+
+func TestSanitizeOpenAIResponsesInputItemIDsStripsOversizedKnownID(t *testing.T) {
+	validID := "ws_" + strings.Repeat("x", 61)
+	oversizedID := "ws_" + strings.Repeat("x", 62)
+	body := []byte(`{"input":[{"type":"web_search_call","id":"` + validID + `"},{"type":"web_search_call","id":"` + oversizedID + `"},{"type":"future_item","id":"` + oversizedID + `"}]}`)
+
+	sanitized, changed, err := sanitizeOpenAIResponsesInputItemIDs(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, validID, gjson.GetBytes(sanitized, "input.0.id").String())
+	require.False(t, gjson.GetBytes(sanitized, "input.1.id").Exists())
+	require.Equal(t, oversizedID, gjson.GetBytes(sanitized, "input.2.id").String(), "unknown item types have no observed ID length contract")
 }
 
 func TestSanitizeOpenAIResponsesInputItemIDsStripsOnlyNonPairCallIDs(t *testing.T) {

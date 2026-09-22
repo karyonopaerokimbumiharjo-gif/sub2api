@@ -48,6 +48,43 @@ func guardConfig(endpoints ...ActiveEndpoint) ActiveConfig {
 	return ActiveConfig{RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, ConfigVersion: 2, Scanners: AllScannerIDs, Endpoints: endpoints}
 }
 
+func TestGuardEvaluatorRecordsOnlyUnadjudicatedReviewRequired(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		code       string
+		wantRecord int
+		recordErr  bool
+	}{
+		{name: "Jev returned no safe verdict", code: ErrorCodeReviewRequired, wantRecord: 1},
+		{name: "audit write failure does not allow", code: ErrorCodeReviewRequired, wantRecord: 1, recordErr: true},
+		{name: "transport unavailable is not a verdict", code: ErrorCodeUnavailable, wantRecord: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeJobRepository{}
+			if tt.recordErr {
+				repo.recordReviewRequiredErr = errors.New("database unavailable")
+			}
+			secretScannerResponse := errors.New("private scanner response and bearer token")
+			evaluator := newGuardEvaluator(PromptScannerFunc(func(context.Context, ActiveEndpoint, string, []string) (*NormalizedResult, error) {
+				return nil, &GuardError{Code: tt.code, Cause: secretScannerResponse}
+			}), repo, NewAtomicMetrics(), 4, 2)
+			snapshot := PromptSnapshot{RequestID: "review-1", FullPrompt: "Reply with exactly 4.", AuditedPrompt: "Reply with exactly 4.", ScanText: "Reply with exactly 4.", PromptLength: 21}
+			_, err := evaluator.Evaluate(context.Background(), guardConfig(ActiveEndpoint{ID: "jev", Enabled: true, TimeoutMS: 1000, InputLimit: 100}), snapshot)
+			require.Error(t, err)
+			require.Equal(t, tt.code, guardErrorCode(err))
+			require.Equal(t, tt.wantRecord, repo.recordReviewRequiredCalls)
+			require.Zero(t, repo.recordBlockingCalls)
+			if tt.wantRecord == 1 {
+				require.Equal(t, int64(2), repo.recordReviewRequiredVersion)
+				require.Equal(t, snapshot.FullPrompt, repo.recordReviewRequiredSnapshot.FullPrompt)
+				require.Equal(t, snapshot.AuditedPrompt, repo.recordReviewRequiredSnapshot.AuditedPrompt)
+				require.Empty(t, repo.recordReviewRequiredSnapshot.ScanText)
+				require.NotContains(t, repo.recordReviewRequiredSnapshot.FullPrompt, secretScannerResponse.Error())
+			}
+		})
+	}
+}
+
 func TestGuardEvaluatorOrderedFailoverIncludesInvalidOutput(t *testing.T) {
 	scanner := &scriptedScanner{}
 	metrics := NewAtomicMetrics()

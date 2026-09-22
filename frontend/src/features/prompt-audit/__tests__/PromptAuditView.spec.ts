@@ -199,6 +199,28 @@ describe('PromptAuditView', () => {
     expect(wrapper.html()).not.toContain('PROMPT_AUDIT_CANARY_SECRET_DO_NOT_PERSIST')
   })
 
+  it('saves enabled Jev and DeepSeek nodes together without changing either provider', async () => {
+    mocks.getConfig.mockResolvedValue({
+      ...baseConfig(),
+      endpoints: [
+        { ...baseConfig().endpoints[0], id: 'jev-primary', name: 'Jev', protocol: 'typesafe_systemone', adapter: 'generic_llm', base_url: 'https://api.typesafe.ai', model: 'jev-1.13.0' },
+        { ...baseConfig().endpoints[0], id: 'deepseek-fallback', name: 'DeepSeek', protocol: 'openai_compatible', adapter: 'generic_llm', base_url: 'https://opencode.ai/zen/go', model: 'deepseek-v4-flash' },
+      ],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    await wrapper.get('[data-test="store-pass-toggle"]').trigger('click')
+    await wrapper.get('[data-test="save-config"]').trigger('click')
+    await flushPromises()
+    expect(mocks.updateConfig).toHaveBeenCalledWith(expect.objectContaining({
+      endpoints: [
+        expect.objectContaining({ id: 'jev-primary', protocol: 'typesafe_systemone', enabled: true }),
+        expect.objectContaining({ id: 'deepseek-fallback', protocol: 'openai_compatible', enabled: true }),
+      ],
+    }))
+  })
+
   it('reports real probe progress/results and invalidates filter confirmation when filters change', async () => {
     const wrapper = mountView()
     await flushPromises()

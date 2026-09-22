@@ -43,6 +43,8 @@ export function useOpenAIOAuth() {
 
   // Reset state
   const resetState = () => {
+    harnessKind.value = ''
+    piOwnerUserId.value = undefined
     authUrl.value = ''
     sessionId.value = ''
     oauthState.value = ''

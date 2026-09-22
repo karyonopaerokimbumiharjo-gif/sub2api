@@ -2,15 +2,17 @@ import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ importFiles: vi.fn(), create: vi.fn(), grokAuthorize: vi.fn() }))
+const mocks = vi.hoisted(() => ({ importFiles: vi.fn(), create: vi.fn(), grokAuthorize: vi.fn(), post: vi.fn(), sync: vi.fn() }))
 vi.mock('@/api/admin', () => ({ adminAPI: { accounts: {
   importCPAAuthFiles: mocks.importFiles,
   create: mocks.create,
   grokAuthorize: mocks.grokAuthorize
 } } }))
+vi.mock('@/api/client', () => ({ apiClient: { post: mocks.post } }))
+vi.mock('@/api/admin/accounts', () => ({ syncCPAAccounts: mocks.sync }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual('vue-i18n'), useI18n: () => ({ locale: ref('en'), t: (key: string) => key }) }))
 vi.mock('@/composables/useOpenAIOAuth', () => ({ useOpenAIOAuth: () => ({
-  authUrl: ref(''), sessionId: ref('session'), oauthState: ref('state'), loading: ref(false), error: ref(''),
+  authUrl: ref(''), sessionId: ref('session'), oauthState: ref('state'), loading: ref(false), error: ref(''), harnessKind: ref(''), piOwnerUserId: ref<number | undefined>(),
   generateAuthUrl: vi.fn(), resetState: vi.fn(), validateRefreshToken: vi.fn(), exchangeAuthCode: vi.fn(),
   buildCredentials: (value: Record<string, unknown>) => ({ ...value })
 }) }))
@@ -21,7 +23,7 @@ const Dialog = defineComponent({ props: ['show'], template: '<div v-if="show"><s
 const render = () => mount(CreateAccountModal, { props: { show: true }, global: { stubs: { BaseDialog: Dialog, CPABridgeSetupCard: true } } })
 const unsupportedAuth = JSON.stringify({ type: 'grok', api_key: 'synthetic-key', base_url: 'https://relay.example.com/v1' })
 
-describe('CPA-only import boundary for legacy Grok setup', () => {
+describe('CPA import boundary for legacy Grok setup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.importFiles.mockResolvedValue({ created: 0, updated: 0, failed: 1, errors: [{ index: 1, message: 'Unsupported provider: grok' }] })

@@ -1,7 +1,11 @@
 package service
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/tidwall/gjson"
 )
 
@@ -23,4 +27,26 @@ func ValidateCPAAccount(a *Account) error {
 		return cpapolicy.Required()
 	}
 	return cpapolicy.ValidateBaseURL(a.GetCredential("base_url"))
+}
+
+// ValidateExecutionAccount permits only the configured CPA bridge or a native
+// Pi credential with an explicit owner. CPA-specific checks remain separate.
+func ValidateExecutionAccount(a *Account) error {
+	if a != nil && a.UsesNativePiRuntime() {
+		owner, err := strconv.ParseInt(a.GetCredential("pi_owner_user_id"), 10, 64)
+		if err != nil || owner <= 0 || a.ParentAccountID != nil || a.ProxyID != nil ||
+			strings.TrimSpace(a.GetCredential("access_token")) == "" ||
+			strings.TrimSpace(a.GetCredential("refresh_token")) == "" ||
+			strings.TrimSpace(a.GetCredential("chatgpt_account_id")) == "" ||
+			strings.TrimSpace(a.GetCredential("base_url")) != "" {
+			return infraerrors.BadRequest("PI_ACCOUNT_INVALID", "Pi 账号缺少独立凭据绑定或混入 CPA 配置")
+		}
+		switch a.GetCredential("pi_transport") {
+		case "", "sse", "auto", "websocket", "websocket-cached":
+		default:
+			return infraerrors.BadRequest("PI_TRANSPORT_INVALID", "Pi 账号传输模式无效")
+		}
+		return nil
+	}
+	return ValidateCPAAccount(a)
 }

@@ -453,7 +453,7 @@ func validateStorageConfig(cfg storageConfig) error {
 	}
 	seen := make(map[string]struct{}, len(cfg.Endpoints))
 	enabled := 0
-	enabledProtocol := ""
+	enabledNormal := 0
 	for _, ep := range cfg.Endpoints {
 		if (ep.Protocol != EndpointProtocolOpenAICompatible && ep.Protocol != JevProtocol) || ep.AccountID != 0 {
 			return cpapolicy.Required()
@@ -512,15 +512,17 @@ func validateStorageConfig(cfg storageConfig) error {
 			return infraerrors.BadRequest("prompt_audit_invalid_input_limit", "审计节点输入上限超出允许范围")
 		}
 		if ep.Enabled {
-			if enabledProtocol != "" && enabledProtocol != ep.Protocol {
-				return infraerrors.BadRequest("prompt_audit_mixed_provider_pool", "同一审查池不能同时启用 Jev 与 Qwen；切换时停用旧节点，避免隐式跨服务商降级")
-			}
-			enabledProtocol = ep.Protocol
 			enabled++
+			if ep.Protocol != JevProtocol {
+				enabledNormal++
+			}
 		}
 	}
 	if cfg.Enabled && enabled == 0 {
 		return infraerrors.BadRequest("prompt_audit_endpoint_required", "启用提示词审计前至少需要启用一个审计节点")
+	}
+	if cfg.Enabled && normalizeBackgroundAuditMode(cfg.BackgroundAuditMode) != BackgroundAuditModeOff && enabledNormal == 0 {
+		return infraerrors.BadRequest("prompt_audit_normal_endpoint_required", "启用后台审计前至少需要启用一个非 Jev 审计节点")
 	}
 	return nil
 }
@@ -691,6 +693,19 @@ func (cfg ActiveConfig) EnabledEndpoints() []ActiveEndpoint {
 	result := make([]ActiveEndpoint, 0, len(cfg.Endpoints))
 	for _, ep := range cfg.Endpoints {
 		if ep.Enabled {
+			result = append(result, ep)
+		}
+	}
+	return result
+}
+
+// EnabledEndpointsFor isolates the normal audit pool from Jev. Callers must
+// select a pool before failover so a provider failure cannot silently route a
+// normal request to Jev or a RequireJev request to a compatible LLM.
+func (cfg ActiveConfig) EnabledEndpointsFor(requireJev bool) []ActiveEndpoint {
+	result := make([]ActiveEndpoint, 0, len(cfg.Endpoints))
+	for _, ep := range cfg.Endpoints {
+		if ep.Enabled && (ep.Protocol == JevProtocol) == requireJev {
 			result = append(result, ep)
 		}
 	}

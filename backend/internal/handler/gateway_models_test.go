@@ -1308,6 +1308,38 @@ func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForDefaultF
 	require.Empty(t, got.Data[0].CreatedAt)
 }
 
+func TestGatewayModels_GPT6JGenericListRespectsGroupAllowlist(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const groupID int64 = 528
+	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{byGroup: map[int64][]service.Account{
+		groupID: {{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}}}},
+	}})
+	for _, tc := range []struct {
+		name    string
+		allowed []string
+		want    []string
+	}{
+		{name: "GPT-6J explicitly allowed", allowed: []string{"gpt-6j"}, want: []string{"gpt-6j"}},
+		{name: "GPT-6J omitted from allowlist", allowed: []string{"gpt-6-astra"}, want: []string{"gpt-6-astra"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{
+				ID: groupID, Platform: service.PlatformOpenAI,
+				ModelAllowlist: service.GroupModelAllowlist{Enabled: true, Models: tc.allowed},
+			}})
+			h.Models(c)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var got gatewayModelsResponseForTest
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			require.Equal(t, tc.want, modelIDsForTest(got.Data))
+		})
+	}
+}
+
 func modelIDsForTest(models []gatewayModelItemForTest) []string {
 	ids := make([]string, 0, len(models))
 	for _, model := range models {

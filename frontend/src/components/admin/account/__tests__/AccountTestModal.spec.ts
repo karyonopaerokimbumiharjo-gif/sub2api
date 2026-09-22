@@ -198,6 +198,30 @@ describe('AccountTestModal', () => {
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
   })
 
+  it('暂停调度的账号显示业务状态并仍可加载测试模型', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-6-astra', display_name: 'GPT-6 Astra' },
+      { id: 'gpt-6j', display_name: 'GPT-6J' }
+    ])
+    const wrapper = mountModal({
+      id: 43,
+      name: 'Paused CPA',
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: false
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.status.active · admin.accounts.status.paused')
+    expect(wrapper.text()).toContain('账号已暂停调度')
+    expect(getAvailableModels).toHaveBeenCalledWith(43)
+    expect((wrapper.vm as any).availableModels).toHaveLength(2)
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
+    expect((wrapper.vm as any).canStartTest).toBe(true)
+  })
+
   it('OpenAI Compact 探测会携带 compact 测试模式', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' }

@@ -127,6 +127,33 @@ func TestOpenAIStreamingPassthroughFlushesAtCompleteEventBoundaries(t *testing.T
 	require.Equal(t, 2, result.usage.OutputTokens)
 }
 
+func TestOpenAIStreamingPassthroughTerminalEventEndsWithoutEOF(t *testing.T) {
+	const body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5}}}\n\n"
+	reader := &hangingOpenAISSEAfterTerminal{payload: []byte(body), release: make(chan struct{})}
+	t.Cleanup(func() { _ = reader.Close() })
+	type outcome struct {
+		result *openaiStreamingResultPassthrough
+		body   string
+		err    error
+	}
+	outcomes := make(chan outcome, 1)
+	go func() {
+		result, recorder, _, err := runPassthroughFlushTest(t, reader, -1)
+		outcomes <- outcome{result: result, body: recorder.Body.String(), err: err}
+	}()
+	select {
+	case got := <-outcomes:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.result)
+		require.Equal(t, body, got.body)
+		require.Equal(t, 7, got.result.usage.InputTokens)
+		require.Equal(t, 5, got.result.usage.OutputTokens)
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough stream did not end after the terminal SSE frame")
+	}
+}
+
 func TestOpenAIStreamingPassthroughKeepsPreamblePendingUntilFirstOutputBoundary(t *testing.T) {
 	preamble := "event: response.created\n" +
 		`data: {"type":"response.created","response":{"id":"resp_pending"}}` + "\n\n" +

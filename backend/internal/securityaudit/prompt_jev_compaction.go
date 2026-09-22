@@ -40,7 +40,7 @@ type jevCompactionEnvelope struct {
 }
 
 func (s *PromptService) JevBlockingReady() bool {
-	if s == nil || s.config == nil || s.EffectiveMode() != ModeBlocking {
+	if s == nil || s.config == nil || s.config.BlockingActivationDegraded() || s.EffectiveMode() != ModeBlocking {
 		return false
 	}
 	cfg, ok := s.config.Active()
@@ -51,7 +51,7 @@ func (s *PromptService) JevBlockingReady() bool {
 }
 
 func jevEndpointsReady(cfg ActiveConfig) bool {
-	endpoints := cfg.EnabledEndpoints()
+	endpoints := cfg.EnabledEndpointsFor(true)
 	if len(endpoints) == 0 {
 		return false
 	}
@@ -92,8 +92,8 @@ func (s *PromptService) EnhanceCompaction(ctx context.Context, body []byte) ([]b
 
 	cfg, _ := s.config.Active()
 	var lastErr error
-	for _, endpoint := range cfg.EnabledEndpoints() {
-		if endpoint.Protocol != JevProtocol || endpoint.TokenInvalid || strings.TrimSpace(endpoint.Token) == "" {
+	for _, endpoint := range cfg.EnabledEndpointsFor(true) {
+		if endpoint.TokenInvalid || strings.TrimSpace(endpoint.Token) == "" {
 			continue
 		}
 		drop, err := planJevCompaction(ctx, endpoint, candidates, recent)

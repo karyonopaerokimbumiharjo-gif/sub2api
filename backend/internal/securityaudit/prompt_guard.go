@@ -44,7 +44,11 @@ func newGuardEvaluatorWithChunkConcurrency(scanner PromptScanner, repo JobReposi
 }
 
 func (g *GuardEvaluator) Evaluate(ctx context.Context, cfg ActiveConfig, snapshot PromptSnapshot) (*PromptDecision, error) {
-	return g.evaluate(ctx, cfg, snapshot, cfg.EnabledEndpoints(), true)
+	return g.EvaluateFor(ctx, cfg, snapshot, false)
+}
+
+func (g *GuardEvaluator) EvaluateFor(ctx context.Context, cfg ActiveConfig, snapshot PromptSnapshot, requireJev bool) (*PromptDecision, error) {
+	return g.evaluate(ctx, cfg, snapshot, cfg.EnabledEndpointsFor(requireJev), true)
 }
 
 // EvaluateShadow runs one explicitly selected endpoint without writing a
@@ -149,6 +153,22 @@ func (g *GuardEvaluator) evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 	})
 	if err != nil {
 		code := guardErrorCode(err)
+		if code == ErrorCodeReviewRequired && persistEvent && g.repo != nil {
+			// The rejection must remain visible even if the client disconnects
+			// while the audit node responds. Keep this write tightly bounded.
+			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_, recordErr := g.repo.RecordReviewRequired(recordCtx, snapshot.AuditEvidence(), cfg.ConfigVersion, int(g.clock.Now().Sub(start).Milliseconds()))
+			cancel()
+			if recordErr != nil {
+				if g.metrics != nil {
+					g.metrics.IncRecordFailed()
+				}
+				LogWarn(EventResultRecordFailed, mergeLogFields(baseFields, map[string]any{
+					"decision": DecisionUnavailable, "error_code": "result_record_failed", "stage": snapshot.Stage,
+					"status": "failed",
+				}))
+			}
+		}
 		kind := DecisionUnavailable
 		if code == ErrorCodeInvalidResponse {
 			kind = DecisionInvalid
@@ -191,7 +211,7 @@ func (g *GuardEvaluator) finishEvaluation(ctx context.Context, cfg ActiveConfig,
 		"status": "completed",
 	}))
 	if persistEvent && g.repo != nil {
-		if _, recordErr := g.repo.RecordBlocking(ctx, snapshot.Redacted(), cfg.ConfigVersion, result, cfg.StorePassEvents); recordErr != nil {
+		if _, recordErr := g.repo.RecordBlocking(ctx, snapshot.AuditEvidence(), cfg.ConfigVersion, result, cfg.StorePassEvents); recordErr != nil {
 			if g.metrics != nil {
 				g.metrics.IncRecordFailed()
 			}

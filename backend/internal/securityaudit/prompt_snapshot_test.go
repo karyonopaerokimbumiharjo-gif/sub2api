@@ -680,3 +680,15 @@ func mustDocumentJSON(t *testing.T, value any) []byte {
 func metadataTextForTest(scanText string) string {
 	return strings.Replace(scanText, promptAuditPrioritySeparator, "\n\n", 1)
 }
+
+
+func TestAuditEvidencePreservesRequestWithoutScannerPayload(t *testing.T) {
+ snapshot, err := ExtractPromptSnapshot(Request{Protocol: "openai_chat", Body: []byte(`{"messages":[{"role":"user","content":"完整请求：第一段\n第二段，不能只显示摘要。"}]}`)})
+ require.NoError(t, err)
+ evidence := snapshot.AuditEvidence()
+ require.Equal(t, "完整请求：第一段\n第二段，不能只显示摘要。", evidence.FullPrompt)
+ require.Equal(t, snapshot.AuditedPrompt, evidence.AuditedPrompt)
+ require.Empty(t, evidence.ScanText)
+ require.Empty(t, evidence.SegmentFingerprints)
+ require.Empty(t, snapshot.Redacted().FullPrompt)
+}

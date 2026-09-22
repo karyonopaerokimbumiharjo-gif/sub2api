@@ -7,7 +7,22 @@ import {openaiCodexProvider} from '@earendil-works/pi-ai/providers/openai-codex'
 const openaiCodexOAuth=openaiCodexProvider().auth.oauth;
 import {runNative,credentialAccount,closeSessions} from './native.mjs';
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative}) {
+// A read-only upstream request validates the currently usable access token
+// without rotating the refresh token shared with the operator's local auth.json.
+export async function validateCodexAccess({accessToken,accountId,fetchImpl=fetch}) {
+ if(typeof accessToken!=='string'||typeof accountId!=='string'||credentialAccount(accessToken)!==accountId)throw Error('oauth_account_mismatch');
+ const response=await fetchImpl('https://chatgpt.com/backend-api/codex/models?client_version=0.144.0',{
+  method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),
+  headers:{authorization:`Bearer ${accessToken}`,'chatgpt-account-id':accountId,accept:'application/json',originator:'codex_cli_rs',
+   'user-agent':'codex_cli_rs/0.144.0',version:'0.144.0'}
+ });
+ if(!response.ok)throw Error('oauth_access_rejected');
+ const manifest=await response.json();
+ if(!manifest||!Array.isArray(manifest.models))throw Error('oauth_access_invalid_response');
+ return accountId;
+}
+
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))};
@@ -60,6 +75,12 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     if(credentialAccount(value.access)!==body.account_id)throw Error('oauth_account_mismatch');
     json(res,200,credentials(value,body.owner_id));return;
    }
+   if(req.url==='/oauth/validate') {
+    if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
+    const account=await verifyAccess({accessToken:body.access_token,accountId:body.account_id});
+    if(account!==body.account_id)throw Error('oauth_account_mismatch');
+    json(res,200,{chatgpt_account_id:account,harness_kind:'pi',pi_owner_user_id:String(body.owner_id)});return;
+   }
    if(req.url==='/responses') {
     const abort=new AbortController();const timeout=setTimeout(()=>abort.abort(),120000);
     res.on('close',()=>{if(!res.writableFinished)abort.abort()});
@@ -86,7 +107,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    json(res,404,{error:'not_found'});
   }catch(error){
    // Deliberately do not echo provider exceptions, callbacks, tokens or payloads.
-   const safe=['owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type'];
+   const safe=['owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','unsupported_pi_field:max_output_tokens'];
    const code=safe.includes(error.message)?error.message:'pi_runtime_error';
    if(res.headersSent)res.destroy();else json(res,error.message==='pi_session_busy'?409:400,{error:code});
   }

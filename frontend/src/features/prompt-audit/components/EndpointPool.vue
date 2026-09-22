@@ -3,7 +3,7 @@
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 id="prompt-pool-title" class="text-base font-semibold text-gray-950 dark:text-white">{{ t('admin.promptAudit.pool.title') }}</h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-dark-300">{{ t('admin.promptAudit.pool.description') }}</p>
+        <p class="mt-1 text-sm text-gray-500 dark:text-dark-300">{{ locale.startsWith('zh') ? '按保存顺序分别调用 Jev 池和普通审计池；失败时仅在同一池内尝试下一节点，两池不互相兜底。' : 'Jev and normal audit nodes follow their saved order in separate pools. Failures try the next node in the same pool only.' }}</p>
       </div>
       <button type="button" class="btn btn-primary btn-sm" data-test="add-endpoint" @click="openCreate">
         {{ t('admin.promptAudit.pool.add') }}
@@ -50,8 +50,8 @@
             <div class="min-w-0">
               <div class="flex min-w-0 items-center gap-2">
                 <p class="truncate font-semibold text-gray-950 dark:text-white">{{ endpoint.name }}</p>
-                <span v-if="endpoint.enabled" class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-700 dark:text-dark-200">
-                  {{ index === firstEnabledIndex ? t('admin.promptAudit.pool.primary') : t('admin.promptAudit.pool.fallback') }}
+                <span v-if="endpoint.enabled" :data-test="`endpoint-role-${endpoint.id}`" class="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-700 dark:text-dark-200">
+                  {{ isPrimaryAuditEndpoint(endpoints, index) ? t('admin.promptAudit.pool.primary') : t('admin.promptAudit.pool.fallback') }}
                 </span>
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full" :class="endpoint.enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-dark-500'" aria-hidden="true" />
               </div>
@@ -62,7 +62,7 @@
           <div class="min-w-0 xl:block">
             <p class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 xl:hidden">{{ t('admin.promptAudit.pool.model') }}</p>
             <p class="truncate text-sm font-medium text-gray-700 dark:text-dark-200" :title="endpoint.model">{{ endpoint.model }}</p>
-            <p class="mt-1 text-xs text-gray-500">{{ endpoint.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : endpoint.adapter === 'generic_llm' ? 'CPA · Chat Completions' : 'CPA · Qwen3Guard' }}</p>
+            <p class="mt-1 text-xs text-gray-500">{{ auditEndpointBackendLabel(endpoint) }}</p>
           </div>
 
           <div>
@@ -128,7 +128,7 @@
           <span>{{ locale.startsWith('zh') ? '审查服务商 / 协议' : 'Audit provider / protocol' }}</span>
           <select :value="editing.protocol" class="input w-full" data-test="audit-provider" @change="selectProvider">
             <option value="typesafe_systemone">TypeSafe Jev · System One</option>
-            <option value="openai_compatible">Qwen3Guard · OpenAI compatible</option>
+            <option value="openai_compatible">OpenAI compatible · CPA / DeepSeek</option>
           </select>
           <span class="block text-xs text-gray-500">{{ locale.startsWith('zh') ? '切换服务商会清除待提交凭据并暂停节点；需重新配置，不会自动改动线上配置。' : 'Changing providers clears the draft credential and disables the node. Save explicitly after reconfiguring it.' }}</span>
         </label>
@@ -142,7 +142,7 @@
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.pool.protocol') }}</span>
-          <input class="input w-full" :value="editing.protocol === 'typesafe_systemone' ? 'TypeSafe Jev · System One' : 'CPA'" readonly />
+          <input class="input w-full" :value="auditEndpointBackendLabel(editing)" readonly />
         </label>
         <label class="space-y-1 text-sm text-gray-700 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.pool.adapter') }}</span>
@@ -188,12 +188,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PromptAuditEndpointDraft, PromptAuditOAuthAccount, PromptProbeResult } from '../types'
 import { cloneData, createDefaultEndpoint } from '../viewModel'
-import { changeAuditProvider, validateAuditEndpoint, auditEndpointError } from '../securityViewModel'
+import { changeAuditProvider, validateAuditEndpoint, auditEndpointError, auditEndpointBackendLabel, isPrimaryAuditEndpoint } from '../securityViewModel'
 
 const props = withDefaults(defineProps<{
   endpoints: PromptAuditEndpointDraft[]
@@ -210,7 +210,6 @@ const formRef = ref<HTMLFormElement | null>(null)
 const editorError = ref('')
 const editing = ref<PromptAuditEndpointDraft | null>(null)
 const editingIndex = ref(-1)
-const firstEnabledIndex = computed(() => props.endpoints.findIndex((endpoint) => endpoint.enabled))
 
 function openCreate() {
   editorError.value = ''

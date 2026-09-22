@@ -4,6 +4,26 @@ export const JEV_PROTOCOL = 'typesafe_systemone' as const
 export const JEV_MODEL = 'jev-1.13.0'
 export const JEV_BASE_URL = 'https://api.typesafe.ai'
 
+// The server routes Jev-required requests only through Jev nodes. All other
+// audit requests share the non-Jev pool, ordered by the saved endpoint list.
+export function isPrimaryAuditEndpoint(endpoints: readonly PromptAuditEndpointDraft[], index: number): boolean {
+  const endpoint = endpoints[index]
+  if (!endpoint?.enabled) return false
+  const isJev = endpoint.protocol === JEV_PROTOCOL
+  return endpoints.findIndex((item) => item.enabled && (item.protocol === JEV_PROTOCOL) === isJev) === index
+}
+
+export function auditEndpointBackendLabel(endpoint: PromptAuditEndpointDraft): string {
+  if (endpoint.protocol === JEV_PROTOCOL) return 'TypeSafe Jev · System One'
+  try {
+    const url = new URL(endpoint.base_url.trim())
+    if (url.protocol === 'https:' && url.hostname.toLowerCase() === 'opencode.ai' && url.pathname.replace(/\/+$/, '') === '/zen/go') {
+      return 'DeepSeek · OpenCode Chat Completions'
+    }
+  } catch { /* Invalid addresses are reported by the editor/server validator. */ }
+  return endpoint.adapter === 'generic_llm' ? 'CPA · Chat Completions' : 'CPA · Qwen3Guard'
+}
+
 export function createLatestRequestGate() {
   let generation = 0
   return {
@@ -80,6 +100,6 @@ export function auditEndpointError(code: string, locale: string): string {
 
 export function auditDescription(locale: string): string {
   return locale.startsWith('zh')
-    ? '文本输入审查：规则脱敏后的文本将发送至 TypeSafe；规则脱敏不等于完整 DLP。既有内容审核不变，新事件不保存未脱敏全文。节点可用不等于策略有效，启用阻断前需完成中文与英文回归评测。'
-    : 'Text-input screening: rule-redacted text is sent to TypeSafe; this is not comprehensive DLP. Existing content moderation is unchanged. New events do not store raw prompts. Endpoint availability is not policy accuracy; evaluate before enabling blocking.'
+    ? '普通审计使用非 Jev 节点；要求 Jev 的请求只使用 Jev 节点，两池不会互相兜底。审计文本会发往对应服务，规则脱敏不等于完整 DLP；已保存的审计事件可包含有长度上限的请求全文，供管理员复核。节点可用不等于判定准确，启用阻断前请完成中文与英文回归评测。'
+    : 'Normal audits use non-Jev nodes; Jev-required requests use Jev nodes only, with no cross-pool fallback. Audit text is sent to the selected service. Rule-based redaction is not comprehensive DLP; saved audit events may contain a length-limited full request for administrator review. Endpoint availability is not policy accuracy; evaluate before enabling blocking.'
 }

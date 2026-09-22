@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 func (a *Account) UsesNativePiRuntime() bool {
@@ -41,7 +42,28 @@ func nativePiSession(c *gin.Context, request map[string]any) string {
 		}
 	}
 	session, _ := request["prompt_cache_key"].(string)
-	return strings.TrimSpace(session)
+	if session = strings.TrimSpace(session); session != "" {
+		return session
+	}
+	// The Responses API does not require callers to supply a session. Give a
+	// one-shot request a fresh namespace so Pi can execute it without ever
+	// attaching it to another caller's continuation cache.
+	return "one-shot:" + uuid.NewString()
+}
+
+// The caller's session name is only unique within one API key. Include the
+// authenticated key ID before the private runtime hashes the session together
+// with the owner, credential, OAuth account and model.
+func scopedNativePiSession(c *gin.Context, session string) (string, error) {
+	value, ok := c.Get("api_key")
+	if !ok {
+		return "", errors.New("Pi account requires an authenticated API key")
+	}
+	key, ok := value.(*APIKey)
+	if !ok || key == nil || key.ID <= 0 {
+		return "", errors.New("Pi account requires an authenticated API key")
+	}
+	return strconv.FormatInt(key.ID, 10) + ":" + session, nil
 }
 func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
@@ -62,21 +84,33 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if json.Unmarshal(body, &request) != nil {
 		return fail(http.StatusBadRequest, "Invalid Responses request")
 	}
-	if metadata, ok := request["client_metadata"]; ok && metadata != nil {
-		return fail(http.StatusBadRequest, "Native Pi requests must not include Codex client metadata")
+	if metadata, ok := request["client_metadata"]; ok {
+		if metadata != nil {
+			return fail(http.StatusBadRequest, "Native Pi requests must not include Codex client metadata")
+		}
+		delete(request, "client_metadata")
 	}
 	if _, present := c.Request.Header[http.CanonicalHeaderKey("x-codex-turn-metadata")]; present {
 		return fail(http.StatusBadRequest, "Native Pi requests must not include Codex turn metadata")
 	}
-	if _, ok := request["previous_response_id"]; ok {
-		return fail(http.StatusBadRequest, "Pi runtime owns continuation; send full input")
+	if previous, ok := request["previous_response_id"]; ok {
+		if previous != nil {
+			return fail(http.StatusBadRequest, "Pi runtime owns continuation; send full input")
+		}
+		delete(request, "previous_response_id")
 	}
 	session := nativePiSession(c, request)
-	if session == "" {
-		return fail(http.StatusBadRequest, "A stable Pi session is required")
+	if limit, exists := request["max_output_tokens"]; exists {
+		if limit != nil {
+			return fail(http.StatusBadRequest, "Pi backend does not support max_output_tokens")
+		}
+		delete(request, "max_output_tokens")
+	}
+	session, err = scopedNativePiSession(c, session)
+	if err != nil {
+		return fail(http.StatusForbidden, err.Error())
 	}
 	delete(request, "prompt_cache_key")
-	delete(request, "max_output_tokens")
 	model, _ := request["model"].(string)
 	reqStream, _ := request["stream"].(bool)
 	if model == "" {
@@ -90,6 +124,9 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
 	}
 	upstreamModel := account.GetMappedModel(model)
+	if err := validateGPT6JUpstreamModel(c, upstreamModel); err != nil {
+		return fail(http.StatusBadRequest, err.Error())
+	}
 	request["model"] = upstreamModel
 	SetOpsUpstreamModel(c, upstreamModel)
 	transport := account.GetCredential("pi_transport")
@@ -108,6 +145,9 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 			return fail(resp.StatusCode, "Invalid or concurrent Pi request")
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
+	}
+	if err := guardGPT6JHTTPResponse(c, resp); err != nil {
+		return fail(http.StatusBadGateway, err.Error())
 	}
 	SetActualOpenAIUpstreamEndpoint(c, "/backend-api/codex/responses")
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: upstreamModel, Stream: reqStream, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses"}

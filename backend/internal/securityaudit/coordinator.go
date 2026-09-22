@@ -241,8 +241,11 @@ func prioritize(legacy *LegacyDecision, prompt *PromptDecision) Decision {
 			ClientMessage: "提示词安全审计暂时不可用，请稍后重试", Legacy: legacy, Prompt: prompt}
 	case DecisionUnavailable:
 		if prompt.ErrorCode == ErrorCodeReviewRequired {
-			return Decision{Kind: DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: ErrorCodeReviewRequired,
-				ClientMessage: "提示词审计已响应，但结论不确定，需要复核；这不代表输入已被判定违规", Legacy: legacy, Prompt: prompt}
+			// The scanner responded, but did not establish a safe verdict. Deny
+			// this request without recording it as a proven policy violation or
+			// invalidating a conversation as a confirmed block.
+			return Decision{Kind: DecisionUnavailable, HTTPStatus: http.StatusForbidden, ErrorCode: ErrorCodeReviewRequired,
+				ClientMessage: "提示词审计未得出可放行结论，本次请求按策略拒绝；这不代表输入已被判定违规", Legacy: legacy, Prompt: prompt}
 		}
 		return Decision{Kind: DecisionUnavailable, HTTPStatus: http.StatusServiceUnavailable, ErrorCode: ErrorCodeUnavailable,
 			ClientMessage: "提示词安全审计暂时不可用，请稍后重试", Legacy: legacy, Prompt: prompt}

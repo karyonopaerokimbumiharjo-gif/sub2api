@@ -195,6 +195,14 @@ func testPluginManifest(files map[string][]byte) PluginManifest {
 	}
 }
 
+func TestPluginManifestRejectsRetiredCodexStateHarvestCapability(t *testing.T) {
+	manifest := testPluginManifest(nil)
+	manifest.Capabilities = append(manifest.Capabilities, PluginCapability{
+		ID: "openai.codex.state_harvest.v1", Platform: PlatformOpenAI, AccountType: AccountTypeOAuth,
+	})
+	require.ErrorContains(t, manifest.Validate(), "不支持的插件能力")
+}
+
 func buildTestPluginArchive(t *testing.T, privateKey ed25519.PrivateKey, keyID string) []byte {
 	return buildPluginArchive(t, testPluginManifest(nil), privateKey, keyID, nil)
 }

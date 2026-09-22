@@ -394,3 +394,42 @@ func TestAnthropicEventToResponses_ItemLifecycleIsBalanced(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicEventToResponses_ToolCallArgumentsDoneMatchesDeltas(t *testing.T) {
+	state := NewAnthropicEventToResponsesState()
+	state.Model = "claude-sonnet-4-5"
+
+	var events []ResponsesStreamEvent
+	feed := func(evt *AnthropicStreamEvent) {
+		events = append(events, AnthropicEventToResponsesEvents(evt, state)...)
+	}
+
+	idx := 0
+	feed(&AnthropicStreamEvent{Type: "message_start", Message: &AnthropicResponse{ID: "msg_1"}})
+	feed(&AnthropicStreamEvent{Type: "content_block_start", Index: &idx, ContentBlock: &AnthropicContentBlock{
+		Type: "tool_use", ID: "toolu_1", Name: "grep_search",
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{
+		Type: "input_json_delta", PartialJSON: `{"path":`,
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_delta", Index: &idx, Delta: &AnthropicDelta{
+		Type: "input_json_delta", PartialJSON: `".","pattern":"TODO"}`,
+	}})
+	feed(&AnthropicStreamEvent{Type: "content_block_stop", Index: &idx})
+
+	var streamed, done string
+	var sawDone bool
+	for _, event := range events {
+		switch event.Type {
+		case "response.function_call_arguments.delta":
+			streamed += event.Delta
+		case "response.function_call_arguments.done":
+			sawDone = true
+			done = event.Arguments
+		}
+	}
+	const want = `{"path":".","pattern":"TODO"}`
+	if streamed != want || !sawDone || done != streamed {
+		t.Fatalf("tool arguments mismatch: deltas=%q done=%q sawDone=%v, want %q", streamed, done, sawDone, want)
+	}
+}

@@ -805,6 +805,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
+			// The completed SSE frame has already been written and its usage parsed.
+			// Codex bare errors still need any following authoritative terminal.
+			if sawTerminalEvent && !eventInProgress && !(codexFailureTerminal && sawBareError) {
+				return finalizeStream()
+			}
 		}
 		if result, err, done := handleScanErr(documentScanner.Err()); done {
 			return result, err
@@ -883,6 +888,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			markEventProcessed(ev)
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
+			}
+			if sawTerminalEvent && !eventInProgress && !(codexFailureTerminal && sawBareError) {
+				// Closing the body releases the upstream reader goroutine when the
+				// connection remains open after its terminal frame.
+				_ = resp.Body.Close()
+				return finalizeStream()
 			}
 
 		case <-intervalCh:
@@ -1770,6 +1781,10 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		// WriteFilteredHeaders may have copied the upstream SSE content type.
+		// Gin's c.Data keeps an existing Content-Type, so explicitly declare
+		// JSON after converting a terminal SSE event into a Responses object.
+		c.Writer.Header().Set("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

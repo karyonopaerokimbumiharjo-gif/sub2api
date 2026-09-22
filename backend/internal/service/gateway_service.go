@@ -1459,6 +1459,15 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 		return nil
 	}
+	// GPT-6J is a local Responses model backed by Astra, not a separate CPA
+	// upstream model. The generic /v1/models path must advertise it whenever
+	// its Astra execution target is actually present in the effective catalog.
+	// The handler still applies the group's explicit model allowlist afterward.
+	if platform == PlatformOpenAI {
+		if _, hasAstra := modelSet["gpt-6-astra"]; hasAstra {
+			modelSet["gpt-6j"] = struct{}{}
+		}
+	}
 
 	// Convert to slice
 	models := make([]string, 0, len(modelSet))

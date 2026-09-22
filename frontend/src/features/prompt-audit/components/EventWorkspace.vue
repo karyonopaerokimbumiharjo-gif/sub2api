@@ -23,6 +23,7 @@
           <option value="pass">{{ t('admin.promptAudit.decisions.pass') }}</option>
           <option value="flag">{{ t('admin.promptAudit.decisions.flag') }}</option>
           <option value="critical">{{ t('admin.promptAudit.decisions.critical') }}</option>
+          <option value="review_required">{{ t('admin.promptAudit.events.reviewRequired') }}</option>
         </select>
       </label>
       <label class="text-xs text-gray-600 dark:text-dark-200">
@@ -33,6 +34,7 @@
           <option value="medium">{{ t('admin.promptAudit.riskLevels.medium') }}</option>
           <option value="high">{{ t('admin.promptAudit.riskLevels.high') }}</option>
           <option value="critical">{{ t('admin.promptAudit.riskLevels.critical') }}</option>
+          <option value="unknown">{{ t('admin.promptAudit.riskLevels.unknown') }}</option>
         </select>
       </label>
       <FilterInput v-model="localFilters.endpoint" :label="t('admin.promptAudit.events.endpoint')" @change="filtersChanged" />
@@ -91,14 +93,14 @@
               <p class="mt-1 text-xs text-gray-500">{{ event.snapshot.model }} · {{ event.snapshot.protocol }} · {{ event.snapshot.stage || 'http' }}</p>
             </td>
             <td class="px-3 py-3">
-              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : decisionClass(event.decision)">
-                {{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : formatDecisionRisk(event.decision, event.risk_level) }}
+              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : event.audit_status === 'review_required' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200' : decisionClass(event.decision)">
+                {{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionRisk(event.decision, event.risk_level) }}
               </span>
               <span v-if="(event.duplicate_count || 0) > 1" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-dark-700 dark:text-dark-200">
                 {{ t('admin.promptAudit.events.duplicateCount', { count: event.duplicate_count }) }}
               </span>
-              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass'" class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.intent_categories || event.categories)">{{ t('admin.promptAudit.events.intentShort') }} · {{ formatCategories(event.intent_categories || event.categories) }}</p>
-              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.content_categories?.length" class="mt-1 max-w-48 truncate text-xs text-gray-500" :title="formatContentCategories(event.content_categories)">{{ t('admin.promptAudit.events.contentShort') }} · {{ formatContentCategories(event.content_categories) }}</p>
+              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required'" class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.intent_categories || event.categories)">{{ t('admin.promptAudit.events.intentShort') }} · {{ formatCategories(event.intent_categories || event.categories) }}</p>
+              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required' && event.content_categories?.length" class="mt-1 max-w-48 truncate text-xs text-gray-500" :title="formatContentCategories(event.content_categories)">{{ t('admin.promptAudit.events.contentShort') }} · {{ formatContentCategories(event.content_categories) }}</p>
               <p class="mt-1 text-xs text-gray-400">{{ policySourceLabel(event.policy_source) }}</p>
             </td>
             <td class="max-w-xs px-3 py-3"><p class="line-clamp-2 break-words text-gray-600 dark:text-dark-300">{{ event.snapshot.redacted_preview || '—' }}</p></td>
@@ -204,8 +206,8 @@ function policySourceLabel(source?: string): string {
   const value = t(key)
   return value === key ? source || '—' : value
 }
-const DECISIONS = new Set(['pass', 'flag', 'critical'])
-const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical'])
+const DECISIONS = new Set(['pass', 'flag', 'critical', 'review_required'])
+const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical', 'unknown'])
 
 function translateDecision(decision: string): string {
   return DECISIONS.has(decision) ? t(`admin.promptAudit.decisions.${decision}`) : decision

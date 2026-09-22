@@ -32,12 +32,12 @@
         <span
           :class="[
             'rounded-full px-2.5 py-1 text-xs font-semibold',
-            account.status === 'active'
+            account.status === 'active' && !isPaused
               ? 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400'
               : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
           ]"
         >
-          {{ account.status }}
+          {{ accountStatusLabel }}
         </span>
       </div>
 
@@ -57,6 +57,7 @@
       </div>
 
       <p v-if="account && account.status !== 'active'" role="status" class="text-sm text-amber-700">账号已停用。模型目录可查看；正式调用前请在账号行启用账号。</p>
+      <p v-else-if="isPaused" role="status" class="text-sm text-amber-700">账号已暂停调度。模型目录和连接测试仍可使用；正式调用前请在账号行恢复调度。</p>
       <div v-if="modelLoadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{{ modelLoadError }} <button type="button" class="underline" :disabled="loadingModels" @click="loadAvailableModels">重新加载模型</button></div>
       <p v-if="selectedModelId === 'gpt-6j'" class="text-sm text-gray-500">此处检测账号的 GPT-6 Astra 上游连接；GPT6J 的 Jev 工具接续请通过 Responses API 调用，并在使用记录查看完整步骤。</p>
       <div v-if="showModelSelect" class="space-y-1.5">
@@ -446,6 +447,12 @@ const uploadAudioDataURL = ref('')
 const uploadAudioName = ref('')
 const imageFileInput = ref<HTMLInputElement | null>(null)
 const audioFileInput = ref<HTMLInputElement | null>(null)
+const isPaused = computed(() => props.account?.status === 'active' && props.account.schedulable === false)
+const accountStatusLabel = computed(() =>
+  isPaused.value
+    ? `${t('admin.accounts.status.active')} · ${t('admin.accounts.status.paused')}`
+    : props.account ? t(`admin.accounts.status.${props.account.status}`) : ''
+)
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
 const openAITestModeOptions = computed(() => [

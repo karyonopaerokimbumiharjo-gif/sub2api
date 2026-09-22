@@ -644,3 +644,57 @@ func waitOpenAIResponseFlushSignal(t *testing.T, signal <-chan struct{}) {
 		t.Fatal("timed out waiting for stream signal")
 	}
 }
+
+// hangingOpenAISSEAfterTerminal models an upstream that keeps its HTTP stream
+// open after writing a complete terminal SSE frame.
+type hangingOpenAISSEAfterTerminal struct {
+	payload   []byte
+	sent      bool
+	release   chan struct{}
+	closeOnce sync.Once
+}
+
+func (r *hangingOpenAISSEAfterTerminal) Read(data []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(data, r.payload), nil
+	}
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *hangingOpenAISSEAfterTerminal) Close() error {
+	r.closeOnce.Do(func() { close(r.release) })
+	return nil
+}
+
+func TestOpenAIResponseFlush_TerminalEventEndsStreamWithoutEOF(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		cfg  config.GatewayConfig
+	}{
+		{name: "sync scan"},
+		{name: "async scan", cfg: config.GatewayConfig{StreamKeepaliveInterval: 1, StreamDataIntervalTimeout: 30}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":5}}}\n\n"
+			reader := &hangingOpenAISSEAfterTerminal{payload: []byte(body), release: make(chan struct{})}
+			t.Cleanup(func() { _ = reader.Close() })
+			recorder := newOpenAIResponseFlushRecorder()
+			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
+
+			select {
+			case err := <-errCh:
+				require.NoError(t, err)
+				result := <-resultCh
+				require.NotNil(t, result)
+				require.Equal(t, 7, result.usage.InputTokens)
+				require.Equal(t, 5, result.usage.OutputTokens)
+			case <-time.After(3 * time.Second):
+				t.Fatal("stream did not end after the terminal SSE frame")
+			}
+			gotBody, _ := recorder.snapshot()
+			require.Equal(t, body, gotBody)
+		})
+	}
+}

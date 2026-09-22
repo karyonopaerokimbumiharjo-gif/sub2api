@@ -91,6 +91,45 @@ func TestCoordinatorModesAndPriority(t *testing.T) {
 	}
 }
 
+func TestCoordinatorReviewRequiredRejectsWithoutViolationVerdict(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		prompt     *PromptDecision
+		promptErr  error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name: "Jev uncertain", promptErr: &GuardError{Code: ErrorCodeReviewRequired},
+			wantStatus: http.StatusForbidden, wantCode: ErrorCodeReviewRequired,
+		},
+		{
+			name: "uncertain decision", prompt: &PromptDecision{Kind: DecisionUnavailable, ErrorCode: ErrorCodeReviewRequired},
+			wantStatus: http.StatusForbidden, wantCode: ErrorCodeReviewRequired,
+		},
+		{
+			name: "upstream unavailable", promptErr: &GuardError{Code: ErrorCodeUnavailable},
+			wantStatus: http.StatusServiceUnavailable, wantCode: ErrorCodeUnavailable,
+		},
+		{
+			name: "invalid upstream response", promptErr: &GuardError{Code: ErrorCodeInvalidResponse},
+			wantStatus: http.StatusServiceUnavailable, wantCode: ErrorCodeInvalidResponse,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			decision := NewCoordinator(nil, &fakePromptEngine{mode: ModeBlocking, decision: test.prompt, err: test.promptErr}).Check(context.Background(), Request{})
+			require.Equal(t, test.wantStatus, decision.HTTPStatus)
+			require.Equal(t, test.wantCode, decision.ErrorCode)
+			require.False(t, decision.AllowNextStage)
+			if test.wantCode == ErrorCodeReviewRequired {
+				require.Equal(t, DecisionUnavailable, decision.Kind)
+				require.Contains(t, decision.ClientMessage, "不代表输入已被判定违规")
+				require.NotEqual(t, ErrorCodeBlocked, decision.ErrorCode)
+			}
+		})
+	}
+}
+
 func TestCoordinatorDoesNotMutateRequestBody(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":"hello"}]}`)
 	original := append([]byte(nil), body...)

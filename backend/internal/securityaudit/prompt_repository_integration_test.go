@@ -43,7 +43,7 @@ func openPromptAuditIntegrationDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err)
-	for _, name := range []string{"181_prompt_audit.sql", "182_prompt_audit_full_prompt.sql", "202_prompt_audit_incremental_full.sql"} {
+	for _, name := range []string{"181_prompt_audit.sql", "182_prompt_audit_full_prompt.sql", "198_prompt_audit_task_grouping.sql", "201_prompt_audit_adaptive_v1.sql", "202_prompt_audit_incremental_full.sql", "203_prompt_audit_background_modes.sql", "204_prompt_audit_whitelist_bypass.sql", "241_prompt_audit_review_required_event.sql"} {
 		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		require.NoError(t, err)
 		// The migration runner can retry an interrupted deployment; the migration
@@ -52,6 +52,12 @@ func openPromptAuditIntegrationDB(t *testing.T) *sql.DB {
 		require.NoError(t, err)
 		_, err = db.ExecContext(ctx, string(migration))
 		require.NoError(t, err)
+		if name == "181_prompt_audit.sql" {
+			// A previous test may have inserted review_required rows. Clear them
+			// before replaying older migrations whose constraints predate that
+			// status, then apply the current migration in order.
+			resetPromptAuditIntegrationDB(t, db)
+		}
 	}
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	resetPromptAuditIntegrationDB(t, db)
@@ -166,7 +172,7 @@ func TestPromptAuditDatabasePersistsFullPromptOnEventsOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, snapshot.RedactedPreview, promptCanary)
 	require.Contains(t, snapshot.FullPrompt, promptCanary)
-	event, err := repo.RecordBlocking(ctx, snapshot.Redacted(), 1, integrationResult(EventCritical), true)
+	event, err := repo.RecordBlocking(ctx, snapshot.AuditEvidence(), 1, integrationResult(EventCritical), true)
 	require.NoError(t, err)
 	// The event intentionally retains the full prompt for admin review; the
 	// redacted preview and transient job row still never contain it.
@@ -197,6 +203,40 @@ func TestPromptAuditDatabasePersistsFullPromptOnEventsOnly(t *testing.T) {
 	require.Equal(t, stableErrorMessage(code), message)
 	require.NotContains(t, message, errorCanary)
 	require.LessOrEqual(t, len([]rune(message)), 160)
+}
+
+func TestPromptAuditReviewRequiredPersistsWithoutSafetyVerdict(t *testing.T) {
+	db := openPromptAuditIntegrationDB(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	snapshot := integrationSnapshot("review")
+	snapshot.FullPrompt = "opening context\n" + strings.Repeat("long context ", DefaultFullPromptMaxRunes) + "\nReply with exactly 4."
+	snapshot.AuditedPrompt = "Reply with exactly 4."
+	snapshot.ScanText = "scanner-only-body"
+	event, err := repo.RecordReviewRequired(ctx, snapshot, 8, 507)
+	require.NoError(t, err)
+	require.Equal(t, "review_required", event.AuditStatus)
+	require.Equal(t, EventReviewRequired, event.Decision)
+	require.Equal(t, RiskUnknown, event.RiskLevel)
+	require.Equal(t, ActionBlock, event.Action)
+	require.Equal(t, ErrorCodeReviewRequired, event.PolicyCode)
+	require.Empty(t, event.Categories)
+	require.Empty(t, event.IssueSummaries)
+	require.Empty(t, event.ScannerEvidence)
+	require.LessOrEqual(t, len([]rune(event.Snapshot.FullPrompt)), DefaultFullPromptMaxRunes+1)
+	require.Contains(t, event.Snapshot.FullPrompt, "Reply with exactly 4.")
+	require.Equal(t, "Reply with exactly 4.", event.Snapshot.AuditedPrompt)
+	require.NotContains(t, event.Snapshot.FullPrompt, "scanner-only-body")
+	var jobJSON string
+	require.NoError(t, db.QueryRow(`SELECT row_to_json(j)::text FROM prompt_audit_jobs j WHERE id=$1`, event.JobID).Scan(&jobJSON))
+	require.NotContains(t, jobJSON, "Reply with exactly 4.")
+	require.NotContains(t, jobJSON, "scanner-only-body")
+	passPage, err := repo.ListEvents(ctx, EventFilter{Decision: string(EventPass)}, 1, 20)
+	require.NoError(t, err)
+	require.Zero(t, passPage.Total)
+	reviewPage, err := repo.ListEvents(ctx, EventFilter{Decision: string(EventReviewRequired)}, 1, 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), reviewPage.Total)
 }
 
 func TestPromptAuditRepositoryAdmissionClaimFencingAndEventTransaction(t *testing.T) {

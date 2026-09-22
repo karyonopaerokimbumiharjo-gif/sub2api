@@ -412,6 +412,11 @@ type CreateAccountInput struct {
 	ProbeEnabled       *bool
 	// SkipDefaultGroupBind prevents auto-binding to platform default group when GroupIDs is empty.
 	SkipDefaultGroupBind bool
+	// InitiallyUnschedulable keeps a newly imported account out of dispatch until
+	// an administrator explicitly enables it after reviewing its owner and group.
+	InitiallyUnschedulable bool
+	// InitiallyDisabled requires a separate explicit status change before use.
+	InitiallyDisabled bool
 	// SkipMixedChannelCheck skips the mixed channel risk check when binding groups.
 	// This should only be set when the caller has explicitly confirmed the risk.
 	SkipMixedChannelCheck bool

@@ -62,6 +62,9 @@ const (
 	EventPass     EventDecision = "pass"
 	EventFlag     EventDecision = "flag"
 	EventCritical EventDecision = "critical"
+	// EventReviewRequired is an event marker, never a scanner verdict. The
+	// request was rejected because no safe verdict was established.
+	EventReviewRequired EventDecision = "review_required"
 )
 
 type RiskLevel string
@@ -71,6 +74,7 @@ const (
 	RiskMedium   RiskLevel = "medium"
 	RiskHigh     RiskLevel = "high"
 	RiskCritical RiskLevel = "critical"
+	RiskUnknown  RiskLevel = "unknown"
 )
 
 type Action string
@@ -142,6 +146,14 @@ func (s PromptSnapshot) Redacted() PromptSnapshot {
 	s.ScanText = ""
 	s.FullPrompt = ""
 	s.AuditedPrompt = ""
+	s.SegmentFingerprints = nil
+	return s
+}
+
+// AuditEvidence preserves bounded request text for administrator event review.
+// Queue metadata continues to use Redacted; scanner payloads are not persisted.
+func (s PromptSnapshot) AuditEvidence() PromptSnapshot {
+	s.ScanText = ""
 	s.SegmentFingerprints = nil
 	return s
 }

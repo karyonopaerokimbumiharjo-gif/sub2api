@@ -411,7 +411,7 @@ func normalizeOpenAILongContextBillingUpdateExtra(account *Account, input *Updat
 // Grok media eligibility helpers live in account_grok_media_eligibility.go.
 
 func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]any) (*Account, error) {
-	accountExtra = MergeOpenAICodexTicketExtra(accountExtra, nil)
+	accountExtra = StripLegacyCodexTicketExtra(accountExtra)
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
 	delete(accountExtra, UpstreamBillingRateSyncEnabledExtraKey)
@@ -431,7 +431,10 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Concurrency: normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
 		Priority:    input.Priority,
 		Status:      StatusActive,
-		Schedulable: true,
+		Schedulable: !input.InitiallyUnschedulable,
+	}
+	if input.InitiallyDisabled {
+		account.Status = StatusDisabled
 	}
 	if account.ProxyID != nil && *account.ProxyID > 0 && account.IsOpenAICompatibleQuotaBridge() {
 		return nil, infraerrors.BadRequest("CPA_PROXY_USE_CREDENTIAL_SETTINGS", "CPA 上游出口代理请在 CPA 凭证设置中配置")
@@ -478,7 +481,8 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
-	if err := ValidateCPAAccount(&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, ProxyID: input.ProxyID}); err != nil {
+	input.Extra = StripLegacyCodexTicketExtra(input.Extra)
+	if err := ValidateExecutionAccount(&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, ProxyID: input.ProxyID}); err != nil {
 		return nil, err
 	}
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
@@ -499,6 +503,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 
 	// 绑定分组
 	groupIDs := input.GroupIDs
+	// Pi credentials are never silently added to openai-default. The operator
+	// must choose a separate route before this account can serve requests.
+	if (&Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials}).UsesNativePiRuntime() {
+		input.SkipDefaultGroupBind = true
+	}
 	// 如果没有指定分组,自动绑定对应平台的默认分组
 	if len(groupIDs) == 0 && !input.SkipDefaultGroupBind {
 		defaultGroupName := input.Platform + "-default"
@@ -519,6 +528,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 			return nil, err
 		}
 	}
+	if err := s.validateOpenAIExecutionGroups(ctx, &Account{Platform: input.Platform, Type: input.Type, Credentials: input.Credentials}, 0, groupIDs); err != nil {
+		return nil, err
+	}
 
 	// 校验并规范化请求头覆写配置（header 名小写化、格式检查）
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
@@ -537,14 +549,28 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
-	if err := s.accountRepo.Create(ctx, account); err != nil {
-		return nil, err
-	}
-
-	// 绑定分组
-	if len(groupIDs) > 0 {
-		if err := s.accountRepo.BindGroups(ctx, account.ID, groupIDs); err != nil {
+	if account.UsesNativePiRuntime() {
+		// Pi imports must not leave a credential-bearing, ungrouped account when
+		// group binding fails. Persist the account and bindings in one transaction.
+		if s.accountDuplicateRepo == nil {
+			return nil, errors.New("atomic account-group repository is not configured")
+		}
+		bindings := make([]AccountGroup, 0, len(groupIDs))
+		for i, groupID := range groupIDs {
+			bindings = append(bindings, AccountGroup{GroupID: groupID, Priority: i + 1})
+		}
+		if err := s.accountDuplicateRepo.CreateWithAccountGroups(ctx, account, bindings); err != nil {
 			return nil, err
+		}
+	} else {
+		if err := s.accountRepo.Create(ctx, account); err != nil {
+			return nil, err
+		}
+		// Preserve the existing CPA and other provider creation path.
+		if len(groupIDs) > 0 {
+			if err := s.accountRepo.BindGroups(ctx, account.ID, groupIDs); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -553,6 +579,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if account.Type == AccountTypeOAuth {
 		switch account.Platform {
 		case PlatformOpenAI:
+			if account.UsesNativePiRuntime() {
+				break // Pi credentials stay on the isolated runtime; no direct privacy call.
+			}
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -581,6 +610,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	input.Extra = StripLegacyCodexTicketExtra(input.Extra)
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -701,11 +731,14 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				normalizedExtra[key] = v
 			}
 		}
-        // Identity-bound execution metadata must survive partial UI setting updates.
-        for _, key := range []string{"cpa_identity", "cpa_auth_id", "cpa_connection_only", OpenAIQuotaViaCompatibleUpstreamExtraKey, OpenAIQuotaBridgeAuthNameExtraKey, OpenAIQuotaBridgeAuthEmailExtraKey} {
-            if _, provided := normalizedExtra[key]; !provided {if value, exists := account.Extra[key]; exists {normalizedExtra[key] = value}}
-        }
-		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
+		// Identity-bound execution metadata must survive partial UI setting updates.
+		for _, key := range []string{"cpa_identity", "cpa_auth_id", "cpa_connection_only", OpenAIQuotaViaCompatibleUpstreamExtraKey, OpenAIQuotaBridgeAuthNameExtraKey, OpenAIQuotaBridgeAuthEmailExtraKey} {
+			if _, provided := normalizedExtra[key]; !provided {
+				if value, exists := account.Extra[key]; exists {
+					normalizedExtra[key] = value
+				}
+			}
+		}
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
@@ -834,6 +867,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if input.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
+	if account.Platform == PlatformOpenAI && (input.Type != "" || len(input.Credentials) > 0 || input.ProxyID != nil || input.Status == StatusActive) {
+		if err := ValidateExecutionAccount(account); err != nil {
+			return nil, err
+		}
+	}
 
 	// 先验证分组是否存在（在任何写操作之前）
 	if input.GroupIDs != nil {
@@ -851,10 +889,21 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			}
 		}
 	}
+	if input.GroupIDs != nil || len(input.Credentials) > 0 || input.Status == StatusActive {
+		groupIDs := account.GroupIDs
+		if input.GroupIDs != nil {
+			groupIDs = *input.GroupIDs
+		}
+		if err := s.validateOpenAIExecutionGroups(ctx, account, account.ID, groupIDs); err != nil {
+			return nil, err
+		}
+	}
 
- if input.Status != "" {
-  if err := setCPAAccountEnabled(ctx,account,input.Status==StatusActive);err!=nil{return nil,err}
- }
+	if input.Status != "" {
+		if err := setCPAAccountEnabled(ctx, account, input.Status == StatusActive); err != nil {
+			return nil, err
+		}
+	}
 	billingSettingsAppliedAtomically := false
 	updater := s.accountBillingRepo
 	if updater == nil {
@@ -920,7 +969,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
-	updates = MergeOpenAICodexTicketExtra(updates, nil)
+	updates = StripLegacyCodexTicketExtra(updates)
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
@@ -947,8 +996,8 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // BulkUpdateAccounts updates multiple accounts in one request.
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
+	input.Extra = StripLegacyCodexTicketExtra(input.Extra)
 	// Managed probe/session state may only enter through dedicated typed endpoints.
-	input.Extra = MergeOpenAICodexTicketExtra(input.Extra, nil)
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
@@ -992,7 +1041,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || input.GroupIDs != nil || input.Status != "" || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1067,6 +1116,36 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 				continue
 			}
 			if err := s.checkMixedChannelRisk(ctx, accountID, platform, *input.GroupIDs); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if input.GroupIDs != nil || len(input.Credentials) > 0 || input.ProxyID != nil || input.Status == StatusActive {
+		for _, existing := range cachedTargets {
+			if existing == nil {
+				continue
+			}
+			candidate := *existing
+			if len(input.Credentials) > 0 {
+				candidate.Credentials = MergePreservingSensitiveCreds(existing.Credentials, input.Credentials)
+			}
+			if input.ProxyID != nil {
+				if *input.ProxyID == 0 {
+					candidate.ProxyID = nil
+				} else {
+					candidate.ProxyID = input.ProxyID
+				}
+			}
+			if candidate.Platform == PlatformOpenAI {
+				if err := ValidateExecutionAccount(&candidate); err != nil {
+					return nil, err
+				}
+			}
+			groupIDs := existing.GroupIDs
+			if input.GroupIDs != nil {
+				groupIDs = *input.GroupIDs
+			}
+			if err := s.validateOpenAIExecutionGroups(ctx, &candidate, existing.ID, groupIDs); err != nil {
 				return nil, err
 			}
 		}
@@ -1161,9 +1240,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Schedulable = input.Schedulable
 	}
 
- if input.Status!="" {
-  for _,account:=range cachedTargets {if err:=setCPAAccountEnabled(ctx,account,input.Status==StatusActive);err!=nil{return nil,err}}
- }
+	if input.Status != "" {
+		for _, account := range cachedTargets {
+			if err := setCPAAccountEnabled(ctx, account, input.Status == StatusActive); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Run bulk update for column/jsonb fields first.
 	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
 		return nil, err
@@ -1281,9 +1364,13 @@ func (s *adminServiceImpl) resolveBulkUpdateTargetIDs(ctx context.Context, filte
 }
 
 func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
- account, err := s.accountRepo.GetByID(ctx,id)
- if err != nil {return err}
- if err := deleteCPAAccountAuthorizations(ctx,account); err != nil {return err}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := deleteCPAAccountAuthorizations(ctx, account, s.accountRepo); err != nil {
+		return err
+	}
 
 	// 级联删除 spark 影子账号（先删影子，再删母账号）
 	shadows, err := s.accountRepo.ListShadowsByParent(ctx, id)
@@ -1509,6 +1596,54 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 	return nil
 }
 
+// validateOpenAIExecutionGroups keeps CPA and native Pi on separate business
+// routes. A group is the operator's backend switch; mixing both execution
+// backends would make the scheduler choose one implicitly.
+func (s *adminServiceImpl) validateOpenAIExecutionGroups(ctx context.Context, candidate *Account, currentAccountID int64, groupIDs []int64) error {
+	if candidate == nil || candidate.Platform != PlatformOpenAI {
+		return nil
+	}
+	pi := candidate.UsesNativePiRuntime()
+	if pi && len(groupIDs) == 0 {
+		return infraerrors.BadRequest("PI_GROUP_REQUIRED", "Pi 账号必须显式选择独立的 OpenAI 分组")
+	}
+	var piOwner *User
+	if pi {
+		ownerID, err := strconv.ParseInt(candidate.GetCredential("pi_owner_user_id"), 10, 64)
+		if err != nil || ownerID <= 0 || s.userRepo == nil {
+			return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号必须绑定有效归属用户")
+		}
+		piOwner, err = s.userRepo.GetByID(ctx, ownerID)
+		if err != nil || piOwner == nil || !piOwner.IsActive() {
+			return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号归属用户不存在或已停用")
+		}
+	}
+	for _, groupID := range groupIDs {
+		if pi {
+			group, err := s.groupRepo.GetByID(ctx, groupID)
+			if err != nil || group == nil || group.Platform != PlatformOpenAI || !group.IsActive() || !group.IsExclusive {
+				return infraerrors.BadRequest("PI_GROUP_INVALID", "Pi 账号只能绑定已开启的 OpenAI 专属分组")
+			}
+			if !piOwner.CanBindGroup(groupID, true) {
+				return infraerrors.BadRequest("PI_GROUP_OWNER_MISMATCH", "Pi 账号归属用户未获该专属分组授权")
+			}
+		}
+		members, err := s.accountRepo.ListByGroup(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("list OpenAI execution group %d: %w", groupID, err)
+		}
+		for _, member := range members {
+			if member.ID == currentAccountID || member.Platform != PlatformOpenAI {
+				continue
+			}
+			if member.UsesNativePiRuntime() != pi {
+				return infraerrors.BadRequest("OPENAI_BACKEND_GROUP_MIXED", "CPA 与 Pi 账号必须使用不同的分组")
+			}
+		}
+	}
+	return nil
+}
+
 // checkMixedChannelRisk 检查分组中是否存在混合渠道（Antigravity + Anthropic）
 // 如果存在混合，返回错误提示用户确认
 func (s *adminServiceImpl) checkMixedChannelRisk(ctx context.Context, currentAccountID int64, currentAccountPlatform string, groupIDs []int64) error {
@@ -1664,7 +1799,7 @@ func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) erro
 // 未设置则调用 disableOpenAITraining 并持久化到 Extra，返回设置的 mode 值。
 func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Account) string {
 	// 影子账号不持凭据，隐私设置由母账号管理，直接跳过。
-	if account.IsCredentialShadow() {
+	if account.IsCredentialShadow() || account.UsesNativePiRuntime() {
 		return ""
 	}
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
@@ -1701,6 +1836,9 @@ func (s *adminServiceImpl) EnsureOpenAIPrivacy(ctx context.Context, account *Acc
 // ForceOpenAIPrivacy 强制重新设置 OpenAI OAuth 账号隐私，无论当前状态。
 func (s *adminServiceImpl) ForceOpenAIPrivacy(ctx context.Context, account *Account) string {
 	// 影子账号不持凭据,隐私由母账号管理,直接跳过(与 EnsureOpenAIPrivacy 一致——外审第4轮)。
+	if account.UsesNativePiRuntime() {
+		return "" // Pi credentials are isolated; never issue a direct privacy request.
+	}
 	if account.IsCredentialShadow() {
 		return ""
 	}

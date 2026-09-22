@@ -419,6 +419,11 @@ func decoratePromptAuditEvent(event *Event) {
 		event.DuplicateCount = 1
 	}
 	event.ReviewStatus = "unreviewed"
+	if event.AuditStatus == "review_required" {
+		event.PolicySource = "local_audit"
+		event.PolicyCode = ErrorCodeReviewRequired
+		return
+	}
 	switch strings.TrimSpace(event.Snapshot.Stage) {
 	case "audit_gap":
 		event.PolicySource = "audit_gap"

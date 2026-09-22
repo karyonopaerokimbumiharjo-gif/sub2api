@@ -82,6 +82,7 @@ type JobRepository interface {
 	ReclaimStale(ctx context.Context, stagingBefore, processingBefore time.Time, limit int) (int64, error)
 	QueueStats(ctx context.Context) (QueueStats, error)
 	RecordBlocking(ctx context.Context, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, storePassEvents bool) (*Event, error)
+	RecordReviewRequired(ctx context.Context, snapshot PromptSnapshot, configVersion int64, latencyMS int) (*Event, error)
 }
 
 type PostgreSQLRepository struct {
@@ -194,7 +195,7 @@ func (r *PostgreSQLRepository) Complete(ctx context.Context, job *Job, result *N
 	}
 	var event *Event
 	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
-		event, err = insertEvent(ctx, tx, job.ID, job.Snapshot.Redacted(), job.ConfigVersion, result)
+		event, err = insertEvent(ctx, tx, job.ID, job.Snapshot.AuditEvidence(), job.ConfigVersion, result)
 		if err != nil {
 			return nil, err
 		}
@@ -300,10 +301,48 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 	}
 	var event *Event
 	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
-		event, err = insertEvent(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result)
+		event, err = insertEvent(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return event, nil
+}
+
+// RecordReviewRequired keeps a rejected, unadjudicated request visible for
+// administrator review. It stores only bounded prompt evidence and a fixed
+// error code; scanner responses, errors, and credentials are never persisted.
+func (r *PostgreSQLRepository) RecordReviewRequired(ctx context.Context, snapshot PromptSnapshot, configVersion int64, latencyMS int) (*Event, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("prompt audit database unavailable")
+	}
+	snapshot = snapshot.AuditEvidence()
+	snapshot.FullPrompt = BuildFullPrompt(snapshot.FullPrompt, DefaultFullPromptMaxRunes)
+	snapshot.AuditedPrompt = BuildFullPrompt(snapshot.AuditedPrompt, DefaultFullPromptMaxRunes)
+	if latencyMS < 0 {
+		latencyMS = 0
+	}
+	result := &NormalizedResult{
+		Decision: EventReviewRequired, RiskLevel: RiskUnknown, Action: ActionBlock, Safety: "NotAdjudicated",
+		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{},
+		ScannerBackend: "prompt-audit-guard", ScannerVersion: ErrorCodeReviewRequired,
+		PolicyID: "prompt-guard-review-required", PolicyVersion: 1, LatencyMS: latencyMS,
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	job, err := insertJob(ctx, tx, snapshot.Redacted(), ModeBlocking, configVersion, "done", 1)
+	if err != nil {
+		return nil, err
+	}
+	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot, configVersion, result, "review_required")
+	if err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -332,7 +371,7 @@ func (r *PostgreSQLRepository) RecordAuditGap(ctx context.Context, snapshot Prom
 		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{},
 		ScannerBackend: "not-audited", ScannerVersion: "gap-v1", PolicyID: "prompt-audit-gap", PolicyVersion: 1,
 	}
-	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result, "gap")
+	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result, "gap")
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +401,7 @@ func (r *PostgreSQLRepository) RecordUserBypass(ctx context.Context, snapshot Pr
 		ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{"user_bypass": "administrator_user_release"},
 		ScannerBackend: "prompt-audit-user-bypass", ScannerVersion: "v1", PolicyID: "prompt-audit-user-bypass", PolicyVersion: 1,
 	}
-	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.Redacted(), configVersion, result, "bypass")
+	event, err := insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result, "bypass")
 	if err != nil {
 		return nil, err
 	}

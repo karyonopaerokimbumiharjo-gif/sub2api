@@ -255,14 +255,16 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyFallbackIncludesGPT6Astra(
 
 func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUsesLiveCatalog(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		mapping map[string]any
-		status  int
-		want    []string
+		name          string
+		mapping       map[string]any
+		accountStatus string
+		status        int
+		want          []string
 	}{
-		{name: "new upstream models appear automatically", status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model"}},
-		{name: "explicit whitelist stays authoritative", mapping: map[string]any{"public-alias": "gpt-6-astra"}, status: http.StatusOK, want: []string{"public-alias"}},
-		{name: "failed refresh is visible", status: http.StatusBadGateway},
+		{name: "new upstream models appear automatically", accountStatus: service.StatusActive, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model", "gpt-6j"}},
+		{name: "inactive CPA account still reads its model catalog", accountStatus: service.StatusDisabled, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model", "gpt-6j"}},
+		{name: "explicit whitelist stays authoritative", accountStatus: service.StatusActive, mapping: map[string]any{"public-alias": "gpt-6-astra"}, status: http.StatusOK, want: []string{"public-alias"}},
+		{name: "failed refresh is visible", accountStatus: service.StatusActive, status: http.StatusBadGateway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			credentials := map[string]any{"api_key": "test-key", "base_url": "http://cpa:8317/v1"}
@@ -271,7 +273,7 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUsesLiveCatalog(t *testing
 			}
 			svc := &availableModelsAdminService{
 				stubAdminService: newStubAdminService(),
-				account:          service.Account{ID: 30, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Credentials: credentials},
+				account:          service.Account{ID: 30, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: test.accountStatus, Credentials: credentials},
 			}
 			upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
 				StatusCode: test.status,
@@ -282,7 +284,7 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUsesLiveCatalog(t *testing
 			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/30/models", nil))
 			require.Equal(t, test.status, rec.Code)
 			if test.status != http.StatusOK {
-				require.Contains(t, rec.Body.String(), "Failed to fetch current upstream model list")
+				require.Contains(t, rec.Body.String(), "无法读取执行后端模型目录")
 				return
 			}
 			var response struct {

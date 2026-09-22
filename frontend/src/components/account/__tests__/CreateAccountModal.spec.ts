@@ -1,23 +1,27 @@
 import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AdminGroup } from '@/types'
 
-const mocks = vi.hoisted(() => ({ files: vi.fn(), oauth: vi.fn(), refresh: vi.fn(), exchange: vi.fn(), create: vi.fn() }))
+const mocks = vi.hoisted(() => ({ files: vi.fn(), oauth: vi.fn(), refresh: vi.fn(), exchange: vi.fn(), create: vi.fn(), post: vi.fn(), sync: vi.fn(), generateAuthUrl: vi.fn() }))
 vi.mock('@/api/admin', () => ({ adminAPI: { accounts: { importCPAAuthFiles: mocks.files, importOpenAIOAuthToCPA: mocks.oauth, create: mocks.create } } }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ locale: { value: 'zh' }, t: (key: string) => key }) }))
+vi.mock('@/api/client', () => ({ apiClient: { post: mocks.post } }))
+vi.mock('@/api/admin/accounts', () => ({ syncCPAAccounts: mocks.sync }))
+vi.mock('vue-i18n', async () => ({ ...await vi.importActual('vue-i18n'), useI18n: () => ({ locale: ref('zh'), t: (key: string) => key }) }))
 vi.mock('@/composables/useOpenAIOAuth', () => ({ useOpenAIOAuth: () => ({
-  authUrl: ref(''), sessionId: ref('session'), oauthState: ref('expected-state'), loading: ref(false), error: ref(''),
-  generateAuthUrl: vi.fn(), resetState: vi.fn(), validateRefreshToken: mocks.refresh, exchangeAuthCode: mocks.exchange,
+  authUrl: ref(''), sessionId: ref('session'), oauthState: ref('expected-state'), loading: ref(false), error: ref(''), harnessKind: ref(''), piOwnerUserId: ref<number | undefined>(),
+  generateAuthUrl: mocks.generateAuthUrl, resetState: vi.fn(), validateRefreshToken: mocks.refresh, exchangeAuthCode: mocks.exchange,
   buildCredentials: (value: Record<string, unknown>) => ({ ...value })
 }) }))
 vi.mock('../CPABridgeSetup.vue', () => ({default: {template: '<div />'}}))
 import CreateAccountModal from '../CreateAccountModal.vue'
 const Dialog = defineComponent({ props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' })
-const render = () => mount(CreateAccountModal, { props: { show: true }, global: { stubs: { BaseDialog: Dialog, CPABridgeSetup: true } } })
+const render = (groups?: AdminGroup[], currentUserId?: number) => mount(CreateAccountModal, { props: { show: true, groups, currentUserId }, global: { stubs: { BaseDialog: Dialog, CPABridgeSetup: true } } })
+const activeOpenAIGroup = { id: 42, name: 'Pi clients', platform: 'openai', status: 'active', is_exclusive: true } as AdminGroup
 
-describe('CPA-only account import', () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.files.mockResolvedValue({ created: 1, updated: 0, failed: 0, errors: [] }); mocks.oauth.mockResolvedValue({ bridge_account_id: 30 }) })
-  it('exposes no direct backend, provider routing URL, or separate Sub2 account creation', () => {
+describe('account import backend boundaries', () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.files.mockResolvedValue({ created: 1, updated: 0, failed: 0, errors: [] }); mocks.oauth.mockResolvedValue({ bridge_account_id: 30 }); mocks.sync.mockResolvedValue({ created: 0, updated: 0, identities: 0 }); mocks.post.mockResolvedValue({}) })
+  it('exposes no arbitrary direct backend URL or separate Sub2 account creation', () => {
     const wrapper = render()
     expect(wrapper.get('[data-testid="cpa-only-notice"]').text()).toContain('CPA')
     expect(wrapper.find('[data-testid="openai-runtime-backend-direct"]').exists()).toBe(false)
@@ -91,5 +95,70 @@ describe('CPA-only account import', () => {
     expect(wrapper.emitted('created')).toBeUndefined()
     expect(mocks.create).not.toHaveBeenCalled()
     expect(wrapper.get('[role="alert"]').text()).toContain('CPA unavailable')
+  })
+  it('requires an explicit active OpenAI group and sends only the chosen group when creating Pi', async () => {
+    const inactive = { id: 43, name: 'Inactive OpenAI', platform: 'openai', status: 'inactive' } as AdminGroup
+    const anthropic = { id: 44, name: 'Anthropic', platform: 'anthropic', status: 'active' } as AdminGroup
+    const wrapper = render([activeOpenAIGroup, inactive, anthropic])
+    await wrapper.get('[data-testid="cpa-tab-oauth"]').trigger('click')
+    await wrapper.get('[data-testid="openai-harness-kind"]').setValue('pi')
+    await wrapper.get('[data-testid="pi-owner-user-id"]').setValue('7')
+    const groupSelect = wrapper.get('[data-testid="pi-group-id"]')
+    expect(groupSelect.findAll('option').map((option) => option.text())).toEqual(['请选择已启用的 OpenAI 分组', 'Pi clients'])
+    await wrapper.get('[data-testid="cpa-generate-auth"]').trigger('click')
+    expect(mocks.generateAuthUrl).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('OpenAI 分组')
+
+    await groupSelect.setValue('42')
+    await wrapper.get('[data-testid="cpa-generate-auth"]').trigger('click')
+    expect(mocks.generateAuthUrl).toHaveBeenCalledWith(null)
+    await wrapper.get('[data-testid="cpa-callback"]').setValue('http://localhost:1455/auth/callback?code=pi-code&state=expected-state')
+    await wrapper.get('[data-testid="cpa-import-submit"]').trigger('click')
+    await flushPromises()
+    expect(mocks.post).toHaveBeenCalledWith('/admin/openai/create-pi-account', {
+      session_id: 'session', code: 'pi-code', state: 'expected-state', pi_owner_user_id: 7, group_ids: [42]
+    })
+    expect(mocks.oauth).not.toHaveBeenCalled()
+    expect(mocks.sync).not.toHaveBeenCalled()
+    expect(wrapper.emitted('created')).toHaveLength(1)
+  })
+  it('does not create Pi when no active OpenAI group is available', async () => {
+    const wrapper = render([])
+    await wrapper.get('[data-testid="cpa-tab-oauth"]').trigger('click')
+    await wrapper.get('[data-testid="openai-harness-kind"]').setValue('pi')
+    await wrapper.get('[data-testid="pi-owner-user-id"]').setValue('7')
+    expect(wrapper.get('[data-testid="pi-no-groups"]').text()).toContain('没有可用')
+    await wrapper.get('[data-testid="cpa-callback"]').setValue('http://localhost:1455/auth/callback?code=pi-code&state=expected-state')
+    await wrapper.get('[data-testid="cpa-import-submit"]').trigger('click')
+    await flushPromises()
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('OpenAI 分组')
+  })
+  it('imports one Pi auth.json into an exclusive owner-bound group without calling CPA', async () => {
+    const wrapper = render([activeOpenAIGroup], 7)
+    await wrapper.get('[data-testid="pi-auth-backend"]').setValue('pi')
+    expect((wrapper.get('[data-testid="pi-auth-owner-user-id"]').element as HTMLInputElement).value).toBe('7')
+    await wrapper.get('[data-testid="pi-auth-group-id"]').setValue('42')
+    await wrapper.get('[data-testid="cpa-json"]').setValue('{"auth_mode":"chatgpt","tokens":{}}')
+    await wrapper.get('[data-testid="cpa-import-submit"]').trigger('click')
+    await flushPromises()
+    expect(mocks.post).toHaveBeenCalledWith('/admin/openai/import-pi-auth', {
+      content: '{"auth_mode":"chatgpt","tokens":{}}', pi_owner_user_id: 7, group_ids: [42]
+    })
+    expect(mocks.files).not.toHaveBeenCalled()
+    expect(mocks.sync).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="status"]').text()).toContain('禁用且不可调度')
+    expect(wrapper.emitted('created')).toHaveLength(1)
+    expect((wrapper.get('[data-testid="cpa-json"]').element as HTMLTextAreaElement).value).toBe('')
+  })
+  it('does not offer a public OpenAI group to Pi auth import', async () => {
+    const wrapper = render([{ ...activeOpenAIGroup, is_exclusive: false } as AdminGroup], 7)
+    await wrapper.get('[data-testid="pi-auth-backend"]').setValue('pi')
+    expect(wrapper.get('[data-testid="pi-auth-group-id"]').findAll('option')).toHaveLength(1)
+    await wrapper.get('[data-testid="cpa-json"]').setValue('{}')
+    await wrapper.get('[data-testid="cpa-import-submit"]').trigger('click')
+    await flushPromises()
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="alert"]').text()).toContain('独立 OpenAI 分组')
   })
 })

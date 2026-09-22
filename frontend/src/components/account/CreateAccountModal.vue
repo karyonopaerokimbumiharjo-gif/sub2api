@@ -2,13 +2,36 @@
   <BaseDialog :show="show" :title="text('导入账号', 'Import account')" width="wide" @close="close">
     <div class="space-y-5">
       <p class="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200" data-testid="cpa-only-notice">
-        {{ text('导入授权后自动识别真实账号、合并重复授权并同步到账号列表。分组和调用设置可在账号行内编辑。', 'Imported credentials are deduplicated by identity and synchronized to the account list. Edit groups and routing on each account.') }}
+        {{ text('授权文件可选择 CPA 或独立 Pi 后端；Refresh Token 导入 CPA。账号与分组以账号列表为准。', 'Authorization files can use CPA or the isolated Pi backend; refresh tokens go to CPA. The account list shows the actual accounts and groups.') }}
       </p>
       <div class="flex gap-2" role="tablist">
         <button v-for="tab in tabs" :key="tab.id" type="button" class="btn" :class="mode === tab.id ? 'btn-primary' : 'btn-secondary'" :disabled="busy" :data-testid="`cpa-tab-${tab.id}`" role="tab" :aria-selected="mode === tab.id" @click="mode = tab.id">{{ tab.label }}</button>
       </div>
       <div v-if="mode === 'oauth'" class="space-y-3">
-        <button type="button" class="btn btn-secondary" :disabled="busy || oauth.loading.value" data-testid="cpa-generate-auth" @click="oauth.generateAuthUrl(runtime.proxy_id)">{{ text('生成 OpenAI 授权链接', 'Generate OpenAI authorization link') }}</button>
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-500 dark:bg-dark-700/40">
+          <label class="block text-sm font-medium">
+            {{ text('执行后端', 'Execution backend') }}
+            <select v-model="oauth.harnessKind.value" class="input mt-2 w-full" data-testid="openai-harness-kind" :disabled="busy || oauth.loading.value || !!oauth.authUrl.value">
+              <option value="">{{ text('CPA（默认）', 'CPA (default)') }}</option>
+              <option value="pi">Pi（独立会话运行时）</option>
+            </select>
+          </label>
+          <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
+            {{ text('Pi 归属用户 ID', 'Pi owner user ID') }}
+            <input v-model.number="oauth.piOwnerUserId.value" type="number" min="1" step="1" class="input mt-2 w-full" data-testid="pi-owner-user-id" :disabled="busy || oauth.loading.value || !!oauth.authUrl.value" />
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('必须填写实际调用者的用户 ID，Pi 凭据固定绑定该用户。', 'Required: the user ID that will call this credential.') }}</span>
+          </label>
+          <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
+            {{ text('Pi 业务分组', 'Pi business group') }}
+            <select v-model.number="piGroupId" class="input mt-2 w-full" data-testid="pi-group-id" :disabled="busy || oauth.loading.value || !piOpenAIGroups.length">
+              <option value="">{{ text('请选择已启用的 OpenAI 分组', 'Select an active OpenAI group') }}</option>
+              <option v-for="group in piOpenAIGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+            </select>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('创建时必须明确选择分组；Pi 不会自动加入默认分组。', 'Choose a group explicitly before creating this account. Pi never joins a default group automatically.') }}</span>
+          </label>
+          <p v-if="oauth.harnessKind.value === 'pi' && !piOpenAIGroups.length" data-testid="pi-no-groups" class="mt-2 text-sm text-amber-700 dark:text-amber-300">{{ text('没有可用的 OpenAI 分组，请先创建或启用分组。', 'No active OpenAI group is available. Create or enable one first.') }}</p>
+        </div>
+        <button type="button" class="btn btn-secondary" :disabled="busy || oauth.loading.value" data-testid="cpa-generate-auth" @click="generateAuthUrl">{{ text('生成 OpenAI 授权链接', 'Generate OpenAI authorization link') }}</button>
         <a v-if="oauth.authUrl.value" :href="oauth.authUrl.value" target="_blank" rel="noopener noreferrer" class="block break-all text-sm text-primary-600">{{ text('打开授权页面', 'Open authorization page') }}</a>
         <label class="block text-sm">
           {{ text('授权完成后粘贴完整回调地址', 'Paste the full callback URL after authorization') }}
@@ -20,15 +43,37 @@
         <textarea v-model="refreshTokens" class="input mt-2 w-full font-mono" rows="5" autocomplete="off" spellcheck="false" data-testid="cpa-refresh-tokens" />
       </label>
       <div v-else class="space-y-3">
-        <p class="text-sm text-gray-500">{{ text('支持 Codex auth.json，以及 CPA 原生 OpenAI、Claude、Gemini、Antigravity OAuth 文件。无法识别的文件会显示错误。', 'Supports Codex auth.json and native CPA OAuth files for OpenAI, Claude, Gemini and Antigravity. Unsupported files return an error.') }}</p>
-        <input type="file" accept=".json,application/json" multiple :disabled="busy" data-testid="cpa-files" @change="readFiles" />
+        <label class="block text-sm font-medium">
+          {{ text('授权文件执行后端', 'Authorization file backend') }}
+          <select v-model="jsonBackend" class="input mt-2 w-full" data-testid="pi-auth-backend" :disabled="busy">
+            <option value="cpa">CPA</option>
+            <option value="pi">Pi（独立会话运行时）</option>
+          </select>
+        </label>
+        <template v-if="jsonBackend === 'pi'">
+          <p class="text-sm text-amber-700 dark:text-amber-300" data-testid="pi-auth-rotation-warning">{{ text('只接受单个本机 Codex auth.json。导入时只读验证当前 Access Token，不会轮换 Refresh Token，也不会改写本机文件；这不能证明后续 Refresh Token 一定可续期。导入后本机与服务器共用 Refresh Token，后续自动刷新可能相互覆盖；建议使用独立授权。新账号默认禁用且不参与调度，须显式开启。', 'Import one local Codex auth.json. Import validates the current access token without rotating the refresh token or changing the local file; this does not prove a future refresh will succeed. Local Codex and the server then share a refresh token, so later refreshes may conflict. A separate authorization is recommended. The new account starts disabled and unschedulable until explicitly enabled.') }}</p>
+          <label class="block text-sm font-medium">
+            {{ text('Pi 归属用户 ID', 'Pi owner user ID') }}
+            <input v-model.number="oauth.piOwnerUserId.value" type="number" min="1" step="1" class="input mt-2 w-full" data-testid="pi-auth-owner-user-id" :disabled="busy" />
+          </label>
+          <label class="block text-sm font-medium">
+            {{ text('Pi 独立业务分组', 'Dedicated Pi business group') }}
+            <select v-model.number="piGroupId" class="input mt-2 w-full" data-testid="pi-auth-group-id" :disabled="busy || !piOpenAIGroups.length">
+              <option value="">{{ text('请选择已启用的 OpenAI 分组', 'Select an active OpenAI group') }}</option>
+              <option v-for="group in piOpenAIGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+            </select>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('该分组须为空或仅有 Pi 账号；已有 CPA 账号的分组会被拒绝。', 'The group must be empty or contain Pi accounts only; groups with CPA accounts are rejected.') }}</span>
+          </label>
+        </template>
+        <p v-else class="text-sm text-gray-500">{{ text('支持 Codex auth.json，以及 CPA 原生 OpenAI、Claude、Gemini、Antigravity OAuth 文件。无法识别的文件会显示错误。', 'Supports Codex auth.json and native CPA OAuth files for OpenAI, Claude, Gemini and Antigravity. Unsupported files return an error.') }}</p>
+        <input type="file" accept=".json,application/json" :multiple="jsonBackend === 'cpa'" :disabled="busy" data-testid="cpa-files" @change="readFiles" />
         <label class="block text-sm">
-          {{ text('或粘贴授权 JSON（支持数组）', 'Or paste authorization JSON (arrays supported)') }}
+          {{ jsonBackend === 'pi' ? text('或粘贴单个 auth.json', 'Or paste one auth.json') : text('或粘贴授权 JSON（支持数组）', 'Or paste authorization JSON (arrays supported)') }}
           <textarea v-model="content" class="input mt-2 w-full font-mono" rows="7" autocomplete="off" spellcheck="false" data-testid="cpa-json" />
         </label>
         <p v-if="fileContents.length" class="text-sm text-gray-500">{{ text(`已读取 ${fileContents.length} 个文件`, `${fileContents.length} files loaded`) }}</p>
       </div>
-      <fieldset :disabled="busy" class="space-y-3 border-t pt-4">
+      <fieldset v-if="(mode === 'oauth' && oauth.harnessKind.value !== 'pi') || mode === 'refresh' || (mode === 'json' && jsonBackend === 'cpa')" :disabled="busy" class="space-y-3 border-t pt-4">
         <p class="text-sm text-gray-500">{{ cpaText('importScope') }}</p>
         <CPARuntimeFields v-model="runtime" :proxies="proxies || []" />
       </fieldset>
@@ -49,6 +94,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import { apiClient } from '@/api/client'
 import {syncCPAAccounts} from '@/api/admin/accounts'
 import CPARuntimeFields from './CPARuntimeFields.vue'
 import { useCPAText } from './cpaRuntimeText'
@@ -58,7 +104,7 @@ import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { AdminGroup, Proxy } from '@/types'
 
-const props = defineProps<{ show: boolean; proxies?: Proxy[]; groups?: AdminGroup[] }>()
+const props = defineProps<{ show: boolean; proxies?: Proxy[]; groups?: AdminGroup[]; currentUserId?: number }>()
 const emit = defineEmits<{ (event: 'close'): void; (event: 'created'): void }>()
 const { t, locale } = useI18n()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
@@ -67,6 +113,7 @@ const cpaText = useCPAText()
 const newRuntime = (): CPACredentialUpdate => ({name:'new-credential',disabled:false,proxy_id:null,priority:0,weight:1,request_retry:0})
 const runtime = ref(newRuntime())
 const mode = ref<'oauth' | 'refresh' | 'json'>('json')
+const jsonBackend = ref<'cpa' | 'pi'>('cpa')
 const tabs = computed(() => [
   { id: 'json' as const, label: text('授权文件', 'Authorization files') },
   { id: 'oauth' as const, label: 'OpenAI OAuth' },
@@ -81,16 +128,40 @@ const error = ref('')
 const summary = ref('')
 const routingWarning = ref(false)
 const bridgeRefresh = ref(0)
+const piGroupId = ref<number | ''>('')
+const piOpenAIGroups = computed(() => (props.groups || []).filter((group) => group.platform === 'openai' && group.status === 'active' && group.is_exclusive))
 
-watch(() => props.show, (show) => { if (!show) reset() })
+function selectedPiGroupId(): number | null {
+  const id = Number(piGroupId.value)
+  return Number.isSafeInteger(id) && id > 0 && piOpenAIGroups.value.some((group) => group.id === id) ? id : null
+}
+
+watch(() => props.show, (show) => {
+  if (!show) reset()
+  else if (!oauth.piOwnerUserId.value && Number.isSafeInteger(props.currentUserId) && (props.currentUserId || 0) > 0) oauth.piOwnerUserId.value = props.currentUserId
+}, { immediate: true })
 function reset() {
   content.value = callback.value = refreshTokens.value = error.value = summary.value = ''
   fileContents.value = []
   routingWarning.value = false
   runtime.value = newRuntime()
+  piGroupId.value = ''
+  jsonBackend.value = 'cpa'
   oauth.resetState()
 }
 function close() { if (!busy.value) { reset(); emit('close') } }
+async function generateAuthUrl() {
+  if (oauth.harnessKind.value === 'pi' && (!Number.isInteger(oauth.piOwnerUserId.value) || !oauth.piOwnerUserId.value || oauth.piOwnerUserId.value < 1)) {
+    error.value = text('Pi 归属用户 ID 必须是正整数。', 'Pi owner user ID must be a positive integer.')
+    return
+  }
+  if (oauth.harnessKind.value === 'pi' && selectedPiGroupId() === null) {
+    error.value = text('请先选择一个已启用的 OpenAI 分组。', 'Select an active OpenAI group first.')
+    return
+  }
+  error.value = ''
+  await oauth.generateAuthUrl(oauth.harnessKind.value === 'pi' ? null : runtime.value.proxy_id)
+}
 async function readFiles(event: Event) {
   const files = Array.from((event.target as HTMLInputElement).files || [])
   fileContents.value = []
@@ -115,6 +186,18 @@ async function submit() {
     if (mode.value === 'json') {
       const contents = [...fileContents.value, ...(content.value.trim() ? [content.value.trim()] : [])]
       if (!contents.length) throw new Error(text('请选择文件或粘贴授权 JSON。', 'Select files or paste authorization JSON.'))
+      if (jsonBackend.value === 'pi') {
+        const groupId = selectedPiGroupId()
+        if (contents.length !== 1) throw new Error(text('Pi 每次只能导入一份 auth.json。', 'Pi accepts exactly one auth.json per import.'))
+        if (!Number.isSafeInteger(oauth.piOwnerUserId.value) || !oauth.piOwnerUserId.value || oauth.piOwnerUserId.value < 1) throw new Error(text('Pi 归属用户 ID 必须是正整数。', 'Pi owner user ID must be a positive integer.'))
+        if (groupId === null) throw new Error(text('请先选择一个已启用的 Pi 独立 OpenAI 分组。', 'Select an active dedicated Pi OpenAI group first.'))
+        await apiClient.post('/admin/openai/import-pi-auth', { content: contents[0], pi_owner_user_id: oauth.piOwnerUserId.value, group_ids: [groupId] })
+        summary.value = text('当前 Access Token 已验证，账号已创建为禁用且不可调度；启用前需另行验收续期，建议使用独立授权。', 'The current access token is verified. The account was created disabled and unschedulable; verify refresh separately before enabling it, preferably with a separate authorization.')
+        content.value = ''
+        fileContents.value = []
+        emit('created')
+        return
+      }
       const result = await adminAPI.accounts.importCPAAuthFiles(contents, runtime.value)
       imported = result.created + result.updated
       for(const item of result.items || []) {const name=(item as {auth_name?:string}).auth_name;if(name)importedAuthNames.push(name)}
@@ -140,6 +223,15 @@ async function submit() {
       const code = url.searchParams.get('code') || ''
       const state = url.searchParams.get('state') || ''
       if (!state || state !== oauth.oauthState.value || !code) throw new Error(text('回调地址与本次授权不匹配。', 'Callback does not match this authorization.'))
+      if (oauth.harnessKind.value === 'pi') {
+        const groupId = selectedPiGroupId()
+        if (groupId === null) throw new Error(text('请先选择一个已启用的 OpenAI 分组。', 'Select an active OpenAI group first.'))
+        await apiClient.post('/admin/openai/create-pi-account', {session_id: oauth.sessionId.value, code, state, pi_owner_user_id: oauth.piOwnerUserId.value, group_ids: [groupId]})
+        summary.value = text('Pi 账号已创建并关联所选专属分组，默认禁用且不可调度；请核对后显式开启。', 'Pi account created in the selected exclusive group, disabled and unschedulable until explicitly enabled.')
+        callback.value = ''
+        emit('created')
+        return
+      }
       const tokenInfo = await oauth.exchangeAuthCode(code, oauth.sessionId.value, state, runtime.value.proxy_id)
       if (!tokenInfo) throw new Error(oauth.error.value || 'OAuth exchange failed')
       const result = await adminAPI.accounts.importOpenAIOAuthToCPA(oauth.buildCredentials(tokenInfo), runtime.value)
@@ -150,7 +242,13 @@ async function submit() {
     summary.value = imported > 0 ? text(`已处理 ${imported} 份授权，实际账号数以列表去重结果为准。`, `Processed ${imported} credentials; the account list deduplicates identities.`) : ''
     error.value = failures.join('\n')
     if (imported > 0) {
-      try { await syncCPAAccounts(importedAuthNames); routingWarning.value = false } catch { failures.push(text('授权已导入，但业务账号同步失败。请保留文件并重试同步。', 'Credentials imported, but account synchronization failed. Retry synchronization.')); error.value = failures.join('\n') }
+      try {
+        const synced = await syncCPAAccounts(importedAuthNames)
+        if (synced.created + synced.updated > 0) routingWarning.value = false
+      } catch {
+        failures.push(text('授权已导入，但业务账号同步失败。请保留文件并重试同步。', 'Credentials imported, but account synchronization failed. Retry synchronization.'))
+        error.value = failures.join('\n')
+      }
       bridgeRefresh.value++
       emit('created')
       if (!failures.length) { content.value = refreshTokens.value = callback.value = ''; fileContents.value = [] }

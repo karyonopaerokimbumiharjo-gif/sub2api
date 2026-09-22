@@ -8,6 +8,7 @@ import EventDetailDialog from '../components/EventDetailDialog.vue'
 import FilterDeleteDialog from '../components/FilterDeleteDialog.vue'
 import type { PromptAuditDraft, PromptAuditEndpointDraft, PromptAuditEvent, PromptEventFilters } from '../types'
 import { emptyEventFilters, resolveDeleteRangeFilters, SCANNER_CATALOG } from '../viewModel'
+import { auditDescription } from '../securityViewModel'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -78,6 +79,27 @@ describe('Prompt Audit components', () => {
     await wrapper.get('[data-test="save-endpoint"]').trigger('click')
     const updated = wrapper.emitted('update:endpoints')?.at(-1)?.[0] as PromptAuditEndpointDraft[]
     expect(updated[0]).toMatchObject({ protocol: 'openai_compatible', base_url: 'http://cpa:8317', account_id: 0 })
+  })
+
+  it('shows independent Jev and normal audit primaries and identifies OpenCode DeepSeek', async () => {
+    const endpoints: PromptAuditEndpointDraft[] = [
+      { ...endpoint(), id: 'jev-first', name: 'Jev first', protocol: 'typesafe_systemone', adapter: 'generic_llm', base_url: 'https://api.typesafe.ai', model: 'jev-1.13.0' },
+      { ...endpoint(), id: 'deepseek-fallback', name: 'DeepSeek', adapter: 'generic_llm', base_url: 'https://opencode.ai/zen/go', model: 'deepseek-v4-flash' },
+      { ...endpoint(), id: 'jev-second', name: 'Jev second', protocol: 'typesafe_systemone', adapter: 'generic_llm', base_url: 'https://api.typesafe.ai', model: 'jev-1.13.0' },
+      { ...endpoint(), id: 'cpa-second', name: 'CPA second', adapter: 'generic_llm' },
+    ]
+    const wrapper = mount(EndpointPool, {
+      props: { endpoints, probeResults: {}, probingIds: [] },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+    expect(wrapper.get('[data-test="endpoint-role-jev-first"]').text()).toBe('admin.promptAudit.pool.primary')
+    expect(wrapper.get('[data-test="endpoint-role-deepseek-fallback"]').text()).toBe('admin.promptAudit.pool.primary')
+    expect(wrapper.get('[data-test="endpoint-role-jev-second"]').text()).toBe('admin.promptAudit.pool.fallback')
+    expect(wrapper.get('[data-test="endpoint-role-cpa-second"]').text()).toBe('admin.promptAudit.pool.fallback')
+    expect(wrapper.get('[data-test="endpoint-deepseek-fallback"]').text()).toContain('DeepSeek · OpenCode Chat Completions')
+    expect(wrapper.get('[data-test="endpoint-cpa-second"]').text()).toContain('CPA · Chat Completions')
+    expect(auditDescription('zh')).toContain('有长度上限的请求全文')
+    expect(auditDescription('en')).toContain('length-limited full request')
   })
 
   it('reorders audit nodes and disables moves past the list boundaries', async () => {
@@ -188,6 +210,38 @@ describe('Prompt Audit components', () => {
     expect(wrapper.emitted('preview-delete')).toHaveLength(1)
     await wrapper.get('[aria-label="admin.promptAudit.events.selectEvent"]').setValue(true)
     expect(wrapper.emitted('selection')?.at(-1)?.[0]).toEqual([1])
+  })
+
+  it('shows a rejected Jev review gap without presenting it as a violation', async () => {
+    const event: PromptAuditEvent = {
+      id: 9, job_id: 9, audit_status: 'review_required', decision: 'review_required', risk_level: 'unknown', action: 'Block',
+      categories: [], intent_categories: [], content_categories: [], matched_scanners: [], scanner_scores: {}, scanner_evidence: {},
+      scanner_backend: 'prompt-audit-guard', scanner_version: 'prompt_guard_review_required', guard_endpoint_id: '',
+      policy_id: 'prompt-guard-review-required', policy_version: 1, config_version: 8, chunk_total: 0, latency_ms: 507,
+      issue_summaries: [], created_at: '2026-09-23T00:00:00Z',
+      snapshot: {
+        request_id: 'jev-review-1', user_id: 1, username: 'alice', user_email: 'alice@example.test', api_key_id: 2,
+        api_key_name: 'alice-key', group_name: 'pro', provider: 'openai', endpoint: '/v1/responses', protocol: 'openai_responses',
+        model: 'gpt-6j', prompt_hash: 'a'.repeat(64), redacted_preview: 'Reply***', full_prompt: 'Reply with exactly 4.',
+        audited_prompt: 'Reply with exactly 4.', prompt_length: 21, message_count: 1, stage: 'http',
+      },
+    }
+    const list = mount(EventWorkspace, {
+      props: { events: [event], total: 1, page: 1, pageSize: 20, filters: emptyEventFilters(), selectedIds: [], loading: false, error: '' },
+      global: { stubs: { Pagination: PaginationStub } },
+    })
+    expect(list.get('[data-test="event-9"]').text()).toContain('admin.promptAudit.events.reviewRequired')
+    expect(list.get('[data-test="event-9"]').text()).not.toContain('admin.promptAudit.decisions.critical')
+    expect(list.get<HTMLSelectElement>('[aria-label="admin.promptAudit.events.decision"]').html()).toContain('value="review_required"')
+
+    const detail = mount(EventDetailDialog, {
+      props: { show: true, event, loading: false },
+      global: { stubs: { BaseDialog: DialogStub } },
+    })
+    expect(detail.text()).toContain('admin.promptAudit.events.reviewRequiredHint')
+    expect(detail.get('[data-test="summary-prompt-full"]').text()).toContain('Reply with exactly 4.')
+    expect(detail.get('[data-test="summary-audited-prompt"]').text()).toContain('Reply with exactly 4.')
+    expect(detail.text()).not.toContain('admin.promptAudit.decisions.critical')
   })
 
   it('resolves delete range presets to an epoch start and a cutoff end', () => {

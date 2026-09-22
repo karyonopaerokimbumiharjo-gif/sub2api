@@ -58,6 +58,18 @@ func nextShadowEndpoint(endpoints []ActiveEndpoint, primaryID string) (ActiveEnd
 	return ActiveEndpoint{}, false
 }
 
+// A shadow review is meaningful only within the same provider pool as the
+// actual enforcement decision. Local policy decisions have no provider and
+// deliberately receive no automatic shadow endpoint.
+func enabledEndpointsForPrimary(cfg ActiveConfig, primaryID string) []ActiveEndpoint {
+	for _, endpoint := range cfg.EnabledEndpoints() {
+		if endpoint.ID == primaryID {
+			return cfg.EnabledEndpointsFor(endpoint.Protocol == JevProtocol)
+		}
+	}
+	return nil
+}
+
 func adaptiveResultsAgree(primary, shadow *NormalizedResult) bool {
 	if primary == nil || shadow == nil || primary.Decision != shadow.Decision || primary.Action != shadow.Action {
 		return false

@@ -452,10 +452,11 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		openai.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
 		openai.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
+		openai.POST("/create-pi-account", h.Admin.OpenAIOAuth.CreatePiAccount)
+		openai.POST("/import-pi-auth", h.Admin.OpenAIOAuth.ImportPiAuth)
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
 		openai.POST("/import-to-cpa", h.Admin.OpenAIOAuth.ImportOAuthToCPA)
 		openai.POST("/cpa/sync-accounts", h.Admin.OpenAIOAuth.SyncCPAAccounts)
-		openai.GET("/cpa/state-status", h.Admin.OpenAIOAuth.CPAStateStatus)
 		openai.GET("/cpa/credentials", h.Admin.OpenAIOAuth.ListCPACredentials)
 		openai.PUT("/cpa/credentials", h.Admin.OpenAIOAuth.UpdateCPACredential)
 		openai.POST("/import-cpa-files", h.Admin.OpenAIOAuth.ImportCPAAccounts)

@@ -150,7 +150,7 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 	job.Snapshot.AuditedPrompt = queuedPayload.AuditedPrompt
 	job.Snapshot.ScanText = scanText
 	job.Snapshot.SegmentFingerprints = append([]string(nil), queuedPayload.SegmentFingerprints...)
-	endpoints := cfg.EnabledEndpoints()
+	endpoints := cfg.EnabledEndpointsFor(false)
 	if len(endpoints) == 0 {
 		return r.finishFailure(ctx, job, &GuardError{Code: "no_enabled_endpoint", Retryable: true})
 	}

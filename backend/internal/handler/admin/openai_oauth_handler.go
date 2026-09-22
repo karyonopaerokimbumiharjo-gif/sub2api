@@ -738,3 +738,89 @@ func (h *OpenAIOAuthHandler) UpdateQuotaAutoReset(c *gin.Context) {
 	}
 	response.Success(c, settings)
 }
+
+// CreatePiAccount exchanges a runtime-owned OAuth session and saves the result
+// directly as a Pi account. Credentials never enter the CPA auth store.
+func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
+	var req struct {
+		SessionID string  `json:"session_id" binding:"required"`
+		Code      string  `json:"code" binding:"required"`
+		State     string  `json:"state" binding:"required"`
+		Owner     int64   `json:"pi_owner_user_id" binding:"required"`
+		GroupIDs  []int64 `json:"group_ids"`
+	}
+	if c.ShouldBindJSON(&req) != nil || req.Owner <= 0 {
+		response.BadRequest(c, "Invalid Pi authorization")
+		return
+	}
+	if len(req.GroupIDs) == 0 {
+		response.BadRequest(c, "Choose a dedicated OpenAI group for Pi before creating the account")
+		return
+	}
+	owner, err := h.adminService.GetUser(c.Request.Context(), req.Owner)
+	if err != nil || owner == nil || !owner.IsActive() {
+		response.BadRequest(c, "Pi credential owner must be an active user")
+		return
+	}
+	seenGroups := make(map[int64]struct{}, len(req.GroupIDs))
+	for _, groupID := range req.GroupIDs {
+		if groupID <= 0 {
+			response.BadRequest(c, "Invalid Pi group")
+			return
+		}
+		if _, exists := seenGroups[groupID]; exists {
+			response.BadRequest(c, "Duplicate Pi group")
+			return
+		}
+		seenGroups[groupID] = struct{}{}
+		group, err := h.adminService.GetGroup(c.Request.Context(), groupID)
+		if err != nil || group == nil || group.Platform != service.PlatformOpenAI || !group.IsActive() || !group.IsExclusive || !owner.CanBindGroup(groupID, true) {
+			response.BadRequest(c, "Pi requires an active exclusive OpenAI group assigned to its owner")
+			return
+		}
+		members, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), service.PlatformOpenAI, "", "", "", groupID, "")
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		for _, member := range members {
+			if !member.UsesNativePiRuntime() {
+				response.BadRequest(c, "CPA and Pi accounts must use separate groups")
+				return
+			}
+		}
+	}
+	callback := "http://localhost:1455/auth/callback?" + url.Values{"code": {req.Code}, "state": {req.State}}.Encode()
+	var token service.OpenAITokenInfo
+	if err := piruntime.JSON(c.Request.Context(), "/oauth/complete", map[string]any{"owner_id": req.Owner, "session_id": req.SessionID, "callback_url": callback}, &token); err != nil {
+		response.BadRequest(c, "Pi authorization failed")
+		return
+	}
+	token.HarnessKind = "pi"
+	token.PiOwnerUserID = strconv.FormatInt(req.Owner, 10)
+	if token.ChatGPTAccountID == "" || token.AccessToken == "" || token.RefreshToken == "" || token.ExpiresAt <= time.Now().Unix() {
+		response.BadRequest(c, "Pi authorization returned incomplete credentials")
+		return
+	}
+	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), service.PlatformOpenAI, "", "", "", 0, "")
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	for i := range accounts {
+		if accounts[i].UsesNativePiRuntime() && accounts[i].GetCredential("chatgpt_account_id") == token.ChatGPTAccountID {
+			response.Error(c, http.StatusConflict, "This ChatGPT identity already has a Pi account; reauthorize that account instead")
+			return
+		}
+	}
+	name := token.Email
+	if name == "" {
+		name = "Pi OpenAI"
+	}
+	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 1, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true, InitiallyDisabled: true, InitiallyUnschedulable: true})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.AccountFromService(account))
+}

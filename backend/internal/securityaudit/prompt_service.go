@@ -122,7 +122,7 @@ func (s *PromptService) HasBackgroundAudit() bool {
 		return false
 	}
 	cfg, ok := s.config.Active()
-	return ok && cfg.RiskControlEnabled && cfg.Enabled && cfg.EffectiveBackgroundAuditMode() != BackgroundAuditModeOff
+	return ok && cfg.RiskControlEnabled && cfg.Enabled && cfg.EffectiveBackgroundAuditMode() != BackgroundAuditModeOff && len(cfg.EnabledEndpointsFor(false)) > 0
 }
 
 // CaptureAuditGap records a complete received prompt when the prompt-audit
@@ -232,7 +232,12 @@ func (s *PromptService) Enqueue(_ context.Context, req Request) error {
 	if s == nil || s.enqueuer == nil {
 		return nil
 	}
-	if !req.RequireJev && s.ShouldBypass(req) {
+	// RequireJev is checked synchronously with the full prompt. Never create a
+	// second background job that would lose its provider requirement.
+	if req.RequireJev {
+		return nil
+	}
+	if s.ShouldBypass(req) {
 		return nil
 	}
 	cfg, ok := s.config.Active()
@@ -279,7 +284,7 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	}
 	cfg, ok := s.config.Active()
 	if !ok {
-		if s.config.EffectiveMode() == ModeBlocking {
+		if req.RequireJev || s.config.EffectiveMode() == ModeBlocking {
 			return nil, &GuardError{Code: ErrorCodeUnavailable}
 		}
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
@@ -290,12 +295,18 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	if cfg.EffectiveMode() != ModeBlocking || !cfg.IncludesGroup(req.GroupID) {
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
+	if len(cfg.EnabledEndpointsFor(req.RequireJev)) == 0 {
+		return nil, &GuardError{Code: ErrorCodeUnavailable}
+	}
 	auditMode := cfg.EffectiveBlockingAuditMode()
 	if req.RequireJev {
 		auditMode = BlockingAuditModeFull
 	}
 	snapshot, err := buildScopedPromptSnapshot(ctx, req, cfg, auditMode, s.segmentCache)
 	if errors.Is(err, ErrNoPromptText) {
+		if req.RequireJev {
+			return nil, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err}
+		}
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
 	if err != nil {
@@ -304,7 +315,7 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	if cached, matched := s.matchCachedBlock(ctx, req, cfg, snapshot); matched {
 		return cached, nil
 	}
-	decision, err := s.evaluator.Evaluate(ctx, cfg, snapshot)
+	decision, err := s.evaluator.EvaluateFor(ctx, cfg, snapshot, req.RequireJev)
 	if err != nil || decision == nil {
 		return decision, err
 	}
@@ -331,6 +342,9 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 // immediately; a temporarily escalated user is rechecked synchronously with
 // incremental scope so a new branch cannot evade a background finding.
 func (s *PromptService) EvaluateKnownRisk(ctx context.Context, req Request) (*PromptDecision, error) {
+	if req.RequireJev {
+		return nil, &GuardError{Code: ErrorCodeUnavailable}
+	}
 	if s == nil || s.config == nil || s.evaluator == nil {
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
@@ -401,7 +415,7 @@ func (s *PromptService) matchCachedBlock(ctx context.Context, req Request, cfg A
 		storedSnapshot := snapshot
 		storedSnapshot.Stage = "local_policy_cache"
 		storedSnapshot.AuditSubject = "local_cache"
-		_, _ = s.repo.RecordBlocking(ctx, storedSnapshot.Redacted(), cfg.ConfigVersion, result, true)
+		_, _ = s.repo.RecordBlocking(ctx, storedSnapshot.AuditEvidence(), cfg.ConfigVersion, result, true)
 	}
 	correlationSnapshot := snapshot
 	correlationSnapshot.ScanText = ""
@@ -499,8 +513,9 @@ func (s *PromptService) ObserveOutput(_ context.Context, req Request, inputDecis
 		// Sampled output observations are useful only when visible in the event
 		// workspace, including safe observations used to estimate false positives.
 		cfg.StorePassEvents = true
-		ctx, cancel := context.WithTimeout(background, failoverTimeout(cfg.EnabledEndpoints()))
-		decision, err := s.evaluator.Evaluate(ctx, cfg, snapshot)
+		endpoints := cfg.EnabledEndpointsFor(requestCopy.RequireJev)
+		ctx, cancel := context.WithTimeout(background, failoverTimeout(endpoints))
+		decision, err := s.evaluator.EvaluateFor(ctx, cfg, snapshot, requestCopy.RequireJev)
 		cancel()
 		if err == nil && decision != nil && decision.Result != nil {
 			s.scheduleAdaptiveReview(cfg, snapshot, decision)
@@ -554,7 +569,7 @@ func (s *PromptService) scheduleAdaptiveReview(cfg ActiveConfig, snapshot Prompt
 			})
 			return
 		}
-		shadowEndpoint, ok := nextShadowEndpoint(cfg.EnabledEndpoints(), primary.GuardEndpointID)
+		shadowEndpoint, ok := nextShadowEndpoint(enabledEndpointsForPrimary(cfg, primary.GuardEndpointID), primary.GuardEndpointID)
 		if !ok {
 			ctx, cancel := context.WithTimeout(background, 2*time.Second)
 			defer cancel()

@@ -92,10 +92,14 @@ type fakeJobRepository struct {
 
 	claimQueue []*Job
 
-	recordBlockingCalls    int
-	recordBlockingSnapshot PromptSnapshot
-	recordBlockingResult   *NormalizedResult
-	recordBlockingErr      error
+	recordBlockingCalls          int
+	recordBlockingSnapshot       PromptSnapshot
+	recordBlockingResult         *NormalizedResult
+	recordBlockingErr            error
+	recordReviewRequiredCalls    int
+	recordReviewRequiredSnapshot PromptSnapshot
+	recordReviewRequiredVersion  int64
+	recordReviewRequiredErr      error
 }
 
 func (r *fakeJobRepository) record(value string) {
@@ -184,6 +188,14 @@ func (r *fakeJobRepository) RecordBlocking(_ context.Context, snapshot PromptSna
 	r.recordBlockingCalls++
 	r.recordBlockingSnapshot, r.recordBlockingResult = snapshot, result
 	return nil, r.recordBlockingErr
+}
+func (r *fakeJobRepository) RecordReviewRequired(_ context.Context, snapshot PromptSnapshot, version int64, _ int) (*Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recordReviewRequiredCalls++
+	r.recordReviewRequiredSnapshot = snapshot
+	r.recordReviewRequiredVersion = version
+	return nil, r.recordReviewRequiredErr
 }
 
 type fakePayloadStore struct {

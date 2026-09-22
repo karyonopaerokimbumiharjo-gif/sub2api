@@ -2,7 +2,6 @@
   <AppLayout>
     <TablePageLayout class="accounts-page-layout">
       <template #filters>
-        <AccountRuntimePanel ref="runtimePanel" summary-only />
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
             v-model:searchQuery="params.search"
@@ -256,6 +255,18 @@
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
                 <span
+                  v-if="getOpenAIExecutionBackend(row) === 'pi'"
+                  data-testid="account-backend-pi"
+                  class="inline-flex items-center rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-800 dark:bg-violet-900/40 dark:text-violet-200"
+                  :title="text('Pi 独立会话运行时', 'Pi isolated session runtime')"
+                >Pi<span v-if="getPiOwnerUserId(row)"> · {{ text('用户', 'User') }} #{{ getPiOwnerUserId(row) }}</span></span>
+                <span
+                  v-else-if="getOpenAIExecutionBackend(row) === 'cpa'"
+                  data-testid="account-backend-cpa"
+                  class="inline-flex items-center rounded bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+                  :title="text('CPA 凭据池', 'CPA credential pool')"
+                >CPA</span>
+                <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
                 >
@@ -462,15 +473,15 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload(); runtimePanel?.refresh()" />
-    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated($event); runtimePanel?.refresh()" />
+    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" :current-user-id="authStore.user?.id" @close="showCreate = false" @created="reload()" />
+    <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated($event)" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" :pelican-test="pelicanTest" @close="closeTestModal" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <CPACredentialsModal :auth-name="selectedCPAAuth" :show="showCPA" @close="showCPA = false" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
-    <CreateAccountModal :show="showImportData" @close="showImportData = false" @created="reload(); runtimePanel?.refresh()" />
+    <CreateAccountModal :show="showImportData" :groups="groups" :current-user-id="authStore.user?.id" @close="showImportData = false" @created="reload()" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -499,8 +510,6 @@
 
 <script setup lang="ts">
 import CPACredentialsModal from '@/components/account/CPACredentialsModal.vue'
-import AccountRuntimePanel from '@/components/account/AccountRuntimePanel.vue'
-const runtimePanel = ref<InstanceType<typeof AccountRuntimePanel> | null>(null)
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -549,7 +558,8 @@ import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 const appStore = useAppStore()
 const authStore = useAuthStore()
 
@@ -1683,6 +1693,19 @@ function getOpenAIAuthMode(row: any): string | undefined {
   return typeof authMode === 'string' && authMode.trim() ? authMode : undefined
 }
 
+function getOpenAIExecutionBackend(row: AccountListItem): 'pi' | 'cpa' | null {
+  if (row.platform !== 'openai') return null
+  if (row.type === 'oauth' && row.credentials?.harness_kind === 'pi') return 'pi'
+  if (row.type === 'apikey' && (row.extra?.cpa_auth_id || row.extra?.cpa_identity)) return 'cpa'
+  return null
+}
+
+function getPiOwnerUserId(row: AccountListItem): number | null {
+  if (getOpenAIExecutionBackend(row) !== 'pi') return null
+  const id = Number(row.credentials?.pi_owner_user_id)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
 // Antigravity 订阅等级辅助函数
 function getAntigravityTierFromRow(row: any): string | null {
   if (row.platform !== 'antigravity') return null
@@ -2457,7 +2480,7 @@ const handleCPAEnabled = async (account: Account) => {
   cpaEnabling.value = account.id
   try {
     await adminAPI.accounts.update(account.id, {status: account.status === 'active' ? 'inactive' : 'active'})
-    await Promise.all([load(), runtimePanel.value?.refresh()])
+    await load()
     appStore.showSuccess('账号和对应授权状态已同步')
   } catch (error: any) {
     appStore.showError(error?.response?.data?.message || '账号启停失败，请刷新后重试')
