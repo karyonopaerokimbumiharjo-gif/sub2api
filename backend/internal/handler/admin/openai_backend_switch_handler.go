@@ -115,7 +115,10 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	credentials := cloneCredentialMap(oauth)
 	runtimeOwnerID := ownerID
 	var sharedRuntime *service.Account
-	if candidates, _, listErr := h.adminService.ListAccounts(c.Request.Context(), 1, 1000, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", -1, "", "id", "asc"); listErr == nil {
+	// groupID=0 means all groups. AccountListGroupUngrouped (-1) would
+	// silently hide the existing Pi owner whenever it belongs to a group,
+	// causing the update below to hit the native-Pi identity unique index.
+	if candidates, _, listErr := h.adminService.ListAccounts(c.Request.Context(), 1, 1000, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", 0, "", "id", "asc"); listErr == nil {
 		for i := range candidates {
 			candidate := &candidates[i]
 			if candidate.ID == account.ID || candidate.GetCredential("harness_kind") != service.PiNativeHarnessKind || candidate.GetCredential("chatgpt_account_id") != accountID {
