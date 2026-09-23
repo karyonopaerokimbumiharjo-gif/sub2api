@@ -19,20 +19,24 @@ const (
 )
 
 type Event struct {
-	Time        int64   `json:"time"`
-	RequestID   string  `json:"request_id"`
-	Stage       string  `json:"stage"`
-	AccountID   int64   `json:"account_id,omitempty"`
-	Model       string  `json:"model,omitempty"`
-	ActualModel string  `json:"actual_model,omitempty"`
-	ResponseID  string  `json:"response_id,omitempty"`
-	Tool        string  `json:"tool,omitempty"`
-	CallID      string  `json:"call_id,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
-	Status      int     `json:"status,omitempty"`
-	DurationMS  int64   `json:"duration_ms,omitempty"`
-	Confidence  float64 `json:"confidence,omitempty"`
-	Probability float64 `json:"probability,omitempty"`
+	EventsDropped      int     `json:"events_dropped,omitempty"`
+	ToolResultsSeen    int     `json:"tool_results_seen,omitempty"`
+	ToolResultsOmitted int     `json:"tool_results_omitted,omitempty"`
+	HistorySample      bool    `json:"history_sample,omitempty"`
+	Time               int64   `json:"time"`
+	RequestID          string  `json:"request_id"`
+	Stage              string  `json:"stage"`
+	AccountID          int64   `json:"account_id,omitempty"`
+	Model              string  `json:"model,omitempty"`
+	ActualModel        string  `json:"actual_model,omitempty"`
+	ResponseID         string  `json:"response_id,omitempty"`
+	Tool               string  `json:"tool,omitempty"`
+	CallID             string  `json:"call_id,omitempty"`
+	Reason             string  `json:"reason,omitempty"`
+	Status             int     `json:"status,omitempty"`
+	DurationMS         int64   `json:"duration_ms,omitempty"`
+	Confidence         float64 `json:"confidence,omitempty"`
+	Probability        float64 `json:"probability,omitempty"`
 }
 
 type Store struct {
@@ -73,7 +77,21 @@ func (s *Store) Append(event Event) {
 		}
 	}
 	if count >= maxEventsPerRequest {
-		return
+		// Retain request identity and terminal outcomes; evict an intermediate
+		// event instead. Carry its omission count forward so loss stays visible.
+		replace := -1
+		for i := range s.events {
+			old := s.events[i]
+			if old.RequestID == event.RequestID && old.Stage != "request" && old.Stage != "request_failed" && old.Stage != "request_end" {
+				replace = i
+				break
+			}
+		}
+		if replace < 0 {
+			return
+		}
+		event.EventsDropped += 1 + s.events[replace].EventsDropped
+		s.events = append(s.events[:replace], s.events[replace+1:]...)
 	}
 	event.Time = s.now().UnixMilli()
 	if len(s.events) == s.capacity {
@@ -155,7 +173,7 @@ func sanitize(event Event) Event {
 	}
 	// Tool names and call IDs may be supplied by clients. Keep only known item
 	// types and a digest of the call ID, never the original value.
-	if event.Tool != "function_call_output" && event.Tool != "custom_tool_call_output" {
+	if event.Tool != "function_call_output" && event.Tool != "custom_tool_call_output" && event.Tool != "chat_tool_result" {
 		event.Tool = ""
 	}
 	if event.CallID != "" {

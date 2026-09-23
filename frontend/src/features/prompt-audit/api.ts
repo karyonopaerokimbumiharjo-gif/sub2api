@@ -86,6 +86,11 @@ export async function getEvent(id: number): Promise<PromptAuditEvent> {
   return data
 }
 
+export async function reviewPolicyEvent(id: number, action: 'confirmed' | 'cleared', reason: string): Promise<PromptAuditEvent> {
+  const { data } = await apiClient.post<PromptAuditEvent>(`${basePath}/events/${id}/policy-review`, { action, reason })
+  return data
+}
+
 export async function deleteEvent(id: number): Promise<PromptDeleteResult> {
   const { data } = await apiClient.delete<PromptDeleteResult>(`${basePath}/events/${id}`)
   return data
@@ -170,6 +175,7 @@ export const promptAuditAPI = {
   getRuntime,
   listEvents,
   getEvent,
+  reviewPolicyEvent,
   deleteEvent,
   batchDeleteEvents,
   previewDelete,

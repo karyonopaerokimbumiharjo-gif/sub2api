@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -51,4 +52,38 @@ func TestGPT6JTraceIgnoresUnmarkedRequest(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	recordGPT6JTrace(c, executiontrace.Event{Stage: "request_failed", Reason: "upstream_error"})
 	require.Empty(t, executiontrace.Default.List("", 10))
+}
+
+func TestTraceSamplesRecentToolsAcrossResponsesAndChat(t *testing.T) {
+	for _, chat := range []bool{false, true} {
+		previous := executiontrace.Default
+		executiontrace.Default = executiontrace.NewStore(64, time.Hour)
+		t.Cleanup(func() { executiontrace.Default = previous })
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/", nil)
+		items := make([]map[string]string, 12)
+		for i := range items {
+			if chat {
+				items[i] = map[string]string{"role": "tool", "tool_call_id": fmt.Sprintf("call-%d", i), "content": "private"}
+			} else {
+				items[i] = map[string]string{"type": "function_call_output", "call_id": fmt.Sprintf("call-%d", i), "output": "private"}
+			}
+		}
+		key := "input"
+		if chat {
+			key = "messages"
+		}
+		body, _ := json.Marshal(map[string]any{key: items})
+		end := beginGPT6JTrace(c, body)
+		end()
+		events := executiontrace.Default.List("", 100)
+		require.Len(t, events, 10)
+		// The first retained tool result is the fifth, not the oldest entry.
+		expected := executiontrace.NewStore(4, time.Hour)
+		expected.Append(executiontrace.Event{RequestID: "expected", Stage: "client_tool_result", CallID: "call-4"})
+		require.Equal(t, expected.List("", 1)[0].CallID, events[8].CallID)
+		require.Equal(t, 12, events[8].ToolResultsSeen)
+		require.Equal(t, 4, events[8].ToolResultsOmitted)
+		require.True(t, events[8].HistorySample)
+	}
 }

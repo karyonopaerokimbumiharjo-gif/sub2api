@@ -1,8 +1,13 @@
 package securityaudit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/sseparse"
 	"strings"
+	"unicode/utf8"
 )
 
 // BuildOutputPromptSnapshot reuses the normal prompt canonicalization path but
@@ -20,11 +25,27 @@ func BuildOutputPromptSnapshot(req Request, text string) (PromptSnapshot, error)
 	req.Stage = "output"
 	req.Body = body
 	snapshot, err := ExtractPromptSnapshot(req)
-	if err != nil {
+	if errors.Is(err, ErrNoPromptText) && req.OutputCapture != nil && !req.OutputCapture.Complete {
+		sum := sha256.Sum256([]byte(req.RequestID + "|partial-output"))
+		snapshot = PromptSnapshot{RequestID: req.RequestID, UserID: req.UserID, UsernameSnapshot: req.Username, UserEmailSnapshot: req.UserEmail,
+			APIKeyID: req.APIKeyID, APIKeyNameSnapshot: req.APIKeyName, GroupID: req.GroupID, GroupName: req.GroupName,
+			Provider: req.Provider, Endpoint: req.Endpoint, Model: req.Model, Stage: "output", PromptHash: hex.EncodeToString(sum[:])}
+	} else if err != nil {
 		return PromptSnapshot{}, err
 	}
 	snapshot.Protocol = originalProtocol
 	snapshot.AuditSubject = "output_content"
+	if req.OutputCapture != nil {
+		capture := *req.OutputCapture
+		snapshot.OutputCapture = &capture
+		if utf8.RuneCountInString(text) > DefaultFullPromptMaxRunes {
+			capture.Truncated = true
+			capture.Complete = false
+		}
+		if !capture.Complete {
+			snapshot.AuditSubject = "output_content_partial"
+		}
+	}
 	return snapshot, nil
 }
 
@@ -35,19 +56,30 @@ func BuildOutputPromptSnapshot(req Request, text string) (PromptSnapshot, error)
 func ExtractAssistantOutput(raw []byte, streaming bool) string {
 	parts := make([]string, 0, 16)
 	if streaming {
-		for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if payload == "" || payload == "[DONE]" {
-				continue
-			}
+		var parser sseparse.Parser
+		// Deltas must retain repetition; a terminal Responses snapshot supersedes
+		// prior deltas instead of concatenating the entire answer a second time.
+		var final []string
+		parser.Feed(raw, func(event sseparse.Event) {
 			var document any
-			if json.Unmarshal([]byte(payload), &document) == nil {
+			if json.Unmarshal(event.Data, &document) != nil {
+				return
+			}
+			if event.Terminal() == "completed" {
+				if texts := outputTexts(document); len(texts) > 0 {
+					final = texts
+				}
+			} else {
+				root, _ := document.(map[string]any)
+				kind, _ := root["type"].(string)
+				if kind == "response.output_text.done" || kind == "response.content_part.done" || kind == "response.output_item.done" {
+					return
+				}
 				parts = append(parts, outputTexts(document)...)
 			}
+		})
+		if len(final) > 0 {
+			parts = final
 		}
 	} else {
 		var document any
@@ -55,7 +87,7 @@ func ExtractAssistantOutput(raw []byte, streaming bool) string {
 			parts = append(parts, outputTexts(document)...)
 		}
 	}
-	return TrimRunes(strings.TrimSpace(strings.Join(compactOutputParts(parts), "")), DefaultFullPromptMaxRunes)
+	return strings.TrimSpace(strings.Join(parts, ""))
 }
 
 func outputTexts(value any) []string {
@@ -148,20 +180,4 @@ func nestedOutputTexts(value any) []string {
 	default:
 		return nil
 	}
-}
-
-func compactOutputParts(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		// Terminal Responses events can repeat the full text after delta frames.
-		// Avoid the common exact duplicate without attempting lossy fuzzy merging.
-		if len(result) > 0 && result[len(result)-1] == value {
-			continue
-		}
-		result = append(result, value)
-	}
-	return result
 }

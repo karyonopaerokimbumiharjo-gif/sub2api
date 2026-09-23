@@ -102,6 +102,13 @@
         <p class="mt-3 rounded-lg bg-primary-50 px-3 py-2 text-xs text-primary-800 dark:bg-primary-950/30 dark:text-primary-200">{{ t('admin.promptAudit.adaptive.orderHint') }}</p>
       </section>
 
+      <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-700/60 sm:p-5">
+        <label class="flex items-center gap-2 text-sm">
+          <input :checked="draft.jev_safety_enabled" type="checkbox" data-test="jev-safety-enabled" @change="patch({ jev_safety_enabled: ($event.target as HTMLInputElement).checked })" />
+          使用独立 Jev 安全审计
+        </label>
+        <p class="mt-2 text-xs text-gray-500">在阻断审计开启时使用已启用的 Jev 节点；与普通模型、J 协作模式无关。关闭此项使用其他已配置审计节点。</p>
+      </section>
       <section class="rounded-xl border border-gray-200 p-4 dark:border-dark-700/60 dark:bg-dark-900/20 sm:p-5" data-test="output-policy">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>

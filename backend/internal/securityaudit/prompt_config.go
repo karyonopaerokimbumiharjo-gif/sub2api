@@ -97,6 +97,7 @@ type storageConfig struct {
 	AdaptiveCollectWhenDisabled bool     `json:"adaptive_collect_when_disabled"`
 	AdaptiveAllowSampleRate     int      `json:"adaptive_allow_sample_rate"`
 	AdaptiveRiskSampleRate      int      `json:"adaptive_risk_sample_rate"`
+	JevSafetyEnabled            bool     `json:"jev_safety_enabled"`
 	OutputAuditEnabled          bool     `json:"output_audit_enabled"`
 	OutputAllowSampleRate       int      `json:"output_allow_sample_rate"`
 	OutputRiskSampleRate        int      `json:"output_risk_sample_rate"`
@@ -149,6 +150,7 @@ type ActiveConfig struct {
 	AdaptiveCollectWhenDisabled bool
 	AdaptiveAllowSampleRate     int
 	AdaptiveRiskSampleRate      int
+	JevSafetyEnabled            bool
 	OutputAuditEnabled          bool
 	OutputAllowSampleRate       int
 	OutputRiskSampleRate        int
@@ -193,6 +195,7 @@ type PublicConfig struct {
 	AdaptiveCollectWhenDisabled bool             `json:"adaptive_collect_when_disabled"`
 	AdaptiveAllowSampleRate     int              `json:"adaptive_allow_sample_rate"`
 	AdaptiveRiskSampleRate      int              `json:"adaptive_risk_sample_rate"`
+	JevSafetyEnabled            bool             `json:"jev_safety_enabled"`
 	OutputAuditEnabled          bool             `json:"output_audit_enabled"`
 	OutputAllowSampleRate       int              `json:"output_allow_sample_rate"`
 	OutputRiskSampleRate        int              `json:"output_risk_sample_rate"`
@@ -254,6 +257,7 @@ type UpdateConfigRequest struct {
 	AdaptiveCollectWhenDisabled bool             `json:"adaptive_collect_when_disabled"`
 	AdaptiveAllowSampleRate     int              `json:"adaptive_allow_sample_rate"`
 	AdaptiveRiskSampleRate      int              `json:"adaptive_risk_sample_rate"`
+	JevSafetyEnabled            bool             `json:"jev_safety_enabled"`
 	OutputAuditEnabled          bool             `json:"output_audit_enabled"`
 	OutputAllowSampleRate       int              `json:"output_allow_sample_rate"`
 	OutputRiskSampleRate        int              `json:"output_risk_sample_rate"`
@@ -521,6 +525,9 @@ func validateStorageConfig(cfg storageConfig) error {
 	if cfg.Enabled && enabled == 0 {
 		return infraerrors.BadRequest("prompt_audit_endpoint_required", "启用提示词审计前至少需要启用一个审计节点")
 	}
+	if cfg.Enabled && cfg.BlockingEnabled && cfg.JevSafetyEnabled && enabled-enabledNormal == 0 {
+		return infraerrors.BadRequest("prompt_audit_jev_endpoint_required", "启用 Jev Safety 前需要一个有效的 Jev 审计节点")
+	}
 	if cfg.Enabled && normalizeBackgroundAuditMode(cfg.BackgroundAuditMode) != BackgroundAuditModeOff && enabledNormal == 0 {
 		return infraerrors.BadRequest("prompt_audit_normal_endpoint_required", "启用后台审计前至少需要启用一个非 Jev 审计节点")
 	}
@@ -703,6 +710,7 @@ func (cfg ActiveConfig) EnabledEndpoints() []ActiveEndpoint {
 // select a pool before failover so a provider failure cannot silently route a
 // normal request to Jev or a RequireJev request to a compatible LLM.
 func (cfg ActiveConfig) EnabledEndpointsFor(requireJev bool) []ActiveEndpoint {
+	requireJev = requireJev || (cfg.JevSafetyEnabled && cfg.BlockingEnabled)
 	result := make([]ActiveEndpoint, 0, len(cfg.Endpoints))
 	for _, ep := range cfg.Endpoints {
 		if ep.Enabled && (ep.Protocol == JevProtocol) == requireJev {
@@ -763,6 +771,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, StorePassEvents: cfg.StorePassEvents,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
+		JevSafetyEnabled:   cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		EffectiveMode: active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
@@ -779,6 +788,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 		StorePassEvents: cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
+		JevSafetyEnabled:   cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
 		QueueCapacity:          cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,
@@ -824,6 +834,7 @@ func changeSummary(cfg storageConfig) string {
 		BlockingLatestTurnOnly bool   `json:"blocking_latest_turn_only"`
 		StorePassEvents        bool   `json:"store_pass_events"`
 		AdaptiveEnabled        bool   `json:"adaptive_enabled"`
+		JevSafetyEnabled       bool   `json:"jev_safety_enabled"`
 		OutputAuditEnabled     bool   `json:"output_audit_enabled"`
 		PromptChunkConcurrency int    `json:"prompt_chunk_concurrency"`
 		EndpointCount          int    `json:"endpoint_count"`
@@ -833,7 +844,7 @@ func changeSummary(cfg storageConfig) string {
 		GroupHash              string `json:"group_hash"`
 		WhitelistCount         int    `json:"whitelist_count"`
 		WhitelistHash          string `json:"whitelist_hash"`
-	}{cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), ""}
+	}{cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.JevSafetyEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), ""}
 	rawGroups, _ := json.Marshal(cfg.GroupIDs)
 	digest := sha256.Sum256(rawGroups)
 	summary.GroupHash = hex.EncodeToString(digest[:])

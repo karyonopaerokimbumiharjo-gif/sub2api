@@ -2,7 +2,7 @@ export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
 export type PromptBlockingAuditMode = 'fast_latest' | 'incremental_full' | 'full'
 export type PromptBackgroundAuditMode = 'off' | PromptBlockingAuditMode
 export type PromptDecision = 'pass' | 'flag' | 'critical'
-export type PromptEventDecision = PromptDecision | 'review_required'
+export type PromptEventDecision = PromptDecision | 'review_required' | 'upstream_policy_block'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export type PromptEventRiskLevel = PromptRiskLevel | 'unknown'
 export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone' | 'antigravity_internal' | 'openai_internal'
@@ -39,6 +39,7 @@ export interface PromptAuditConfig {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  jev_safety_enabled?: boolean
   output_audit_enabled: boolean
   output_allow_sample_rate: number
   output_risk_sample_rate: number
@@ -85,6 +86,7 @@ export interface PromptAuditUpdateRequest {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  jev_safety_enabled?: boolean
   output_audit_enabled: boolean
   output_allow_sample_rate: number
   output_risk_sample_rate: number
@@ -264,6 +266,13 @@ export interface PromptAdaptiveSamplePage {
 }
 
 export interface PromptSnapshot {
+  output_capture?: {
+    captured_bytes: number
+    observed_bytes: number
+    capture_truncated: boolean
+    output_complete: boolean
+    terminal: string
+  }
   request_id: string
   user_id: number
   username: string
@@ -330,6 +339,7 @@ export interface PromptAuditEvent {
   duplicate_count?: number
   policy_source?: string
   policy_code?: string
+  policy_review?: { action: 'confirmed' | 'cleared'; reason: string; actor_id: number; reviewed_at: string }
   review_status?: string
   created_at: string
 }

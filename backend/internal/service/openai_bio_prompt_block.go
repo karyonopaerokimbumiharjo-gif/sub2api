@@ -12,6 +12,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
+const BioPromptBlockCachePrefix = "bio_prompt_block:"
+
 type BioPromptBlockStore interface {
 	SetBioPromptBlocked(ctx context.Context, key string, ttl time.Duration) error
 	IsBioPromptBlocked(ctx context.Context, keys []string) (bool, error)
@@ -21,7 +23,7 @@ type BioPromptBlockStore interface {
 // text fingerprint. The normalized key catches harmless formatting/case/space
 // changes without attempting broad semantic similarity across different
 // prompts or users.
-func BioPromptBlockKeys(userID, apiKeyID int64, provider, policyCode, promptHash, fullPrompt string) []string {
+func BioPromptBlockKeys(userID, apiKeyID int64, provider, policyCode, promptHash, fullPrompt string, policyVersion int64, model string) []string {
 	scope := ""
 	if userID > 0 {
 		scope = "user:" + strconv.FormatInt(userID, 10)
@@ -39,7 +41,7 @@ func BioPromptBlockKeys(userID, apiKeyID int64, provider, policyCode, promptHash
 	if policyCode == "" {
 		policyCode = "bio_policy"
 	}
-	scope += "\x00provider:" + provider + "\x00policy:" + policyCode
+	scope += "\x00provider:" + provider + "\x00policy:" + policyCode + "\x00version:" + strconv.FormatInt(policyVersion, 10) + "\x00model:" + strings.ToLower(strings.TrimSpace(model))
 	keys := make([]string, 0, 2)
 	if exact := strings.ToLower(strings.TrimSpace(promptHash)); exact != "" {
 		keys = append(keys, bioPromptScopedDigest(scope, "exact", exact))

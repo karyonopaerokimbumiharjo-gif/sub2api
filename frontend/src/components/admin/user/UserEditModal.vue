@@ -66,13 +66,7 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
-      <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/70 dark:bg-amber-950/30">
-        <input v-model="form.prompt_audit_bypass" type="checkbox" class="mt-0.5" data-test="prompt-audit-bypass" />
-        <span>
-          <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.users.form.promptAuditBypass') }}</span>
-          <span class="mt-1 block text-xs text-amber-800 dark:text-amber-200">{{ t('admin.users.form.promptAuditBypassHint') }}</span>
-        </span>
-      </label>
+      <p v-if="user?.prompt_audit_bypass" class="text-xs text-amber-700" data-test="retired-audit-bypass">旧版免审标记已停用，此账号仍按独立安全策略审计。</p>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -126,7 +120,7 @@ const form = reactive({
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, prompt_audit_bypass: u.prompt_audit_bypass ?? false, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, prompt_audit_bypass: false, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })

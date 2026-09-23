@@ -52,9 +52,8 @@ type Coordinator struct {
 	prompt PromptEngine
 }
 
-type jevProductEngine interface {
+type jevSafetyEngine interface {
 	JevBlockingReady() bool
-	EnhanceCompaction(ctx context.Context, body []byte) ([]byte, JevCompactionReport, error)
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
@@ -65,19 +64,8 @@ func (c *Coordinator) JevBlockingReady() bool {
 	if c == nil || c.prompt == nil {
 		return false
 	}
-	engine, ok := c.prompt.(jevProductEngine)
+	engine, ok := c.prompt.(jevSafetyEngine)
 	return ok && engine.JevBlockingReady()
-}
-
-func (c *Coordinator) EnhanceCompaction(ctx context.Context, body []byte) ([]byte, JevCompactionReport, error) {
-	if c == nil || c.prompt == nil {
-		return body, JevCompactionReport{}, &GuardError{Code: ErrorCodeUnavailable}
-	}
-	engine, ok := c.prompt.(jevProductEngine)
-	if !ok || !engine.JevBlockingReady() {
-		return body, JevCompactionReport{}, &GuardError{Code: ErrorCodeUnavailable}
-	}
-	return engine.EnhanceCompaction(ctx, body)
 }
 
 // RecordUpstreamPolicyFeedback is best-effort and intentionally separate from
@@ -123,19 +111,19 @@ func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecis
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+	if c != nil && c.prompt != nil {
+		if configured, ok := c.prompt.(interface{ RequireJevSafety() bool }); ok {
+			req.RequireJev = configured.RequireJevSafety()
+		}
+	}
 	if req.RequireJev && !c.JevBlockingReady() {
 		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
 	}
 	if c == nil {
 		return allowDecision(nil, nil)
 	}
-	// The explicit administrator-managed per-user bypass is the outermost
-	// policy boundary. A match bypasses both the legacy content moderator and
-	// every prompt-audit mode, including background jobs and cached blocks.
-	if bypass, ok := c.prompt.(PromptBypassEngine); ok && !req.RequireJev && bypass.ShouldBypass(req) {
-		bypass.RecordUserBypass(ctx, req.Clone())
-		return allowDecision(nil, nil)
-	}
+	// Legacy per-user bypass flags are retained for data compatibility only.
+	// Neither administrator status nor a historical flag bypasses Safety.
 	mode := ModeOff
 	if c.prompt != nil {
 		mode = c.prompt.EffectiveMode()
@@ -266,4 +254,14 @@ func unavailablePromptDecision(code string) *PromptDecision {
 		kind = DecisionInvalid
 	}
 	return &PromptDecision{Kind: kind, ErrorCode: code, AllowNextStage: false}
+}
+
+// PolicyCacheVersion scopes provider-feedback caches to the active policy.
+func (c *Coordinator) PolicyCacheVersion() int64 {
+	if c != nil && c.prompt != nil {
+		if configured, ok := c.prompt.(interface{ PolicyCacheVersion() int64 }); ok {
+			return configured.PolicyCacheVersion()
+		}
+	}
+	return 1
 }

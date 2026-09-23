@@ -58,3 +58,22 @@ func TestStoreRejectsUnknownStagesAndOversizedIdentifiers(t *testing.T) {
 	store.Append(Event{RequestID: strings.Repeat("x", 129), Stage: "request"})
 	require.Empty(t, store.List("", 10))
 }
+
+func TestStoreRetainsBothFailureAndEndAfterSaturation(t *testing.T) {
+	store := NewStore(100, time.Hour)
+	store.Append(Event{RequestID: "many", Stage: "request"})
+	for range 40 {
+		store.Append(Event{RequestID: "many", Stage: "tool_call"})
+	}
+	store.Append(Event{RequestID: "many", Stage: "request_failed", Reason: "upstream_failed"})
+	store.Append(Event{RequestID: "many", Stage: "request_end", Status: 502})
+	events := store.List("many", 100)
+	require.Len(t, events, maxEventsPerRequest)
+	require.Equal(t, "request_end", events[0].Stage)
+	require.Equal(t, "request_failed", events[1].Stage)
+	dropped := 0
+	for _, event := range events {
+		dropped += event.EventsDropped
+	}
+	require.Equal(t, 43-maxEventsPerRequest, dropped)
+}

@@ -145,6 +145,7 @@ func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		promptAudit.GET("/runtime", h.Admin.PromptAudit.GetRuntime)
 		promptAudit.GET("/events", h.Admin.PromptAudit.ListEvents)
 		promptAudit.GET("/events/:id", h.Admin.PromptAudit.GetEvent)
+		promptAudit.POST("/events/:id/policy-review", h.Admin.PromptAudit.ReviewPolicyEvent)
 		promptAudit.GET("/adaptive-samples", h.Admin.PromptAudit.ListAdaptiveSamples)
 		promptAudit.POST("/adaptive-samples/:id/review", h.Admin.PromptAudit.ReviewAdaptiveSample)
 		promptAudit.DELETE("/events/:id", h.Admin.PromptAudit.DeleteEvent)

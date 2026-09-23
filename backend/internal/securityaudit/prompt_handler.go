@@ -164,6 +164,33 @@ func (h *PromptAdminHandler) GetEvent(c *gin.Context) {
 	response.Success(c, event)
 }
 
+func (h *PromptAdminHandler) ReviewPolicyEvent(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	var req PolicyReviewRequest
+	if err != nil || id <= 0 || c.ShouldBindJSON(&req) != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest("policy_review_invalid", "复核请求无效"))
+		return
+	}
+	reviewer, ok := h.service.(interface {
+		ReviewPolicyEvent(context.Context, int64, int64, PolicyReviewRequest) (*Event, error)
+	})
+	if !ok {
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable("policy_review_unavailable", "复核服务不可用"))
+		return
+	}
+	event, err := reviewer.ReviewPolicyEvent(c.Request.Context(), id, adminID(c), req)
+	if err != nil {
+		setPromptAdminAudit(c, "failed", "policy_review_failed", map[string]any{"event_id": id, "action": req.Action})
+		if errors.Is(err, ErrEventNotFound) {
+			err = infraerrors.NotFound("prompt_audit_event_not_found", "提示词审计事件不存在")
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	setPromptAdminAudit(c, "success", "", map[string]any{"event_id": id, "action": req.Action, "reason": event.PolicyReview.Reason})
+	response.Success(c, event)
+}
+
 func (h *PromptAdminHandler) ListAdaptiveSamples(c *gin.Context) {
 	page, err := positiveIntQuery(c, "page", 1, 0)
 	if err != nil {

@@ -2,7 +2,7 @@
   <details class="card p-4" @toggle="onToggle">
     <summary class="cursor-pointer font-semibold">GPT-6J 调用详情</summary>
     <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">
-      显示本实例最近 6 小时的请求阶段、Jev 审计结论与 GPT 上游结果。工具由客户端执行；这里只标记客户端回传的工具结果，不保存提示词、工具输出或凭据。流式 HTTP 200 仍需结合失败步骤判断。
+      显示本实例最近 6 小时的请求阶段、独立安全审计结论与 GPT 上游结果。工具由客户端执行；这里只标记客户端回传的工具结果，不保存提示词、工具输出或凭据。流式 HTTP 200 仍需结合失败步骤判断。
     </p>
     <div class="my-3 flex flex-wrap gap-2">
       <input
@@ -29,6 +29,8 @@
           <span v-if="event.model"> · {{ event.model }}</span>
           <span v-if="event.actual_model"> · 实际返回 {{ event.actual_model }}</span>
           <span v-if="event.account_id"> · 账号 #{{ event.account_id }}</span>
+          <p v-if="event.events_dropped">诊断容量受限，省略 {{ event.events_dropped }} 条中间记录；保留终态。</p>
+          <p v-if="event.history_sample">历史窗口采样<span v-if="event.tool_results_seen">：发现 {{ event.tool_results_seen }} 条，省略 {{ event.tool_results_omitted || 0 }} 条较旧结果</span>，不代表本轮实际执行。</p>
           <p v-if="event.tool">工具结果类型：{{ event.tool }}</p>
           <p v-if="event.call_id" class="break-all">工具调用标识摘要：{{ event.call_id }}</p>
           <p v-if="event.response_id" class="break-all">响应 ID：{{ event.response_id }}</p>
@@ -46,6 +48,10 @@ import { computed, ref } from 'vue'
 import apiClient from '@/api/client'
 
 type TraceEvent = {
+  events_dropped?: number
+  history_sample?: boolean
+  tool_results_seen?: number
+  tool_results_omitted?: number
   time: number
   request_id: string
   response_id?: string
@@ -67,7 +73,7 @@ const error = ref('')
 const labels: Record<string, string> = {
   request: '收到 GPT-6J 请求',
   client_tool_result: '收到客户端工具结果',
-  guard_result: 'Jev 安全审计结论',
+  guard_result: '独立安全审计结论',
   gpt_handoff: '交由 GPT 上游处理',
   gpt_response: 'GPT 上游返回',
   request_failed: '请求失败',

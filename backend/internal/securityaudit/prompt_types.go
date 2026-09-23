@@ -65,6 +65,8 @@ const (
 	// EventReviewRequired is an event marker, never a scanner verdict. The
 	// request was rejected because no safe verdict was established.
 	EventReviewRequired EventDecision = "review_required"
+	// Provider refusal is evidence of an upstream decision, not a local verdict.
+	EventUpstreamPolicyBlock EventDecision = "upstream_policy_block"
 )
 
 type RiskLevel string
@@ -85,12 +87,22 @@ const (
 	ActionBlock Action = "Block"
 )
 
+// OutputCapture describes audit coverage, not the verdict of the classifier.
+type OutputCapture struct {
+	CapturedBytes int    `json:"captured_bytes"`
+	ObservedBytes int64  `json:"observed_bytes"`
+	Truncated     bool   `json:"capture_truncated"`
+	Complete      bool   `json:"output_complete"`
+	Terminal      string `json:"terminal"`
+}
+
 type Request struct {
-	RequireJev bool
-	RequestID  string
-	UserID     int64
-	Username   string
-	UserEmail  string
+	OutputCapture *OutputCapture
+	RequireJev    bool
+	RequestID     string
+	UserID        int64
+	Username      string
+	UserEmail     string
 	// PromptAuditBypass comes only from the authenticated server-side user
 	// snapshot. Clients cannot opt themselves out of auditing.
 	PromptAuditBypass bool
@@ -108,6 +120,10 @@ type Request struct {
 
 func (r Request) Clone() Request {
 	r.Body = append([]byte(nil), r.Body...)
+	if r.OutputCapture != nil {
+		value := *r.OutputCapture
+		r.OutputCapture = &value
+	}
 	if r.GroupID != nil {
 		id := *r.GroupID
 		r.GroupID = &id
@@ -116,27 +132,29 @@ func (r Request) Clone() Request {
 }
 
 type PromptSnapshot struct {
-	RequestID          string `json:"request_id"`
-	UserID             int64  `json:"user_id"`
-	UsernameSnapshot   string `json:"username"`
-	UserEmailSnapshot  string `json:"user_email"`
-	APIKeyID           int64  `json:"api_key_id"`
-	APIKeyNameSnapshot string `json:"api_key_name"`
-	GroupID            *int64 `json:"group_id,omitempty"`
-	GroupName          string `json:"group_name"`
-	Provider           string `json:"provider"`
-	Endpoint           string `json:"endpoint"`
-	Protocol           string `json:"protocol"`
-	Model              string `json:"model"`
-	PromptHash         string `json:"prompt_hash"`
-	TaskFingerprint    string `json:"task_fingerprint"`
-	AuditSubject       string `json:"audit_subject"`
-	RedactedPreview    string `json:"redacted_preview"`
-	FullPrompt         string `json:"full_prompt"`
-	AuditedPrompt      string `json:"audited_prompt"`
-	PromptLength       int    `json:"prompt_length"`
-	MessageCount       int    `json:"message_count"`
-	Stage              string `json:"stage"`
+	PolicyCacheVersion int64          `json:"-"`
+	OutputCapture      *OutputCapture `json:"output_capture,omitempty"`
+	RequestID          string         `json:"request_id"`
+	UserID             int64          `json:"user_id"`
+	UsernameSnapshot   string         `json:"username"`
+	UserEmailSnapshot  string         `json:"user_email"`
+	APIKeyID           int64          `json:"api_key_id"`
+	APIKeyNameSnapshot string         `json:"api_key_name"`
+	GroupID            *int64         `json:"group_id,omitempty"`
+	GroupName          string         `json:"group_name"`
+	Provider           string         `json:"provider"`
+	Endpoint           string         `json:"endpoint"`
+	Protocol           string         `json:"protocol"`
+	Model              string         `json:"model"`
+	PromptHash         string         `json:"prompt_hash"`
+	TaskFingerprint    string         `json:"task_fingerprint"`
+	AuditSubject       string         `json:"audit_subject"`
+	RedactedPreview    string         `json:"redacted_preview"`
+	FullPrompt         string         `json:"full_prompt"`
+	AuditedPrompt      string         `json:"audited_prompt"`
+	PromptLength       int            `json:"prompt_length"`
+	MessageCount       int            `json:"message_count"`
+	Stage              string         `json:"stage"`
 
 	ScanText            string   `json:"-"`
 	SegmentFingerprints []string `json:"-"`

@@ -196,7 +196,7 @@ func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
 			model:      "gpt-5",
 			wantCalls:  []bool{false},
 			wantLogs:   1,
-			wantBanned: true,
+			wantBanned: false,
 		},
 	}
 
@@ -260,7 +260,10 @@ func TestRecordCyberPolicyEvent_RuntimeSnapshotRefreshFailureKeepsStaleScope(t *
 		SettingKeyRiskControlEnabled:      "true",
 		SettingKeyContentModerationConfig: `{"all_groups":true,"model_filter":{"type":"include","models":["gpt-5"]}}`,
 	}}
-	svc := NewContentModerationService(settingRepo, repo, nil, nil, nil, nil, nil, nil)
+	// This test drives snapshot refresh directly; avoid launching workers before
+	// setting its test-only TTL (which otherwise races on constructor startup).
+	svc := NewContentModerationService(settingRepo, nil, nil, nil, nil, nil, nil, nil)
+	svc.repo = repo
 	svc.runtimeCacheTTL = time.Minute
 
 	_, err := svc.loadRuntimeSnapshot(context.Background())

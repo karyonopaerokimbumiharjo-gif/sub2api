@@ -83,14 +83,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 	if gpt6jMode.Enabled {
 		defer beginGPT6JTrace(c, body)()
-		if h.securityAuditCoordinator == nil || !h.securityAuditCoordinator.JevBlockingReady() {
-			h.errorResponse(c, http.StatusServiceUnavailable, "gpt6j_guard_unavailable", "GPT-6J requires a healthy blocking Jev safety policy")
-			return
-		}
-		if gpt6jMode.EnhancedCompaction {
-			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "GPT-6J enhanced compaction requires the Responses API")
-			return
-		}
 		c.Header("X-Sub2API-Model-Mode", gpt6JModeValue)
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)

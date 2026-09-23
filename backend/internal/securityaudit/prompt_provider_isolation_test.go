@@ -147,3 +147,42 @@ func TestRequiredJevWithoutAuditableTextFailsClosed(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, ErrorCodeInvalidResponse, guardErrorCode(err))
 }
+
+func TestJevSafetySelectionIndependentFromProductMode(t *testing.T) {
+	for _, jProduct := range []bool{false, true} {
+		for _, safety := range []bool{false, true} {
+			cfg, err := ActiveFromStorage(mixedAuditStorageConfig(), true, prefixEncryptor{})
+			require.NoError(t, err)
+			cfg.JevSafetyEnabled = safety
+			var endpointID string
+			evaluator := NewGuardEvaluator(PromptScannerFunc(func(_ context.Context, ep ActiveEndpoint, _ string, _ []string) (*NormalizedResult, error) {
+				endpointID = ep.ID
+				return &NormalizedResult{Decision: EventPass, RiskLevel: RiskLow, Action: ActionAllow, ScannerScores: map[string]float64{}, ScannerEvidence: map[string]string{}}, nil
+			}), nil, NewAtomicMetrics())
+			svc := &PromptService{config: &fakeConfigStore{active: true, cfg: cfg}, evaluator: evaluator}
+			coordinator := NewCoordinator(nil, svc)
+			decision := coordinator.Check(context.Background(), Request{RequireJev: jProduct, Protocol: "openai_responses", Body: []byte(`{"input":"Hello"}`)})
+			require.Equal(t, DecisionAllow, decision.Kind)
+			want := "deepseek-fallback"
+			if safety {
+				want = "jev-primary"
+			}
+			require.Equal(t, want, endpointID)
+		}
+	}
+}
+
+func TestJevSafetySettingRoundTrip(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	req := promptAuditUpdateRequest(1, 1, "")
+	req.Enabled, req.BlockingEnabled, req.JevSafetyEnabled = true, true, true
+	req.BackgroundAuditMode = BackgroundAuditModeOff
+	req.Endpoints = []UpdateEndpoint{{ID: "jev", Name: "Jev", Protocol: JevProtocol, Adapter: EndpointAdapterGenericLLM, BaseURL: JevBaseURL, Model: DefaultJevModel, Token: "synthetic-token", TimeoutMS: 1000, InputLimit: 4000, Enabled: true}}
+	saved, err := manager.buildNextStorage(DefaultStorageConfig(), req, 1)
+	require.NoError(t, err)
+	require.True(t, PublicFromStorage(saved, true, nil).JevSafetyEnabled)
+	active, err := ActiveFromStorage(saved, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.True(t, active.JevSafetyEnabled)
+	require.Equal(t, "jev", active.EnabledEndpointsFor(false)[0].ID)
+}

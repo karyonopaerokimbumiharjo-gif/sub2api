@@ -471,11 +471,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	if gpt6jMode.Enabled {
 		defer beginGPT6JTrace(c, body)()
-		if h.securityAuditCoordinator == nil || !h.securityAuditCoordinator.JevBlockingReady() {
-			reqLog.Warn("openai.gpt6j_guard_unavailable")
-			h.errorResponse(c, http.StatusServiceUnavailable, "gpt6j_guard_unavailable", "GPT-6J requires a healthy blocking Jev safety policy")
-			return
-		}
+
 		c.Header("X-Sub2API-Model-Mode", gpt6JModeValue)
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
@@ -566,38 +562,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	if h.rejectIfBioPromptBlocked(c, apiKey, reqModel, cyberBlockFormatResponses) {
 		return
-	}
-
-	if gpt6jMode.Enabled && gpt6jMode.EnhancedCompaction {
-		if legacyCompact || nativeV2 {
-			enhancedBody, report, compactErr := h.securityAuditCoordinator.EnhanceCompaction(c.Request.Context(), body)
-			switch {
-			case compactErr != nil:
-				// Compression assistance is fail-safe: keep the exact original
-				// window rather than replacing it with a lower-fidelity summary.
-				c.Header("X-Sub2API-GPT6J-Compaction", "fallback-original")
-				reqLog.Warn("openai.gpt6j_compaction_fallback",
-					zap.Error(compactErr),
-					zap.Int("input_items", report.InputItems),
-					zap.Int("candidates", report.Candidates),
-				)
-			case report.Applied:
-				body = enhancedBody
-				c.Header("X-Sub2API-GPT6J-Compaction", "applied")
-				reqLog.Info("openai.gpt6j_compaction_applied",
-					zap.Int("input_items", report.InputItems),
-					zap.Int("output_items", report.OutputItems),
-					zap.Int("candidates", report.Candidates),
-					zap.Int("dropped_items", report.DroppedItems),
-				)
-			default:
-				c.Header("X-Sub2API-GPT6J-Compaction", "kept-original")
-			}
-		} else {
-			// The user preference is session-wide, but pruning is intentionally
-			// activated only on an explicit compact request.
-			c.Header("X-Sub2API-GPT6J-Compaction", "armed")
-		}
 	}
 
 	// 使用 IsExplicitImageGenerationIntent 排除被动 image_gen namespace 声明。
@@ -2417,14 +2381,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	// Consume product headers before the upgrade; every turn still checks the
-	// actual model and current Jev policy independently.
+	// actual model and the independent safety policy.
 	gpt6jMode, modeErr := parseGPT6JRequestMode(c, gpt6JUpstreamModel)
 	if modeErr != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", modeErr.Error())
-		return
-	}
-	if gpt6jMode.Enabled && (h.securityAuditCoordinator == nil || !h.securityAuditCoordinator.JevBlockingReady()) {
-		h.errorResponse(c, http.StatusServiceUnavailable, "gpt6j_guard_unavailable", "GPT-6J requires blocking Jev safety")
 		return
 	}
 	wsConn, err := coderws.Accept(c.Writer, c.Request, &coderws.AcceptOptions{

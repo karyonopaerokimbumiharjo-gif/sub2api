@@ -275,7 +275,7 @@ const (
 	cyberSessionScopePrefix         = "cyber_session_scope:"
 	cyberSessionRedisCommandMaxKeys = 128
 )
-const bioPromptBlockPrefix = "bio_prompt_block:"
+const bioPromptBlockPrefix = service.BioPromptBlockCachePrefix
 
 var setBioPromptBlockedScript = redis.NewScript(`
 	local current = tonumber(redis.call('GET', KEYS[1])) or 0

@@ -60,7 +60,7 @@ describe('UserEditModal prompt audit bypass', () => {
     showSuccess.mockReset()
   })
 
-  it('loads and saves the per-user security audit release switch', async () => {
+  it('retires the bypass switch and clears the historical flag on save', async () => {
     const wrapper = mount(UserEditModal, {
       props: { show: true, user },
       global: {
@@ -73,9 +73,8 @@ describe('UserEditModal prompt audit bypass', () => {
       }
     })
 
-    const toggle = wrapper.get<HTMLInputElement>('[data-test="prompt-audit-bypass"]')
-    expect(toggle.element.checked).toBe(true)
-    await toggle.setValue(false)
+    expect(wrapper.find('[data-test="prompt-audit-bypass"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="retired-audit-bypass"]').text()).toContain('已停用')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 

@@ -13,13 +13,12 @@ func TestParseGPT6JRequestMode(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	req := httptest.NewRequest("POST", "/openai/v1/responses", nil)
 	req.Header.Set(gpt6JModeHeader, "gpt6j")
-	req.Header.Set(gpt6JEnhancedCompactionHeader, "true")
+	req.Header.Set(gpt6JEnhancedCompactionHeader, "false")
 	c.Request = req
 
 	mode, err := parseGPT6JRequestMode(c, "gpt-6-astra")
 	require.NoError(t, err)
 	require.True(t, mode.Enabled)
-	require.True(t, mode.EnhancedCompaction)
 	require.Empty(t, c.Request.Header.Get(gpt6JModeHeader))
 	require.Empty(t, c.Request.Header.Get(gpt6JEnhancedCompactionHeader))
 }
@@ -40,7 +39,7 @@ func TestGPT6JRejectsWrongModelAndStandaloneCompression(t *testing.T) {
 		req.Header.Set(gpt6JEnhancedCompactionHeader, "true")
 		c.Request = req
 		_, err := parseGPT6JRequestMode(c, "gpt-6-astra")
-		require.ErrorIs(t, err, errGPT6JCompactionNoMode)
+		require.ErrorIs(t, err, errGPT6JCompactionRetired)
 	})
 	t.Run("invalid toggle", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -49,17 +48,24 @@ func TestGPT6JRejectsWrongModelAndStandaloneCompression(t *testing.T) {
 		req.Header.Set(gpt6JEnhancedCompactionHeader, "maybe")
 		c.Request = req
 		_, err := parseGPT6JRequestMode(c, "gpt-6-astra")
-		require.ErrorIs(t, err, errGPT6JInvalidToggle)
+		require.ErrorIs(t, err, errGPT6JCompactionRetired)
 	})
 }
 
-func TestGPT6JNamedModelActivatesGuardWithoutHeaders(t *testing.T) {
- c,_:=gin.CreateTestContext(httptest.NewRecorder());c.Request=httptest.NewRequest("POST","/v1/responses",nil)
- mode,err:=parseGPT6JRequestMode(c,"gpt-6j");require.NoError(t,err);require.True(t,mode.Enabled);require.True(t,c.GetBool(gpt6JContextKey))
+func TestGPT6JNamedModelActivatesModeWithoutHeaders(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	mode, err := parseGPT6JRequestMode(c, "gpt-6j")
+	require.NoError(t, err)
+	require.True(t, mode.Enabled)
+	require.True(t, c.GetBool(gpt6JContextKey))
 }
 
-func TestGPT6JNamedModelKeepsEnhancedCompaction(t *testing.T) {
- c,_:=gin.CreateTestContext(httptest.NewRecorder());c.Request=httptest.NewRequest("POST","/v1/responses",nil)
- c.Request.Header.Set(gpt6JEnhancedCompactionHeader,"true")
- mode,err:=parseGPT6JRequestMode(c,"gpt-6j");require.NoError(t,err);require.True(t,mode.Enabled);require.True(t,mode.EnhancedCompaction)
+func TestGPT6JRetiredCompactionIsExplicitlyRejected(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	c.Request.Header.Set(gpt6JEnhancedCompactionHeader, "true")
+	_, err := parseGPT6JRequestMode(c, "gpt-6j")
+	require.ErrorIs(t, err, errGPT6JCompactionRetired)
+	require.Empty(t, c.Request.Header.Get(gpt6JEnhancedCompactionHeader))
 }

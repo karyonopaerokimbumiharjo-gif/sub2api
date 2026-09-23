@@ -658,7 +658,8 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 		cfg.EmailOnHit = *input.EmailOnHit
 	}
 	if input.AutoBanEnabled != nil {
-		cfg.AutoBanEnabled = *input.AutoBanEnabled
+		// Retained for API compatibility; model-only permanent bans are retired.
+		cfg.AutoBanEnabled = false
 	}
 	if input.BanThreshold != nil {
 		cfg.BanThreshold = *input.BanThreshold
@@ -1927,32 +1928,13 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 		}
 	}
 	log.ViolationCount = count
-	autoBanJustApplied := false
-	if cfg.AutoBanEnabled && cfg.BanThreshold > 0 && count >= cfg.BanThreshold && s.userRepo != nil {
-		user, err := s.userRepo.GetByID(ctx, *log.UserID)
-		if err != nil {
-			slog.Warn("content_moderation.ban_get_user_failed", "user_id", *log.UserID, "error", err)
-			return false
-		}
-		if user.IsAdmin() {
-			slog.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
-			// TODO: Disable the triggering API key instead when API key mutation is available here.
-			return false
-		}
-		if user.Status != StatusDisabled {
-			user.Status = StatusDisabled
-			if err := s.userRepo.Update(ctx, user, UserUpdateFields{Status: true}); err != nil {
-				slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
-				return false
-			}
-			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
-			}
-			autoBanJustApplied = true
-		}
-		log.AutoBanned = true
+	// A model flag or supplier refusal is a signal, not an adjudicated user
+	// violation. Keep evidence/counts, but require a human to disable an account.
+	// Request-level hard rules (including protected corpora) still block normally.
+	if cfg.BanThreshold > 0 && count >= cfg.BanThreshold {
+		slog.Warn("content_moderation.manual_review_required", "user_id", *log.UserID, "count", count, "threshold", cfg.BanThreshold)
 	}
-	return autoBanJustApplied
+	return false
 }
 
 func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
@@ -2100,7 +2082,7 @@ func defaultContentModerationConfig() *ContentModerationConfig {
 		BlockStatus:          defaultContentModerationBlockHTTPStatus,
 		BlockMessage:         defaultContentModerationBlockMessage,
 		EmailOnHit:           true,
-		AutoBanEnabled:       true,
+		AutoBanEnabled:       false,
 		BanThreshold:         defaultContentModerationBanThreshold,
 		ViolationWindowHours: defaultContentModerationViolationWindowHours,
 		RetryCount:           defaultContentModerationRetryCount,
@@ -2435,7 +2417,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		BlockStatus:                    cfg.BlockStatus,
 		BlockMessage:                   cfg.BlockMessage,
 		EmailOnHit:                     cfg.EmailOnHit,
-		AutoBanEnabled:                 cfg.AutoBanEnabled,
+		AutoBanEnabled:                 false,
 		BanThreshold:                   cfg.BanThreshold,
 		ViolationWindowHours:           cfg.ViolationWindowHours,
 		RetryCount:                     cfg.RetryCount,

@@ -1,9 +1,9 @@
 name: Silicon validation
 on:
   push:
-    branches: ['silicon/v0.2.7-jev-hardening-20260920']
+    branches: ['silicon/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'silicon/**']
 permissions:
   contents: read
 concurrency:
@@ -26,6 +26,19 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PROMPT_AUDIT_TEST_POSTGRES_DSN: postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +52,7 @@ jobs:
         run: go build ./...
       - name: Unit and race tests
         working-directory: backend
-        run: go test -tags unit -race -count=1 ./internal/securityaudit/... ./internal/handler/... ./internal/service/...
+        run: go test -tags unit -race -count=1 ./internal/securityaudit/... ./internal/handler/... ./internal/service/... ./internal/executiontrace/... ./internal/pkg/sseparse/...
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20

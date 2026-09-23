@@ -884,10 +884,10 @@
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700">
                 <div>
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.autoBan') }}</p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.autoBanHint') }}</p>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">账号停用须人工复核</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">达到风险命中阈值后记录复核提示；模型分数或上游拒绝不会自动永久停用用户。请求级拦截仍正常生效。</p>
                 </div>
-                <Toggle v-model="configForm.auto_ban_enabled" />
+
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
                 <div>
@@ -1248,7 +1248,7 @@ const configForm = reactive({
   block_status: 403,
   block_message: defaultBlockMessage(),
   email_on_hit: true,
-  auto_ban_enabled: true,
+  auto_ban_enabled: false,
   cyber_policy_exclude_from_ban_count: false,
   ban_threshold: 10,
   violation_window_hours: 720,
@@ -1726,7 +1726,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.block_status = config.block_status || 403
   configForm.block_message = config.block_message || defaultBlockMessage()
   configForm.email_on_hit = config.email_on_hit ?? true
-  configForm.auto_ban_enabled = config.auto_ban_enabled ?? true
+  configForm.auto_ban_enabled = false
   configForm.cyber_policy_exclude_from_ban_count = config.cyber_policy_exclude_from_ban_count ?? false
   configForm.ban_threshold = config.ban_threshold || 10
   configForm.violation_window_hours = config.violation_window_hours || 720
@@ -1812,7 +1812,7 @@ async function saveConfig() {
       block_status: Number(configForm.block_status) || 403,
       block_message: configForm.block_message || defaultBlockMessage(),
       email_on_hit: configForm.email_on_hit,
-      auto_ban_enabled: configForm.auto_ban_enabled,
+      auto_ban_enabled: false,
       cyber_policy_exclude_from_ban_count: configForm.cyber_policy_exclude_from_ban_count,
       ban_threshold: Number(configForm.ban_threshold) || 10,
       violation_window_hours: Number(configForm.violation_window_hours) || 720,

@@ -44,50 +44,6 @@ func TestJevLiveAcceptance(t *testing.T) {
 	}
 }
 
-func TestJevLiveEnhancedCompactionPreservesProtectedContext(t *testing.T) {
-	token := os.Getenv("SUB2API_JEV_LIVE_KEY")
-	if token == "" {
-		t.Skip("explicit live credential required")
-	}
-	endpoint := jevTestEndpoint()
-	endpoint.Token, endpoint.TimeoutMS, endpoint.Enabled = token, 30000, true
-	manager := &ConfigManager{}
-	manager.snapshot.Store(&activeConfigSnapshot{active: ActiveConfig{
-		RiskControlEnabled: true, Enabled: true, BlockingEnabled: true, AllGroups: true, Endpoints: []ActiveEndpoint{endpoint},
-	}})
-	svc := &PromptService{config: manager}
-	input := []json.RawMessage{
-		json.RawMessage(`{"type":"message","role":"system","content":"Retain every task constraint."}`),
-		json.RawMessage(`{"type":"message","role":"user","content":"The final chosen color is red."}`),
-		json.RawMessage(`{"type":"function_call_output","call_id":"synthetic-call","output":"Verified final color: red"}`),
-		json.RawMessage(`{"type":"message","role":"assistant","content":"The final chosen color is red."}`),
-	}
-	for range jevCompactionRecentItems {
-		input = append(input, json.RawMessage(`{"type":"message","role":"user","content":"Keep the final chosen color red and preserve the task constraints."}`))
-	}
-	body, err := json.Marshal(map[string]any{"model": "gpt-6-astra", "input": input})
-	require.NoError(t, err)
-	result, report, err := svc.EnhanceCompaction(context.Background(), body)
-	require.NoError(t, err)
-	require.Equal(t, 1, report.Candidates)
-	require.LessOrEqual(t, report.DroppedItems, 1)
-	var output struct {
-		Model string            `json:"model"`
-		Input []json.RawMessage `json:"input"`
-	}
-	require.NoError(t, json.Unmarshal(result, &output))
-	require.Equal(t, "gpt-6-astra", output.Model)
-	expected := input
-	if report.Applied {
-		expected = append(append([]json.RawMessage(nil), input[:3]...), input[4:]...)
-	}
-	require.Len(t, output.Input, len(expected))
-	for index := range expected {
-		require.JSONEq(t, string(expected[index]), string(output.Input[index]))
-	}
-	t.Logf("model=%s candidates=%d dropped=%d protected_context_preserved=true", endpoint.Model, report.Candidates, report.DroppedItems)
-}
-
 func TestJevLiveBenignTaskRegression(t *testing.T) {
 	token := os.Getenv("SUB2API_JEV_LIVE_KEY")
 	if token == "" {

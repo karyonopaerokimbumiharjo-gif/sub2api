@@ -30,7 +30,8 @@ func (h *OpenAIGatewayHandler) rejectIfBioPromptBlocked(c *gin.Context, apiKey *
 	if strings.TrimSpace(fingerprint) == "" {
 		fingerprint = snapshot.PromptHash
 	}
-	keys := service.BioPromptBlockKeys(snapshot.UserID, apiKey.ID, snapshot.Provider, "bio_policy", fingerprint, snapshot.FullPrompt)
+	snapshot.PolicyCacheVersion = h.securityAuditCoordinator.PolicyCacheVersion()
+	keys := service.BioPromptBlockKeys(snapshot.UserID, apiKey.ID, snapshot.Provider, "bio_policy", fingerprint, snapshot.FullPrompt, snapshot.PolicyCacheVersion, snapshot.Model)
 	if !h.gatewayService.IsBioPromptBlocked(c.Request.Context(), keys) {
 		return false
 	}
@@ -102,7 +103,8 @@ func (h *OpenAIGatewayHandler) recordBioPolicyIfMarked(c *gin.Context, apiKey *s
 	if strings.TrimSpace(fingerprint) == "" {
 		fingerprint = snapshot.PromptHash
 	}
-	keys := service.BioPromptBlockKeys(snapshot.UserID, snapshot.APIKeyID, snapshot.Provider, mark.Code, fingerprint, snapshot.FullPrompt)
+	snapshot.PolicyCacheVersion = h.securityAuditCoordinator.PolicyCacheVersion()
+	keys := service.BioPromptBlockKeys(snapshot.UserID, snapshot.APIKeyID, snapshot.Provider, mark.Code, fingerprint, snapshot.FullPrompt, snapshot.PolicyCacheVersion, snapshot.Model)
 	coordinator := h.securityAuditCoordinator
 	gateway := h.gatewayService
 	ops := h.opsService

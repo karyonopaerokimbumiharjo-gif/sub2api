@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -18,14 +17,12 @@ const (
 )
 
 type gpt6JRequestMode struct {
-	Enabled            bool
-	EnhancedCompaction bool
+	Enabled bool
 }
 
 var (
-	errGPT6JWrongModel       = errors.New("gpt6j mode requires model gpt-6-astra")
-	errGPT6JCompactionNoMode = errors.New("enhanced compaction is only available in GPT-6J mode")
-	errGPT6JInvalidToggle    = errors.New("invalid enhanced compaction toggle")
+	errGPT6JWrongModel        = errors.New("gpt6j mode requires model gpt-6-astra")
+	errGPT6JCompactionRetired = errors.New("Jev context pruning has been removed; use native context management")
 )
 
 func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestMode, error) {
@@ -41,15 +38,8 @@ func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestM
 	c.Request.Header.Del(gpt6JEnhancedCompactionHeader)
 
 	mode := gpt6JRequestMode{Enabled: modeValue == gpt6JModeValue || strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j")}
-	if rawEnhanced != "" {
-		enabled, err := strconv.ParseBool(rawEnhanced)
-		if err != nil {
-			return mode, errGPT6JInvalidToggle
-		}
-		mode.EnhancedCompaction = enabled
-	}
-	if mode.EnhancedCompaction && !mode.Enabled {
-		return mode, errGPT6JCompactionNoMode
+	if rawEnhanced != "" && !strings.EqualFold(rawEnhanced, "false") && rawEnhanced != "0" {
+		return mode, errGPT6JCompactionRetired
 	}
 	if mode.Enabled && !strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j") && !strings.EqualFold(strings.TrimSpace(requestedModel), gpt6JUpstreamModel) {
 		return mode, errGPT6JWrongModel

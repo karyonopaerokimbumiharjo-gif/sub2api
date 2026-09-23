@@ -18,10 +18,25 @@
           <p class="text-sm font-medium text-amber-900 dark:text-amber-200">{{ t('admin.promptAudit.events.whitelistBypass') }}</p>
           <p class="mt-1 text-xs text-amber-800 dark:text-amber-300">{{ t('admin.promptAudit.events.whitelistBypassHint') }}</p>
         </div>
+        <div v-if="event.decision === 'upstream_policy_block'" class="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:bg-orange-950/30">上游策略拦截：本次请求被拒绝，但不代表本地已经确认违规。下方显示的是供应商反馈，未生成本地风险分数。</div>
         <div v-if="event.audit_status === 'review_required'" class="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900/50 dark:bg-orange-950/30">
           <p class="text-sm font-medium text-orange-900 dark:text-orange-200">{{ t('admin.promptAudit.events.reviewRequired') }}</p>
           <p class="mt-1 text-xs text-orange-800 dark:text-orange-300">{{ t('admin.promptAudit.events.reviewRequiredHint') }}</p>
         </div>
+        <div v-if="event.snapshot.output_capture" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm dark:bg-amber-950/30" data-test="output-coverage">
+          <p>{{ event.snapshot.output_capture.output_complete ? '完整输出的事后审计' : '部分输出审计：不能视为全文通过' }}</p>
+          <p>已捕获 {{ event.snapshot.output_capture.captured_bytes }} / {{ event.snapshot.output_capture.observed_bytes }} 字节 · 结束状态：{{ event.snapshot.output_capture.terminal }} · {{ event.snapshot.output_capture.capture_truncated ? '已截断' : '未截断' }}</p>
+        </div>
+        <section v-if="event.decision === 'upstream_policy_block'" class="mb-4 space-y-2 rounded-lg border p-4" data-test="policy-review">
+          <p v-if="event.policy_review" class="text-sm">上次复核：{{ event.policy_review.action === 'cleared' ? '已解除本地缓存' : '确认拦截' }} · {{ event.policy_review.reason }}</p>
+          <label for="policy-review-reason" class="block text-sm font-medium">复核理由</label>
+          <textarea id="policy-review-reason" v-model="reviewReason" :disabled="reviewing" maxlength="1000" class="input w-full" rows="2" />
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" :disabled="reviewing || !reviewReason.trim()" @click="$emit('policy-review', 'confirmed', reviewReason.trim())">确认拦截</button>
+            <button class="btn btn-secondary" :disabled="reviewing || !reviewReason.trim()" @click="$emit('policy-review', 'cleared', reviewReason.trim())">解除本地缓存</button>
+          </div>
+          <p class="text-xs text-gray-500">仅解除该用户、模型和策略版本的重复请求缓存。后续请求仍需经过安全审查，上游仍可拒绝；不会解除 CTE 或 GPT 破甲库规则。</p>
+        </section>
         <div v-show="activeTab === 'summary'" class="grid gap-5 lg:grid-cols-2" role="tabpanel">
           <div>
             <section>
@@ -36,7 +51,7 @@
             </section>
           </div>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionAction(event.decision, event.action) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionAction(event.decision, event.action) }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.user') }}</dt><dd>{{ event.snapshot.username || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.email') }}</dt><dd>{{ event.snapshot.user_email || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.apiKey') }}</dt><dd>{{ event.snapshot.api_key_name || '—' }}</dd>
@@ -110,16 +125,17 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PromptAuditEvent, PromptIssueSummary } from '../types'
 import { CONTENT_CATEGORY_CATALOG, SCANNER_CATALOG } from '../viewModel'
 
-const props = defineProps<{ show: boolean; event: PromptAuditEvent | null; loading: boolean }>()
-defineEmits<{ (event: 'close'): void }>()
+const props = defineProps<{ show: boolean; event: PromptAuditEvent | null; loading: boolean; reviewing?: boolean }>()
+defineEmits<{ (event: 'close'): void; (event: 'policy-review', action: 'confirmed' | 'cleared', reason: string): void }>()
+const reviewReason = ref('')
 const { t } = useI18n()
 const tabs = ['summary', 'risks', 'technical'] as const
 const activeTab = ref<(typeof tabs)[number]>('summary')
-watch(() => props.event?.id, () => { activeTab.value = 'summary' })
+watch(() => props.event?.id, () => { activeTab.value = 'summary'; reviewReason.value = '' })
 
-const DECISIONS = new Set(['pass', 'flag', 'critical'])
+const DECISIONS = new Set(['pass', 'flag', 'critical', 'review_required', 'upstream_policy_block'])
 const ACTIONS = new Set(['Allow', 'Warn', 'Block'])
-const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical'])
+const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical', 'unknown'])
 
 function displayFullRequest(event: PromptAuditEvent): string {
   return event.snapshot.full_prompt || event.snapshot.redacted_preview || '—'

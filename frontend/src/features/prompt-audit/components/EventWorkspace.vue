@@ -23,6 +23,7 @@
           <option value="pass">{{ t('admin.promptAudit.decisions.pass') }}</option>
           <option value="flag">{{ t('admin.promptAudit.decisions.flag') }}</option>
           <option value="critical">{{ t('admin.promptAudit.decisions.critical') }}</option>
+          <option value="upstream_policy_block">{{ t('admin.promptAudit.decisions.upstream_policy_block') }}</option>
           <option value="review_required">{{ t('admin.promptAudit.events.reviewRequired') }}</option>
         </select>
       </label>
@@ -94,7 +95,7 @@
             </td>
             <td class="px-3 py-3">
               <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : event.audit_status === 'review_required' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200' : decisionClass(event.decision)">
-                {{ event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionRisk(event.decision, event.risk_level) }}
+                {{ event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionRisk(event.decision, event.risk_level) }}
               </span>
               <span v-if="(event.duplicate_count || 0) > 1" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-dark-700 dark:text-dark-200">
                 {{ t('admin.promptAudit.events.duplicateCount', { count: event.duplicate_count }) }}
@@ -198,7 +199,7 @@ function formatDate(value: string): string {
 }
 function decisionClass(decision: string): string {
   if (decision === 'critical') return 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
-  if (decision === 'flag') return 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
+  if (decision === 'flag' || decision === 'upstream_policy_block' || decision === 'review_required') return 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
   return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
 }
 function policySourceLabel(source?: string): string {
@@ -206,7 +207,7 @@ function policySourceLabel(source?: string): string {
   const value = t(key)
   return value === key ? source || '—' : value
 }
-const DECISIONS = new Set(['pass', 'flag', 'critical', 'review_required'])
+const DECISIONS = new Set(['pass', 'flag', 'critical', 'review_required', 'upstream_policy_block'])
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical', 'unknown'])
 
 function translateDecision(decision: string): string {

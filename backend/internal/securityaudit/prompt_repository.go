@@ -41,6 +41,7 @@ type Job struct {
 }
 
 type Event struct {
+	PolicyReview      *PolicyReview      `json:"policy_review,omitempty"`
 	ID                int64              `json:"id"`
 	JobID             int64              `json:"job_id"`
 	Snapshot          PromptSnapshot     `json:"snapshot"`
@@ -446,6 +447,9 @@ func insertEvent(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot 
 }
 
 func insertEventWithAuditStatus(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult, auditStatus string) (*Event, error) {
+	if snapshot.OutputCapture != nil && !snapshot.OutputCapture.Complete && auditStatus == "audited" {
+		auditStatus = "partial"
+	}
 	categories := marshalStringJSONArray(result.Categories)
 	intentCategories := marshalStringJSONArray(result.IntentCategories)
 	contentCategories := marshalStringJSONArray(result.ContentCategories)
@@ -456,15 +460,16 @@ func insertEventWithAuditStatus(ctx context.Context, queryer sqlQueryer, jobID i
 		evidence[key] = RedactPreview(value, 160)
 	}
 	evidenceJSON, _ := json.Marshal(evidence)
+	outputCapture, _ := json.Marshal(snapshot.OutputCapture)
 	row := queryer.QueryRowContext(ctx, `
 		INSERT INTO prompt_audit_events (
 			job_id,request_id,user_id,username_snapshot,user_email_snapshot,api_key_id,api_key_name_snapshot,
 			group_id,group_name,provider,endpoint,protocol,model,prompt_hash,task_fingerprint,audit_subject,redacted_preview,stage,
 			decision,risk_level,action,categories,intent_categories,content_categories,matched_scanners,scanner_scores,scanner_evidence,
 			scanner_backend,scanner_version,guard_endpoint_id,policy_id,policy_version,config_version,chunk_total,latency_ms,
-			full_prompt,audited_prompt,audit_status
+			full_prompt,audited_prompt,audit_status,output_capture
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-			$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
+			$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39::jsonb)
 		RETURNING `+eventDetailColumns("prompt_audit_events"),
 		jobID, snapshot.RequestID, nullableID(snapshot.UserID), snapshot.UsernameSnapshot, snapshot.UserEmailSnapshot,
 		nullableID(snapshot.APIKeyID), snapshot.APIKeyNameSnapshot, snapshot.GroupID, snapshot.GroupName,
@@ -472,7 +477,7 @@ func insertEventWithAuditStatus(ctx context.Context, queryer sqlQueryer, jobID i
 		snapshot.TaskFingerprint, snapshot.AuditSubject, snapshot.RedactedPreview, normalizeStage(snapshot.Stage), string(result.Decision), string(result.RiskLevel),
 		string(result.Action), categories, intentCategories, contentCategories, matched, scores, evidenceJSON, result.ScannerBackend, result.ScannerVersion,
 		result.GuardEndpointID, result.PolicyID, result.PolicyVersion, configVersion, result.ChunkTotal, result.LatencyMS,
-		snapshot.FullPrompt, snapshot.AuditedPrompt, auditStatus)
+		snapshot.FullPrompt, snapshot.AuditedPrompt, auditStatus, outputCapture)
 	return scanEvent(row, true)
 }
 

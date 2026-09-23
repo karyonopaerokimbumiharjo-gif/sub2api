@@ -62,3 +62,17 @@ func TestBuildOutputPromptSnapshotMarksOutputContent(t *testing.T) {
 	require.Equal(t, "openai_responses", snapshot.Protocol)
 	require.Contains(t, snapshot.FullPrompt, "assistant answer")
 }
+
+func TestOutputRepetitionAndFinalSnapshot(t *testing.T) {
+	raw := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ha\"}\n\n"
+	require.Equal(t, "haha", ExtractAssistantOutput([]byte(raw+raw), true))
+	final := "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"haha\"}]}]}}\n\n"
+	require.Equal(t, "haha", ExtractAssistantOutput([]byte(raw+raw+final), true))
+}
+func TestOutputSnapshotPreservesPartialCoverage(t *testing.T) {
+	req := Request{OutputCapture: &OutputCapture{Truncated: true, CapturedBytes: 100, ObservedBytes: 200, Terminal: "completed"}}
+	snapshot, err := BuildOutputPromptSnapshot(req, "prefix")
+	require.NoError(t, err)
+	require.Equal(t, "output_content_partial", snapshot.AuditSubject)
+	require.Equal(t, req.OutputCapture, snapshot.OutputCapture)
+}

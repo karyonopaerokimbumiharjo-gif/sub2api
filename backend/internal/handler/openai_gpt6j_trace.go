@@ -27,18 +27,29 @@ func beginGPT6JTrace(c *gin.Context, body []byte) func() {
 	c.Set(gpt6jTraceIDContextKey, requestID)
 	started := time.Now()
 	recordGPT6JTrace(c, executiontrace.Event{Stage: "request", Model: gjson.GetBytes(body, "model").String()})
-	recordedToolResults := 0
+	results := make([]executiontrace.Event, 0, 8)
 	for _, item := range gjson.GetBytes(body, "input").Array() {
-		if recordedToolResults >= 8 {
-			break
-		}
 		kind := item.Get("type").String()
-		if kind != "function_call_output" && kind != "custom_tool_call_output" {
-			continue
+		if kind == "function_call_output" || kind == "custom_tool_call_output" {
+			results = append(results, executiontrace.Event{Stage: "client_tool_result", Tool: kind, CallID: strings.TrimSpace(item.Get("call_id").String())})
 		}
-		callID := strings.TrimSpace(item.Get("call_id").String())
-		recordGPT6JTrace(c, executiontrace.Event{Stage: "client_tool_result", Tool: kind, CallID: callID})
-		recordedToolResults++
+	}
+	for _, item := range gjson.GetBytes(body, "messages").Array() {
+		if item.Get("role").String() == "tool" {
+			results = append(results, executiontrace.Event{Stage: "client_tool_result", Tool: "chat_tool_result", CallID: strings.TrimSpace(item.Get("tool_call_id").String())})
+		}
+	}
+	seen := len(results)
+	if len(results) > 8 {
+		results = results[len(results)-8:]
+	}
+	for i, event := range results {
+		event.HistorySample = true
+		if i == 0 {
+			event.ToolResultsSeen = seen
+			event.ToolResultsOmitted = seen - len(results)
+		}
+		recordGPT6JTrace(c, event)
 	}
 	return func() {
 		recordGPT6JTrace(c, executiontrace.Event{

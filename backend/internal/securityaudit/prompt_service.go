@@ -171,10 +171,8 @@ func (s *PromptService) CaptureAuditGap(_ context.Context, req Request) {
 }
 
 func (s *PromptService) ShouldBypass(req Request) bool {
-	if req.RequireJev {
-		return false
-	}
-	return s != nil && req.PromptAuditBypass
+	// Legacy flags no longer grant an unconditional audit exemption.
+	return false
 }
 
 // RecordUserBypass is intentionally asynchronous: explicitly released users
@@ -476,7 +474,7 @@ func (s *PromptService) ShouldAuditOutput(req Request, inputDecision DecisionKin
 // finding after the response has already been delivered and never changes the
 // user-visible status or stream timing.
 func (s *PromptService) ObserveOutput(_ context.Context, req Request, inputDecision DecisionKind, responseBody []byte, streaming bool) {
-	if s == nil || !s.ShouldAuditOutput(req, inputDecision) || len(responseBody) == 0 {
+	if s == nil || !s.ShouldAuditOutput(req, inputDecision) {
 		return
 	}
 	select {
@@ -499,7 +497,7 @@ func (s *PromptService) ObserveOutput(_ context.Context, req Request, inputDecis
 		defer s.enqueueWG.Done()
 		defer func() { <-s.outputSlots }()
 		text := ExtractAssistantOutput(bodyCopy, streaming)
-		if strings.TrimSpace(text) == "" {
+		if strings.TrimSpace(text) == "" && (requestCopy.OutputCapture == nil || requestCopy.OutputCapture.Complete) {
 			return
 		}
 		cfg, ok := s.config.Active()
@@ -510,6 +508,14 @@ func (s *PromptService) ObserveOutput(_ context.Context, req Request, inputDecis
 		if err != nil {
 			return
 		}
+		if strings.TrimSpace(text) == "" {
+			if s.repo != nil {
+				ctx, cancel := context.WithTimeout(background, 2*time.Second)
+				defer cancel()
+				_, _ = s.repo.RecordBlocking(ctx, snapshot, cfg.ConfigVersion, &NormalizedResult{Decision: EventFlag, RiskLevel: RiskUnknown, Action: ActionWarn, ScannerBackend: "output-capture", ScannerVersion: "v1"}, true)
+			}
+			return
+		}
 		// Sampled output observations are useful only when visible in the event
 		// workspace, including safe observations used to estimate false positives.
 		cfg.StorePassEvents = true
@@ -517,7 +523,7 @@ func (s *PromptService) ObserveOutput(_ context.Context, req Request, inputDecis
 		ctx, cancel := context.WithTimeout(background, failoverTimeout(endpoints))
 		decision, err := s.evaluator.EvaluateFor(ctx, cfg, snapshot, requestCopy.RequireJev)
 		cancel()
-		if err == nil && decision != nil && decision.Result != nil {
+		if err == nil && decision != nil && decision.Result != nil && (snapshot.OutputCapture == nil || snapshot.OutputCapture.Complete) {
 			s.scheduleAdaptiveReview(cfg, snapshot, decision)
 		}
 	}()
@@ -656,6 +662,9 @@ func (s *PromptService) recordBioPolicyEvent(ctx context.Context, snapshot Promp
 			configVersion = cfg.ConfigVersion
 		}
 	}
+	if snapshot.PolicyCacheVersion > 0 {
+		configVersion = snapshot.PolicyCacheVersion
+	}
 	snapshot.Stage = stage
 	snapshot.AuditSubject = subject
 	if strings.TrimSpace(snapshot.TaskFingerprint) == "" {
@@ -663,9 +672,9 @@ func (s *PromptService) recordBioPolicyEvent(ctx context.Context, snapshot Promp
 	}
 	snapshot.ScanText = ""
 	result := &NormalizedResult{
-		Decision: EventCritical, RiskLevel: RiskCritical, Action: ActionBlock, Safety: "Unsafe",
-		Categories: []string{"biological_risk"}, MatchedScanners: []string{"biological_risk"},
-		ScannerScores:   map[string]float64{"biological_risk": 1},
+		Decision: EventUpstreamPolicyBlock, RiskLevel: RiskUnknown, Action: ActionBlock, Safety: "NotAdjudicated",
+		Categories: []string{"biological_risk"}, MatchedScanners: []string{},
+		ScannerScores:   map[string]float64{},
 		ScannerEvidence: map[string]string{"biological_risk": "bio_policy feedback: " + strings.TrimSpace(message)},
 		ScannerBackend:  backend, ScannerVersion: code,
 		GuardEndpointID: backend, PolicyID: "provider-policy-feedback", PolicyVersion: 1, ChunkTotal: 1,
@@ -1004,4 +1013,13 @@ func parseTimeQuery(value string) *time.Time {
 	}
 	parsed = parsed.UTC()
 	return &parsed
+}
+
+func (s *PromptService) PolicyCacheVersion() int64 {
+	if s != nil && s.config != nil {
+		if cfg, ok := s.config.Active(); ok && cfg.ConfigVersion > 0 {
+			return cfg.ConfigVersion
+		}
+	}
+	return 1
 }

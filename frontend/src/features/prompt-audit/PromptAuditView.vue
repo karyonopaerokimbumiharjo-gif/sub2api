@@ -214,7 +214,7 @@
       @confirm="confirmFilterDelete"
       @criteria-change="clearDeletePreview"
     />
-    <EventDetailDialog :show="showEventDetail" :event="activeEvent" :loading="loading.detail" @close="closeEventDetail" />
+    <EventDetailDialog :show="showEventDetail" :event="activeEvent" :loading="loading.detail" :reviewing="reviewingPolicy" @policy-review="reviewPolicy" @close="closeEventDetail" />
   </AppLayout>
 </template>
 
@@ -552,6 +552,19 @@ async function reviewAdaptiveSample(id: number, decision: 'allow' | 'block') {
   } finally {
     reviewingSampleId.value = 0
   }
+}
+const reviewingPolicy = ref(false)
+async function reviewPolicy(action: 'confirmed' | 'cleared', reason: string) {
+  const id = activeEvent.value?.id
+  if (!id || reviewingPolicy.value) return
+  reviewingPolicy.value = true
+  try {
+    const event = await promptAuditAPI.reviewPolicyEvent(id, action, reason)
+    if (activeEvent.value?.id === id) activeEvent.value = event
+    await loadEvents()
+  } catch (error) {
+    appStore.showError(errorMessage(error, 'admin.promptAudit.errors.reviewAdaptive'))
+  } finally { reviewingPolicy.value = false }
 }
 async function openEvent(id: number) {
   const ticket = detailGate.begin()

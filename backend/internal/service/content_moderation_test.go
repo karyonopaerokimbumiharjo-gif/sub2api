@@ -1554,14 +1554,13 @@ func TestContentModerationAutoBanSkipsAdminAccount(t *testing.T) {
 	require.Equal(t, StatusActive, userRepo.user.Status)
 	require.Empty(t, userRepo.updated)
 	require.Empty(t, invalidator.userIDs)
-	require.Contains(t, slogOutput.String(), "content_moderation.autoban_skipped_admin")
+	require.Contains(t, slogOutput.String(), "content_moderation.manual_review_required")
 	require.Contains(t, slogOutput.String(), "user_id=1001")
-	require.Contains(t, slogOutput.String(), "role=admin")
 	require.Contains(t, slogOutput.String(), "count=2")
 	require.Contains(t, slogOutput.String(), "threshold=2")
 }
 
-func TestContentModerationAutoBanDisablesRegularUserAtThreshold(t *testing.T) {
+func TestContentModerationSignalsRequireHumanReviewAtThreshold(t *testing.T) {
 	cfg := defaultContentModerationConfig()
 	cfg.BanThreshold = 2
 	cfg.ViolationWindowHours = 24
@@ -1577,10 +1576,10 @@ func TestContentModerationAutoBanDisablesRegularUserAtThreshold(t *testing.T) {
 
 	logs := requireContentModerationLogCount(t, repo, 2)
 	require.Equal(t, 2, logs[1].ViolationCount)
-	require.True(t, logs[1].AutoBanned)
-	require.Len(t, userRepo.updated, 1)
-	require.Equal(t, StatusDisabled, userRepo.user.Status)
-	require.Equal(t, []int64{userID}, invalidator.userIDs)
+	require.False(t, logs[1].AutoBanned)
+	require.Empty(t, userRepo.updated)
+	require.Equal(t, StatusActive, userRepo.user.Status)
+	require.Empty(t, invalidator.userIDs)
 }
 
 func TestContentModerationAdminBelowBanThresholdRecordsViolationOnly(t *testing.T) {

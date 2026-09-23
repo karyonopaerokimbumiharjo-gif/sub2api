@@ -242,6 +242,21 @@ describe('Prompt Audit components', () => {
     expect(detail.get('[data-test="summary-prompt-full"]').text()).toContain('Reply with exactly 4.')
     expect(detail.get('[data-test="summary-audited-prompt"]').text()).toContain('Reply with exactly 4.')
     expect(detail.text()).not.toContain('admin.promptAudit.decisions.critical')
+    const upstream = { ...event, id: 10, audit_status: 'audited', decision: 'upstream_policy_block' as const, policy_code: 'bio_policy' }
+    await detail.setProps({ event: upstream })
+    expect(detail.text()).toContain('不代表本地已经确认违规')
+    const review = detail.get('[data-test="policy-review"]')
+    const buttons = review.findAll('button')
+    expect(buttons.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    await review.get('textarea').setValue('  已人工核实误判  ')
+    await buttons[1].trigger('click')
+    expect(detail.emitted('policy-review')?.at(-1)).toEqual(['cleared', '已人工核实误判'])
+    await detail.setProps({ reviewing: true })
+    expect(buttons.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    await detail.setProps({ event: { ...event, audit_status: 'partial', snapshot: { ...event.snapshot, output_capture: { captured_bytes: 20, observed_bytes: 50, capture_truncated: true, output_complete: false, terminal: 'cancelled' } } } })
+    expect(detail.find('[data-test="policy-review"]').exists()).toBe(false)
+    expect(detail.get('[data-test="output-coverage"]').text()).toContain('不能视为全文通过')
+    expect(detail.text()).toContain('部分审计，未确认全文')
   })
 
   it('resolves delete range presets to an epoch start and a cutoff end', () => {

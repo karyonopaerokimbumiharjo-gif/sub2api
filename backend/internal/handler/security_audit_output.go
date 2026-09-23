@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
 	"sync"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/sseparse"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/gin-gonic/gin"
 )
@@ -23,10 +23,14 @@ type securityAuditOutputWriter struct {
 	inputDecision securityaudit.DecisionKind
 	streaming     bool
 
-	mu        sync.Mutex
-	buffer    bytes.Buffer
-	truncated bool
-	once      sync.Once
+	mu          sync.Mutex
+	buffer      bytes.Buffer
+	truncated   bool
+	observed    int64
+	terminal    string
+	parser      sseparse.Parser
+	writeFailed bool
+	once        sync.Once
 }
 
 func installSecurityAuditOutputCapture(c *gin.Context, coordinator *securityaudit.Coordinator, request securityaudit.Request, inputDecision securityaudit.DecisionKind) {
@@ -47,32 +51,45 @@ func installSecurityAuditOutputCapture(c *gin.Context, coordinator *securityaudi
 		streaming:      requestBodyStreams(request.Body),
 	}
 	c.Writer = writer
-	c.Set(securityAuditOutputCaptureContextKey, true)
-	done := c.Request.Context().Done()
-	if done != nil {
-		go func() {
-			<-done
-			writer.finish()
+	c.Set(securityAuditOutputCaptureContextKey, writer)
+}
+
+// SecurityAuditOutputFinalizer runs before Gin recycles its context/writer. It
+// also closes partial responses and client cancellations without a background
+// goroutine racing on a pooled ResponseWriter.
+func SecurityAuditOutputFinalizer() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if value, ok := c.Get(securityAuditOutputCaptureContextKey); ok {
+				if writer, ok := value.(*securityAuditOutputWriter); ok {
+					writer.mu.Lock()
+					if c.Request.Context().Err() != nil && writer.terminal != "completed" {
+						writer.terminal = "cancelled"
+					}
+					writer.mu.Unlock()
+					writer.finish()
+				}
+			}
 		}()
+		c.Next()
 	}
 }
 
 func (w *securityAuditOutputWriter) Write(value []byte) (int, error) {
-	w.capture(value)
 	written, err := w.ResponseWriter.Write(value)
-	if w.streaming && containsOutputTerminal(value) {
-		w.finish()
+	w.capture(value[:written])
+	if err != nil {
+		w.mu.Lock()
+		w.writeFailed = true
+		w.mu.Unlock()
 	}
+	// Finalize at handler exit: a later failure must not be hidden by a
+	// success marker earlier in the same transport write.
 	return written, err
 }
 
 func (w *securityAuditOutputWriter) WriteString(value string) (int, error) {
-	w.capture([]byte(value))
-	written, err := w.ResponseWriter.WriteString(value)
-	if w.streaming && containsOutputTerminal([]byte(value)) {
-		w.finish()
-	}
-	return written, err
+	return w.Write([]byte(value))
 }
 
 func (w *securityAuditOutputWriter) capture(value []byte) {
@@ -81,6 +98,14 @@ func (w *securityAuditOutputWriter) capture(value []byte) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.observed += int64(len(value))
+	if w.streaming {
+		w.parser.Feed(value, func(event sseparse.Event) {
+			if terminal := event.Terminal(); terminal != "" && (w.terminal == "" || w.terminal == "completed") {
+				w.terminal = terminal
+			}
+		})
+	}
 	remaining := maxSecurityAuditOutputCaptureBytes - w.buffer.Len()
 	if remaining <= 0 {
 		w.truncated = true
@@ -104,11 +129,22 @@ func (w *securityAuditOutputWriter) finish() {
 		}
 		w.mu.Lock()
 		body := append([]byte(nil), w.buffer.Bytes()...)
-		w.mu.Unlock()
-		if len(body) == 0 {
-			return
+		terminal := w.terminal
+		if terminal == "" {
+			terminal = "incomplete"
+			if !w.streaming && !w.writeFailed && json.Valid(body) {
+				terminal = "completed"
+			}
 		}
-		w.coordinator.ObserveOutput(context.Background(), w.request, w.inputDecision, body, w.streaming)
+		request := w.request.Clone()
+		request.OutputCapture = &securityaudit.OutputCapture{
+			CapturedBytes: len(body), ObservedBytes: w.observed,
+			Truncated: w.truncated || w.parser.Truncated,
+			Complete:  terminal == "completed" && !w.truncated && !w.parser.Truncated && !w.writeFailed,
+			Terminal:  terminal,
+		}
+		w.mu.Unlock()
+		w.coordinator.ObserveOutput(context.Background(), request, w.inputDecision, body, w.streaming)
 	})
 }
 
@@ -117,11 +153,4 @@ func requestBodyStreams(body []byte) bool {
 		Stream bool `json:"stream"`
 	}
 	return json.Unmarshal(body, &envelope) == nil && envelope.Stream
-}
-
-func containsOutputTerminal(value []byte) bool {
-	text := string(value)
-	return strings.Contains(text, "[DONE]") ||
-		strings.Contains(text, "response.completed") ||
-		strings.Contains(text, "message_stop")
 }
