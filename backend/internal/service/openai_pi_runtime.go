@@ -101,26 +101,18 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if json.Unmarshal(body, &request) != nil {
 		return fail(http.StatusBadRequest, "Invalid Responses request")
 	}
-	if metadata, ok := request["client_metadata"]; ok {
-		if metadata != nil {
-			return fail(http.StatusBadRequest, "Native Pi requests must not include Codex client metadata")
-		}
-		delete(request, "client_metadata")
-	}
-	if _, present := c.Request.Header[http.CanonicalHeaderKey("x-codex-turn-metadata")]; present {
-		return fail(http.StatusBadRequest, "Native Pi requests must not include Codex turn metadata")
-	}
-	if previous, ok := request["previous_response_id"]; ok {
-		if previous != nil {
-			return fail(http.StatusBadRequest, "Pi runtime owns continuation; send full input")
-		}
-		delete(request, "previous_response_id")
-	}
+	// CPA and Pi share the same public Responses ingress. Codex clients may
+	// include client-only metadata and a continuation id from a different
+	// backend session. Those values are not part of Pi's upstream contract:
+	// discard them and let Pi derive its own isolated session/continuation
+	// state instead of rejecting an otherwise valid request at the gateway.
+	delete(request, "client_metadata")
+	delete(request, "previous_response_id")
 	session := nativePiSession(c, request)
-	if limit, exists := request["max_output_tokens"]; exists {
-		if limit != nil {
-			return fail(http.StatusBadRequest, "Pi backend does not support max_output_tokens")
-		}
+	// Pi's Codex adapter accepts the standard Responses output limit. Keep a
+	// non-null value so CPA and Pi preserve the same public request semantics;
+	// explicit null remains equivalent to omission.
+	if limit, exists := request["max_output_tokens"]; exists && limit == nil {
 		delete(request, "max_output_tokens")
 	}
 	session, err = scopedNativePiSession(c, session)

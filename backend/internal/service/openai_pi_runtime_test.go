@@ -67,10 +67,10 @@ func TestNativePiOwnerAndIngress(t *testing.T) {
 	}{
 		{"unauthorized group", 43, `{"model":"gpt-6-astra","input":"test"}`, "", "session", 403},
 		{"missing key", 0, `{}`, "", "", 403},
-		{"codex header", 42, `{}`, `{"turn_id":"fixture"}`, "", 400},
-		{"codex body", 42, `{"client_metadata":{}}`, "", "", 400},
-		{"foreign continuation", 42, `{"previous_response_id":"foreign"}`, "", "session", 400},
-		{"unsupported output limit", 42, `{"model":"gpt-6-astra","input":"test","max_output_tokens":12}`, "", "session", 400},
+		{"codex header", 42, `{"model":"gpt-6-astra","input":"test"}`, `{"turn_id":"fixture"}`, "", 503},
+		{"codex body", 42, `{"model":"gpt-6-astra","input":"test","client_metadata":{}}`, "", "", 503},
+		{"foreign continuation", 42, `{"model":"gpt-6-astra","input":"test","previous_response_id":"foreign"}`, "", "session", 503},
+		{"output limit", 42, `{"model":"gpt-6-astra","input":"test","max_output_tokens":12}`, "", "session", 503},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -165,10 +165,13 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 		if payload.SessionID != "42:11:fixture-session" && !strings.HasPrefix(payload.SessionID, "42:11:one-shot:") {
 			t.Errorf("unexpected Pi session binding: %q", payload.SessionID)
 		}
-		for _, field := range []string{"previous_response_id", "max_output_tokens", "client_metadata"} {
+		for _, field := range []string{"previous_response_id", "client_metadata"} {
 			if _, present := payload.Request[field]; present {
-				t.Errorf("null %s must not reach Pi runtime", field)
+				t.Errorf("backend-owned %s must not reach Pi runtime", field)
 			}
+		}
+		if limit, ok := payload.Request["max_output_tokens"].(float64); ok && limit != 12 {
+			t.Errorf("max_output_tokens changed in Pi request: %v", limit)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if _, hasTools := payload.Request["tools"]; hasTools {
@@ -196,11 +199,9 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 			c.Request.Header.Set("session-id", "fixture-session")
 		}
 		svc := &OpenAIGatewayService{cfg: &config.Config{}, toolCorrector: NewCodexToolCorrector(), openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
-		request := map[string]any{"model": "gpt-6-astra", "input": "test", "stream": streaming}
+		request := map[string]any{"model": "gpt-6-astra", "input": "test", "stream": streaming, "max_output_tokens": 12,
+			"previous_response_id": "foreign", "client_metadata": map[string]any{"trace": "fixture"}}
 		if !streaming {
-			request["previous_response_id"] = nil
-			request["max_output_tokens"] = nil
-			request["client_metadata"] = nil
 			request["tools"] = []map[string]any{{"type": "function", "name": "echo", "parameters": map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}}}}
 		}
 		body, _ := json.Marshal(request)

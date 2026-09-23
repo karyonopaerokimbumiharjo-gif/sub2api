@@ -67,22 +67,17 @@ test('bindings separate users, accounts, models and credentials, but remain stab
  assert.throws(()=>nativeBody({...request,previous_response_id:'other-user-response'},{}),/unsupported_pi_field/);
  assert.throws(()=>nativeBody({...request,client_metadata:{}},{}),/unsupported_pi_field/);
 });
-test('max_output_tokens is rejected before the Pi SDK contacts upstream',async()=>{
+test('max_output_tokens is accepted and forwarded to the Pi SDK',async()=>{
  const limited={...request,max_output_tokens:64};
- assert.throws(()=>nativeBody(limited,{}),/unsupported_pi_field:max_output_tokens/);
+ assert.equal(nativeBody(limited,{}).max_output_tokens,64);
+ const bytes=Buffer.from(`data: ${completed('resp_limited')}\n\n`);
  let contacted=false;
- await assert.rejects(runNative({...base,request:limited,fetchImpl:()=>{contacted=true;throw Error('must not contact upstream')}}),/unsupported_pi_field:max_output_tokens/);
- assert.equal(contacted,false);
- const secret='a'.repeat(40);
- const server=createRuntime({secret});server.listen(0,'127.0.0.1');await once(server,'listening');
- try {
-  const response=await fetch(`http://127.0.0.1:${server.address().port}/responses`,{
-   method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},
-   body:JSON.stringify({request:limited,access_token:token('account-a'),account_id:'account-a',owner_id:1,credential_id:5,session_id:'limited'}),
-  });
-  assert.equal(response.status,400);
-  assert.deepEqual(await response.json(),{error:'unsupported_pi_field:max_output_tokens'});
- }finally{server.closeAllConnections();await new Promise(r=>server.close(r))}
+ const result=await runNative({...base,request:limited,fetchImpl:async()=>{
+  contacted=true;
+  return new Response(bytes,{headers:{'content-type':'text/event-stream'}});
+ }});
+ assert.equal(contacted,true);
+ assert.equal(result.evidence.terminal_status,'completed');
 });
 test('authenticated readiness probe fails on missing, wrong, or stopped runtime',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'pi-health-'));const secretFile=join(dir,'runtime.secret');

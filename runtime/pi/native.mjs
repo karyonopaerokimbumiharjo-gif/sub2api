@@ -50,7 +50,11 @@ export function scopedSession(secret,owner,credential,account,model,session) {
  if(!owner||!credential||!account||!session)throw Error('missing_session_binding');
  return createHmac('sha256',secret).update(JSON.stringify([owner,credential,account,model,session])).digest('hex');
 }
-const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store']);
+// Keep the accepted subset aligned with the public Responses ingress. The
+// gateway strips backend-owned continuation/metadata fields before this
+// function. max_output_tokens is forwarded unchanged so CPA and Pi expose the
+// same output-limit semantics to callers.
+const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store','max_output_tokens']);
 export function nativeBody(request,defaults) {
  if(!request||typeof request!=='object'||Array.isArray(request))throw Error('invalid_responses_request');
  for(const key of Object.keys(request))if(!allowed.has(key))throw Error(`unsupported_pi_field:${key}`);
