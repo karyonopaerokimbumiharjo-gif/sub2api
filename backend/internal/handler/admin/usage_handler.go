@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 // UsageHandler handles admin usage-related requests
 type UsageHandler struct {
+	jStore         *jruntime.Store
 	usageService   *service.UsageService
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
@@ -648,3 +650,5 @@ func (h *UsageHandler) CancelCleanupTask(c *gin.Context) {
 	logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 清理任务已取消: task=%d operator=%d", taskID, subject.UserID)
 	response.Success(c, gin.H{"id": taskID, "status": service.UsageCleanupStatusCanceled})
 }
+
+func (h *UsageHandler) SetJStore(store *jruntime.Store) { h.jStore = store }

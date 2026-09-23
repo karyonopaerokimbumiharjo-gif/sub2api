@@ -707,8 +707,14 @@ func TestOpenAIWSConnReaderLoop_RealConnAnswersServerPingWhileIdle(t *testing.T)
 	}))
 	defer server.Close()
 
-	ws, _, _, err := newDefaultOpenAIWSClientDialer().Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil, "")
+	// Exercise the reader loop against a local socket. Production routing
+	// validation deliberately rejects localhost and is tested separately.
+	ws := &coderOpenAIWSClientConn{}
+	socket, _, err := coderws.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), &coderws.DialOptions{
+		OnPingReceived: func(context.Context, []byte) bool { ws.upstreamPings.Add(1); return true },
+	})
 	require.NoError(t, err)
+	ws.conn = socket
 	conn := newOpenAIWSConn("rl_real", 1, ws, nil)
 	defer conn.close()
 	require.True(t, conn.hasReaderLoop())

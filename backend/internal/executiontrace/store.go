@@ -19,6 +19,13 @@ const (
 )
 
 type Event struct {
+	Durable            bool    `json:"durable,omitempty"`
+	UserID             int64   `json:"user_id,omitempty"`
+	APIKeyID           int64   `json:"api_key_id,omitempty"`
+	TaskID             string  `json:"task_id,omitempty"`
+	Actor              string  `json:"actor,omitempty"`
+	InputTokens        int64   `json:"input_tokens,omitempty"`
+	OutputTokens       int64   `json:"output_tokens,omitempty"`
 	EventsDropped      int     `json:"events_dropped,omitempty"`
 	ToolResultsSeen    int     `json:"tool_results_seen,omitempty"`
 	ToolResultsOmitted int     `json:"tool_results_omitted,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -17,11 +18,13 @@ const (
 )
 
 type gpt6JRequestMode struct {
-	Enabled bool
+	Enabled     bool
+	BaseModel   string
+	PublicModel string
 }
 
 var (
-	errGPT6JWrongModel        = errors.New("gpt6j mode requires model gpt-6-astra")
+	errGPT6JWrongModel        = errors.New("J execution requires an eligible OpenAI text base model")
 	errGPT6JCompactionRetired = errors.New("Jev context pruning has been removed; use native context management")
 )
 
@@ -37,15 +40,19 @@ func parseGPT6JRequestMode(c *gin.Context, requestedModel string) (gpt6JRequestM
 	c.Request.Header.Del(gpt6JModeHeader)
 	c.Request.Header.Del(gpt6JEnhancedCompactionHeader)
 
-	mode := gpt6JRequestMode{Enabled: modeValue == gpt6JModeValue || strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j")}
+	base, alias := jruntime.BaseModel(strings.TrimSpace(requestedModel))
+	mode := gpt6JRequestMode{Enabled: modeValue == gpt6JModeValue || modeValue == "j" || alias, BaseModel: base, PublicModel: requestedModel}
+
 	if rawEnhanced != "" && !strings.EqualFold(rawEnhanced, "false") && rawEnhanced != "0" {
 		return mode, errGPT6JCompactionRetired
 	}
-	if mode.Enabled && !strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6j") && !strings.EqualFold(strings.TrimSpace(requestedModel), gpt6JUpstreamModel) {
+	if mode.Enabled && !jruntime.EligibleModel(base) {
 		return mode, errGPT6JWrongModel
 	}
 	if mode.Enabled {
 		c.Set(gpt6JContextKey, true)
+		c.Set(service.OpenAIJBaseModelContextKey, base)
 	}
+
 	return mode, nil
 }

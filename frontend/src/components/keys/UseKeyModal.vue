@@ -110,30 +110,14 @@
           </div>
         </div>
 
-        <div
-          v-if="showGPT6JControls"
-          data-testid="gpt6j-controls"
-          class="rounded-lg border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/60 dark:bg-violet-950/20"
-        >
-          <label class="flex cursor-pointer items-start justify-between gap-4">
-            <span class="min-w-0">
-              <span class="block text-sm font-semibold text-gray-900 dark:text-white">GPT-6J</span>
-              <span class="mt-1 block text-xs leading-5 text-gray-600 dark:text-gray-300">
-                {{ locale.startsWith('zh')
-                  ? '兼容入口：当前基础模型为 GPT-6 Astra。安全审计由后台独立配置，通用 J 协作尚未发布。'
-                  : 'Compatibility entry: GPT-6 Astra. Safety is configured independently; general J collaboration is not yet released.' }}
-              </span>
-            </span>
-            <input
-              v-model="gpt6JMode"
-              data-testid="gpt6j-mode-toggle"
-              type="checkbox"
-              class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-          </label>
-
-
-        </div>
+        <JSettingsPanel
+          v-if="showGPT6JControls && show"
+          :api-key-id="apiKeyId"
+          v-model:enabled="gpt6JMode"
+          v-model:base-model="jBaseModel"
+          :models="jBaseModels"
+          @changed="loadCodexModelManifest"
+        />
 
         <!-- OS/Shell Tabs -->
         <div v-if="showShellTabs" class="overflow-x-auto border-b border-gray-200 dark:border-dark-700">
@@ -285,6 +269,7 @@ import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import JSettingsPanel from './JSettingsPanel.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { fetchCodexModelsManifest } from '@/api/codex'
 import type { GroupPlatform } from '@/types'
@@ -297,6 +282,7 @@ import {
 
 interface Props {
   show: boolean
+  apiKeyId?: number
   apiKey: string
   baseUrl: string
   platform: GroupPlatform | null
@@ -323,7 +309,7 @@ interface FileConfig {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const copiedIndex = ref<number | null>(null)
@@ -332,9 +318,10 @@ const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
 const gpt6JMode = ref(false)
+const jBaseModel = ref('')
 
 const showGPT6JControls = computed(() =>
-  props.platform === 'openai' && activeClientTab.value === 'codex'
+  props.platform === 'openai'
 )
 type CodexModelManifestState = 'idle' | 'loading' | 'ready' | 'error'
 const codexModelManifestState = ref<CodexModelManifestState>('idle')
@@ -399,11 +386,9 @@ watch(codexManifestContext, (context, previousContext) => {
 })
 
 // Reset shell tab when client changes
-watch(activeClientTab, (tab) => {
+watch(activeClientTab, () => {
   activeTab.value = 'unix'
-  if (tab !== 'codex') {
-    gpt6JMode.value = false
-  }
+
 })
 
 
@@ -701,6 +686,10 @@ const codexCatalogModelSlugs = computed(() =>
   parseCodexCatalogModels(codexModelManifestContent.value).map((model) => model.slug)
 )
 
+const jBaseModels = computed(() => codexCatalogModelSlugs.value.filter(model =>
+  /^(gpt-|codex-)/.test(model) && model !== 'gpt-6j' && !model.endsWith('-j') && !/(image|audio|realtime|tts|transcribe)/.test(model)
+))
+
 function selectCodexCatalogModel(preferredModel: string): string {
   if (codexCatalogModelSlugs.value.includes(preferredModel)) return preferredModel
   return codexCatalogModelSlugs.value[0] || preferredModel
@@ -978,7 +967,7 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  const model = gpt6JMode.value ? 'gpt-6j' : selectCodexCatalogModel('gpt-5.5')
+  const model = gpt6JMode.value && jBaseModel.value ? `${jBaseModel.value}-j` : selectCodexCatalogModel('gpt-5.5')
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content
@@ -1006,9 +995,6 @@ function generateCodexProviderAuthConfig(apiKey: string): string {
   const headers: Record<string, string> = {}
   if (codexAuthMode.value === 'api-key') {
     headers['x-openai-actor-authorization'] = 'local-image-extension'
-  }
-  if (gpt6JMode.value) {
-    headers['X-Sub2API-Model-Mode'] = 'gpt6j'
   }
   const headerLine = Object.keys(headers).length
     ? `\nhttp_headers = { ${Object.entries(headers)

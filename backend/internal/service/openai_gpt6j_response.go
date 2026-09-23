@@ -12,11 +12,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-var errGPT6JResponseModel = errors.New("GPT-6J upstream response did not confirm gpt-6-astra")
+var errGPT6JResponseModel = errors.New("GPT-6J upstream response did not confirm the selected base model")
 
 const gpt6JResponseLimit = 16 << 20
 
 type gpt6JResponseGuard struct {
+	expected string
 	verified bool
 	terminal bool
 }
@@ -31,7 +32,10 @@ func (g *gpt6JResponseGuard) event(data []byte) error {
 		model = gjson.GetBytes(data, "model").String()
 	}
 	if model != "" {
-		if model != "gpt-6-astra" {
+		if g.expected == "" {
+			g.expected = "gpt-6-astra"
+		}
+		if model != g.expected {
 			return errGPT6JResponseModel
 		}
 		g.verified = true
@@ -60,7 +64,7 @@ func guardGPT6JHTTPResponse(c *gin.Context, resp *http.Response) error {
 		return nil
 	}
 	if isEventStreamResponse(resp.Header) {
-		body := &gpt6JStreamBody{source: resp.Body, reader: bufio.NewReader(resp.Body)}
+		body := &gpt6JStreamBody{source: resp.Body, reader: bufio.NewReader(resp.Body), guard: gpt6JResponseGuard{expected: jExpectedBase(c)}}
 		// Validate the first data event before downstream headers or text are sent.
 		for !body.guard.verified && !body.guard.terminal {
 			frame, err := body.frame()
@@ -79,7 +83,7 @@ func guardGPT6JHTTPResponse(c *gin.Context, resp *http.Response) error {
 	if err != nil {
 		return err
 	}
-	if len(data) > gpt6JResponseLimit || !gjson.ValidBytes(data) || gjson.GetBytes(data, "model").String() != "gpt-6-astra" {
+	if len(data) > gpt6JResponseLimit || !gjson.ValidBytes(data) || gjson.GetBytes(data, "model").String() != jExpectedBase(c) {
 		return errGPT6JResponseModel
 	}
 	_ = resp.Body.Close()

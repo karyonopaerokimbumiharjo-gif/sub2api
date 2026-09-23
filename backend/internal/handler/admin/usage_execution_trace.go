@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -21,5 +22,18 @@ func (h *UsageHandler) ExecutionTrace(c *gin.Context) {
 		}
 		limit = parsed
 	}
-	response.Success(c, executiontrace.Default.List(c.Query("request_id"), limit))
+	events := executiontrace.Default.List(c.Query("request_id"), limit)
+	if h.jStore != nil {
+		durable, err := h.jStore.ListEvents(c.Request.Context(), c.Query("request_id"), limit)
+		if err != nil {
+			response.Error(c, 503, "Execution history is unavailable")
+			return
+		}
+		events = append(events, durable...)
+		sort.SliceStable(events, func(i, j int) bool { return events[i].Time > events[j].Time })
+		if len(events) > limit {
+			events = events[:limit]
+		}
+	}
+	response.Success(c, events)
 }

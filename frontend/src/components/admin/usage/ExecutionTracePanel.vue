@@ -1,8 +1,8 @@
 <template>
   <details class="card p-4" @toggle="onToggle">
-    <summary class="cursor-pointer font-semibold">GPT-6J 调用详情</summary>
+    <summary class="cursor-pointer font-semibold">J 调用详情</summary>
     <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">
-      显示本实例最近 6 小时的请求阶段、独立安全审计结论与 GPT 上游结果。工具由客户端执行；这里只标记客户端回传的工具结果，不保存提示词、工具输出或凭据。流式 HTTP 200 仍需结合失败步骤判断。
+      J 执行步骤保存 90 天，显示实际模型、账号、工具调用和 Token 用量。旧版请求诊断保留 6 小时。这里只展示执行元数据；流式 HTTP 200 仍需结合最终状态判断。
     </p>
     <div class="my-3 flex flex-wrap gap-2">
       <input
@@ -17,7 +17,7 @@
     <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
     <p v-else-if="loading" class="text-sm text-gray-500">正在读取...</p>
     <p v-else-if="!groups.length" class="text-sm text-gray-500">
-      暂无记录。这里只显示此版本上线后、本实例内存中保留的请求。
+      暂无记录。可按 J 任务 ID、子调用请求 ID 或旧版请求 ID 查询。
     </p>
     <details v-for="group in groups" :key="group.id" class="my-2 rounded-lg border p-3">
       <summary class="cursor-pointer break-all text-sm">
@@ -29,10 +29,11 @@
           <span v-if="event.model"> · {{ event.model }}</span>
           <span v-if="event.actual_model"> · 实际返回 {{ event.actual_model }}</span>
           <span v-if="event.account_id"> · 账号 #{{ event.account_id }}</span>
+          <p v-if="event.durable">持久化记录 · {{ event.actor || '运行时' }} · 用户 #{{ event.user_id }} · Key #{{ event.api_key_id }} · 输入 {{ event.input_tokens || 0 }} / 输出 {{ event.output_tokens || 0 }} Token</p>
           <p v-if="event.events_dropped">诊断容量受限，省略 {{ event.events_dropped }} 条中间记录；保留终态。</p>
           <p v-if="event.history_sample">历史窗口采样<span v-if="event.tool_results_seen">：发现 {{ event.tool_results_seen }} 条，省略 {{ event.tool_results_omitted || 0 }} 条较旧结果</span>，不代表本轮实际执行。</p>
-          <p v-if="event.tool">工具结果类型：{{ event.tool }}</p>
-          <p v-if="event.call_id" class="break-all">工具调用标识摘要：{{ event.call_id }}</p>
+          <p v-if="event.tool">工具：{{ event.tool }}</p>
+          <p v-if="event.call_id" class="break-all">调用标识：{{ event.call_id }}</p>
           <p v-if="event.response_id" class="break-all">响应 ID：{{ event.response_id }}</p>
           <p v-if="event.reason">结果代码：{{ event.reason }}</p>
           <p v-if="event.duration_ms">耗时 {{ event.duration_ms }} ms</p>
@@ -48,6 +49,12 @@ import { computed, ref } from 'vue'
 import apiClient from '@/api/client'
 
 type TraceEvent = {
+  durable?: boolean
+  actor?: string
+  user_id?: number
+  api_key_id?: number
+  input_tokens?: number
+  output_tokens?: number
   events_dropped?: number
   history_sample?: boolean
   tool_results_seen?: number
@@ -71,7 +78,14 @@ const requestID = ref('')
 const loading = ref(false)
 const error = ref('')
 const labels: Record<string, string> = {
-  request: '收到 GPT-6J 请求',
+  request: '收到 J 请求',
+  decision_start: 'Jev 开始决策',
+  decision: 'Jev 决策结果',
+  model_call_start: '基础模型开始调用',
+  model_call: '基础模型实际返回',
+  tool_dispatch: '工具已授权，等待执行',
+  tool_result: '工具执行完成',
+  execution_end: 'J 任务终态',
   client_tool_result: '收到客户端工具结果',
   guard_result: '独立安全审计结论',
   gpt_handoff: '交由 GPT 上游处理',

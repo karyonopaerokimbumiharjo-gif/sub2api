@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -72,6 +73,11 @@ func GroupModelAllowlist() gin.HandlerFunc {
 
 		blocked := ""
 		for _, candidate := range models {
+			if c.GetBool("sub2api.j.catalog") {
+				if base, alias := jruntime.BaseModel(candidate); alias {
+					candidate = base
+				}
+			}
 			if !allowlist.Allows(candidate) {
 				blocked = candidate
 				break

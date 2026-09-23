@@ -30,7 +30,7 @@ func TestGPT6JRejectsWrongModelAndStandaloneCompression(t *testing.T) {
 		req := httptest.NewRequest("POST", "/openai/v1/responses", nil)
 		req.Header.Set(gpt6JModeHeader, "gpt6j")
 		c.Request = req
-		_, err := parseGPT6JRequestMode(c, "gpt-5.6-sol")
+		_, err := parseGPT6JRequestMode(c, "gpt-image-2")
 		require.ErrorIs(t, err, errGPT6JWrongModel)
 	})
 	t.Run("enhanced without mode", func(t *testing.T) {

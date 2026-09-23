@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"database/sql"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -11,6 +13,7 @@ import (
 
 // ProvideAdminHandlers creates the AdminHandlers struct
 func ProvideAdminHandlers(
+	jStore *jruntime.Store,
 	dashboardHandler *admin.DashboardHandler,
 	userHandler *admin.UserHandler,
 	groupHandler *admin.GroupHandler,
@@ -50,6 +53,7 @@ func ProvideAdminHandlers(
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 ) *AdminHandlers {
+	usageHandler.SetJStore(jStore)
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	return &AdminHandlers{
@@ -118,6 +122,7 @@ func ProvideGatewayHandler(
 }
 
 func ProvideOpenAIGatewayHandler(
+	jStore *jruntime.Store,
 	gatewayService *service.OpenAIGatewayService,
 	pluginManager *service.PluginManager,
 	concurrencyService *service.ConcurrencyService,
@@ -136,6 +141,7 @@ func ProvideOpenAIGatewayHandler(
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
+	h.jStore = jStore
 	return h
 }
 
@@ -224,11 +230,27 @@ func ProvideHandlers(
 }
 
 // ProviderSet is the Wire provider set for all handlers
+func ProvideAPIKeyHandler(service *service.APIKeyService, store *jruntime.Store) *APIKeyHandler {
+	h := NewAPIKeyHandler(service)
+	h.jStore = store
+	return h
+}
+
+func ProvideJStore(db *sql.DB, cfg *config.Config) (*jruntime.Store, error) {
+	store, err := jruntime.NewStore(db, cfg.JWT.Secret)
+	if err != nil {
+		return nil, err
+	}
+	store.StartJanitor()
+	return store, nil
+}
+
 var ProviderSet = wire.NewSet(
+	ProvideJStore,
 	// Top-level handlers
 	NewAuthHandler,
 	NewUserHandler,
-	NewAPIKeyHandler,
+	ProvideAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,
 	NewSubscriptionHandler,

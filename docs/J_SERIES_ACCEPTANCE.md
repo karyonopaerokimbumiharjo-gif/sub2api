@@ -9,6 +9,35 @@ Pi; no vm2api dependency, binary, service, or third backend is to be introduced.
 Baseline: `96bfe6093`; Acer initially runs `0.2.7-pi.9-jev-audit`.
 This is an implementation ledger, not a declaration of production completion.
 
+## Current checkpoint (2026-09-23)
+
+Production is `0.2.7-pi.13-account-controls`. The pi.12 candidate briefly exposed
+an endpoint-capability mismatch and was rolled back; pi.13 separates text Responses
+from Chat eligibility. After deployment and manual credential refresh, a public
+Sol request returned the expected model and terminal answer. Fresh OAuth and the
+rotated credential were preserved throughout. No database restore was used.
+
+The next J candidate implements a selected-base runtime, finite Jev decisions,
+base-owned phases and explicit return handoff, bounded tools, encrypted durable
+task replay, per-key settings, derived model catalogues, HTTP continuation and
+administrator execution history. It is **not yet deployed or live-accepted**.
+The local bridge uses MCP discovery with pinned schemas, local resource grants,
+R2/R3 interactive approval and cancellation checks. Unknown effects are not retried.
+J WebSocket transport is not implemented; HTTP Responses is the integration path.
+Native base-model WebSocket and compaction remain outside J orchestration.
+
+Validation at this checkpoint: 2,257 frontend tests across 304 files, frontend
+production build, backend build, targeted J/Pi/stream race tests, actual PostgreSQL
+ownership/replay/expiry checks, and four bridge tests including a real local MCP
+file read. The formerly failing local ping fixture now tests the reader loop
+directly without bypassing the production CPA routing guard.
+
+Still outstanding: real gateway J loops through two base models and both supported
+backends, two distinct live users, integrated deployment/rollback, comprehensive
+backend legacy-fixture reconciliation, performance comparison, and the Safety
+catalog/B0-B4/output gate/research-profile work listed below. Jev token usage is
+recorded separately; no unconfigured Jev dollar price is invented.
+
 ## Implemented in this candidate
 
 - Remove Jev keep/drop context pruning and its client control. Preserve native compaction.

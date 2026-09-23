@@ -24,6 +24,8 @@ vi.mock('file-saver', () => ({
   saveAs: saveAsMock
 }))
 
+vi.mock('@/api/client', () => ({ default: { get: vi.fn(), put: vi.fn() } }))
+
 import UseKeyModal from '../UseKeyModal.vue'
 
 function readBlobAsText(blob: Blob): Promise<string> {

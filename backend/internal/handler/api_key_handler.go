@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -20,6 +21,7 @@ import (
 
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
+	jStore        *jruntime.Store
 	apiKeyService *service.APIKeyService
 }
 

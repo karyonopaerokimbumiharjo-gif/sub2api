@@ -52,7 +52,7 @@ jobs:
         run: go build ./...
       - name: Unit and race tests
         working-directory: backend
-        run: go test -tags unit -race -count=1 ./internal/securityaudit/... ./internal/handler/... ./internal/service/... ./internal/executiontrace/... ./internal/pkg/sseparse/... ./internal/pkg/piruntime/... ./migrations/...
+        run: go test -tags unit -race -count=1 ./internal/jruntime/... ./internal/securityaudit/... ./internal/handler/... ./internal/service/... ./internal/executiontrace/... ./internal/pkg/sseparse/... ./internal/pkg/piruntime/... ./migrations/...
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -77,3 +77,21 @@ jobs:
       - name: Frontend regression tests
         working-directory: frontend
         run: pnpm test:run
+
+  tool-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: tools/j-bridge
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tools/j-bridge/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test

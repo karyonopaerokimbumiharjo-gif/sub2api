@@ -18,6 +18,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/executiontrace"
+	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -35,6 +36,7 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
+	jStore                     *jruntime.Store
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
@@ -466,6 +468,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	var jPinnedAccount int64
 	gpt6jMode, gpt6jErr := parseGPT6JRequestMode(c, reqModel)
 	if gpt6jErr != nil {
 		reqLog.Warn("openai.gpt6j_request_invalid", zap.Error(gpt6jErr))
@@ -473,6 +476,41 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	if gpt6jMode.Enabled {
+		if legacyCompact || nativeV2 {
+			h.errorResponse(c, 400, "invalid_request_error", "J execution uses full-input Responses requests; native compaction uses the base model directly")
+			return
+		}
+		body = normalizeJBody(body, gpt6jMode)
+		reqModel = gpt6jMode.BaseModel
+		if h.jStore == nil {
+			h.errorResponse(c, 503, "j_execution_error", "J storage unavailable")
+			return
+		}
+		binding := jruntime.Binding{UserID: apiKey.UserID, KeyID: apiKey.ID, SessionID: jSession(c, body), BaseModel: reqModel}
+		var expandErr error
+		body, jPinnedAccount, expandErr = h.jStore.Expand(c.Request.Context(), binding, body)
+		if expandErr != nil {
+			h.errorResponse(c, 409, "j_continuation_error", "J response is expired or belongs to another key, session or model")
+			return
+		}
+		callAccount, callErr := h.jStore.ClientCallAccount(c.Request.Context(), binding, body)
+		if callErr != nil || (callAccount > 0 && jPinnedAccount > 0 && callAccount != jPinnedAccount) {
+			h.errorResponse(c, 409, "j_continuation_error", "J tool result does not match this conversation")
+			return
+		}
+		if callAccount > 0 {
+			jPinnedAccount = callAccount
+		}
+		if task := strings.TrimSpace(c.GetHeader("Idempotency-Key")); task != "" {
+			priorAccount, lookupErr := h.jStore.ExistingAccount(c.Request.Context(), apiKey.UserID, apiKey.ID, task)
+			if lookupErr != nil || (priorAccount > 0 && jPinnedAccount > 0 && priorAccount != jPinnedAccount) {
+				h.errorResponse(c, 409, "j_execution_error", "J task binding conflict")
+				return
+			}
+			if priorAccount > 0 {
+				jPinnedAccount = priorAccount
+			}
+		}
 		defer beginGPT6JTrace(c, body)()
 
 		c.Header("X-Sub2API-Model-Mode", gpt6JModeValue)
@@ -744,6 +782,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
+		if jPinnedAccount > 0 && account.ID != jPinnedAccount {
+			failedAccountIDs[account.ID] = struct{}{}
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+				selection.ReleaseFunc = nil
+			}
+			continue
+		}
 		if previousResponseID != "" && requestPlatform == service.PlatformOpenAI && !account.IsOpenAIApiKey() {
 			// The public Responses HTTP API supports previous_response_id on API-key
 			// accounts. OAuth/SetupToken upstreams do not, so keep searching instead
@@ -804,6 +850,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if gpt6jMode.Enabled {
+				return h.forwardJ(c, apiKey, account, attemptBody, gpt6jMode)
+			}
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
 
@@ -840,7 +889,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// #5148 对齐：错误返回携带的部分 result（流中断前上游已计量的 usage）照常
 		// 入账；failover 错误恒定 result=nil，不会重复计费。
 		submitResponsesUsage := func(res *service.OpenAIForwardResult) {
-			if res == nil {
+			if res == nil || res.UsageRecordedInternally {
 				return
 			}
 			stampOpenAIRequestedReasoningEffort(res, c)
@@ -2449,8 +2498,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
-	if gpt6jMode.Enabled && reqModel != gpt6JUpstreamModel {
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, errGPT6JWrongModel.Error())
+	if _, alias := jruntime.BaseModel(reqModel); gpt6jMode.Enabled || alias {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "J execution requires POST /v1/responses")
 		return
 	}
 	// 分组级模型白名单：首帧校验客户端模型，不通过则关闭连接并标记运维原因。
@@ -2877,7 +2926,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if model == "" {
 					model = reqModel
 				}
-				if gpt6jMode.Enabled && model != gpt6JUpstreamModel {
+				if _, alias := jruntime.BaseModel(model); gpt6jMode.Enabled || alias {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, errGPT6JWrongModel.Error(), nil)
 				}
 				// 分组级模型白名单：后续 turn 同样校验客户端模型（省略 model 时
