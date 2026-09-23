@@ -251,8 +251,11 @@ func buildPromptSnapshot(req Request, extracted, audited []promptSegment) (Promp
 	cleanedAuditSegments := cleanRuntimeAuditPromptSegments(audited)
 	if req.RequireJev {
 		// Runtime-looking tags are still client-controlled evidence. GPT-6J never
-		// strips them or relies on the optional incremental allow cache.
-		cleanedAuditSegments = normalizedPromptSegments(audited)
+		// strips them or relies on the optional incremental allow cache. The
+		// known Grok CLI envelope is a fixed system policy, however; retaining it
+		// beside every user turn causes Jev to classify client policy prose as the
+		// requested action, so apply the same narrow filter used by other J calls.
+		cleanedAuditSegments = removeGrokRuntimeSystemSegments(normalizedPromptSegments(audited))
 	}
 	if len(fullSegments) == 0 || len(cleanedAuditSegments) == 0 {
 		return PromptSnapshot{}, ErrNoPromptText
@@ -343,25 +346,35 @@ func cleanRuntimeAuditSegment(value string) string {
 }
 
 func cleanRuntimeAuditPromptSegments(values []promptSegment) []promptSegment {
-	normalized := normalizedPromptSegments(values)
+	normalized := removeGrokRuntimeSystemSegments(normalizedPromptSegments(values))
 	// The Grok CLI system policy is a fixed client runtime envelope. It is
 	// useful evidence when it is the only audited segment (the deterministic
 	// benign-runtime policy handles that case), but including it beside every
 	// user turn makes the semantic auditor repeatedly classify tool policy
 	// prose as if it were the requested action. Keep the complete envelope in
 	// FullPrompt while removing it from the mixed classifier input.
-	keepGrokRuntime := len(normalized) == 1
 	cleaned := make([]promptSegment, 0, len(values))
 	for _, value := range normalized {
-		if !keepGrokRuntime && strings.EqualFold(strings.TrimSpace(value.role), "system") && isGrokRuntimeSystemPrompt(value.text) {
-			continue
-		}
 		value.text = cleanRuntimeAuditPromptSegment(value)
 		if value.text != "" {
 			cleaned = append(cleaned, value)
 		}
 	}
 	return cleaned
+}
+
+func removeGrokRuntimeSystemSegments(values []promptSegment) []promptSegment {
+	if len(values) <= 1 {
+		return values
+	}
+	filtered := make([]promptSegment, 0, len(values))
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value.role), "system") && isGrokRuntimeSystemPrompt(value.text) {
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+	return filtered
 }
 
 // cleanRuntimeAuditPromptSegment removes only strongly identified client
