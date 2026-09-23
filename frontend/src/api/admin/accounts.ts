@@ -1026,6 +1026,21 @@ export interface OpenAIQuotaAutoResetSettings {
   enabled: boolean
 }
 
+export type OpenAIExecutionBackend = 'cpa' | 'pi'
+
+/** Switches one OpenAI account's execution harness while reusing its OAuth. */
+export async function switchOpenAIExecutionBackend(
+  id: number,
+  backend: OpenAIExecutionBackend,
+  piOwnerUserId?: number
+): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/openai/accounts/${id}/switch-backend`, {
+    backend,
+    ...(backend === 'pi' && piOwnerUserId ? { pi_owner_user_id: piOwnerUserId } : {})
+  })
+  return data
+}
+
 /**
  * Query the upstream quota AND persist the reset-credit snapshot on the account
  * so the card can be rehydrated without an upstream round-trip. It is a POST
@@ -1215,6 +1230,7 @@ export const accountsAPI = {
   revertProxyFallback,
   refreshOpenAIQuota,
   resetOpenAIQuota,
+  switchOpenAIExecutionBackend,
   createSparkShadow,
   getUpstreamBillingProbeSettings,
   updateUpstreamBillingProbeSettings,

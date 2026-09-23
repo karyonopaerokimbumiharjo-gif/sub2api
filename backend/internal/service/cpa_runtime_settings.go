@@ -57,6 +57,63 @@ func cpaAuthMetadata(ctx context.Context, cfg openAIQuotaBridgeConfig, name stri
 	return data, err
 }
 
+// LoadCPAOAuthCredentials reads the already-authorized Codex file from CPA for
+// a bound business account. It is used only for an explicit CPA ↔ Pi backend
+// switch; it never returns the material through an API response. Keeping this
+// path in the service also makes the identity/email binding checks identical to
+// quota reads and prevents selecting an arbitrary pool member.
+func (s *OpenAIQuotaService) LoadCPAOAuthCredentials(ctx context.Context, account *Account) (map[string]any, error) {
+	if account == nil || !account.IsOpenAICompatibleQuotaBridge() {
+		return nil, infraerrors.BadRequest("OPENAI_CPA_ACCOUNT_REQUIRED", "只能切换已绑定的 CPA OpenAI 账号")
+	}
+	config, identity, err := s.prepareOpenAIQuotaBridge(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := cpaAuthMetadata(ctx, config, strings.TrimSpace(account.GetExtraString(OpenAIQuotaBridgeAuthNameExtraKey)))
+	if err != nil {
+		return nil, err
+	}
+	credentials := make(map[string]any, len(metadata)+8)
+	for key, value := range metadata {
+		credentials[key] = value
+	}
+	// CPA releases have used both flat fields and a nested token object. Accept
+	// both shapes while preserving the source map only inside the service.
+	token, tokenOK := metadata["token"].(map[string]any)
+	if !tokenOK {
+		token, tokenOK = metadata["tokens"].(map[string]any)
+	}
+	if tokenOK {
+		for _, key := range []string{"access_token", "refresh_token", "id_token", "expires_at", "expired", "account_id", "email", "client_id"} {
+			if _, exists := credentials[key]; !exists {
+				if value, exists := token[key]; exists {
+					credentials[key] = value
+				}
+			}
+		}
+	}
+	if _, ok := credentials["chatgpt_account_id"]; !ok || strings.TrimSpace(openAICPACredentialString(credentials, "chatgpt_account_id")) == "" {
+		credentials["chatgpt_account_id"] = identity.chatGPTAccountID
+	}
+	if _, ok := credentials["email"]; !ok || strings.TrimSpace(openAICPACredentialString(credentials, "email")) == "" {
+		credentials["email"] = account.GetExtraString(OpenAIQuotaBridgeAuthEmailExtraKey)
+	}
+	if _, ok := credentials["expires_at"]; !ok {
+		if expired := openAICPACredentialString(credentials, "expired"); expired != "" {
+			credentials["expires_at"] = expired
+		} else if expiry := openAICPACredentialString(credentials, "expiry"); expiry != "" {
+			credentials["expires_at"] = expiry
+		}
+	}
+	for _, key := range []string{"access_token", "refresh_token", "id_token", "chatgpt_account_id", "email", "expires_at"} {
+		if strings.TrimSpace(openAICPACredentialString(credentials, key)) == "" {
+			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CPA_AUTH_INCOMPLETE", "CPA 授权文件缺少可切换所需的 OAuth 凭据，请先在 CPA 中重新验证")
+		}
+	}
+	return credentials, nil
+}
+
 func cpaNumber(m map[string]any, key string, fallback int) int {
 	switch v := m[key].(type) {
 	case float64:

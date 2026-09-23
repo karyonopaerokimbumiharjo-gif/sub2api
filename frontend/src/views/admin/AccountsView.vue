@@ -481,7 +481,7 @@
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <CPACredentialsModal :auth-name="selectedCPAAuth" :show="showCPA" @close="showCPA = false" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" @switch-backend="handleSwitchBackend" />
     <CreateAccountModal :show="showImportData" :groups="groups" :current-user-id="authStore.user?.id" @close="showImportData = false" @created="reload()" />
     <BulkEditAccountModal
       :show="showBulkEdit"
@@ -1697,6 +1697,7 @@ function getOpenAIAuthMode(row: any): string | undefined {
 function getOpenAIExecutionBackend(row: AccountListItem): 'pi' | 'cpa' | null {
   if (row.platform !== 'openai') return null
   if (row.type === 'oauth' && row.credentials?.harness_kind === 'pi') return 'pi'
+  if (row.type === 'oauth') return 'cpa'
   if (row.type === 'apikey' && (row.extra?.cpa_auth_id || row.extra?.cpa_identity)) return 'cpa'
   return null
 }
@@ -1746,7 +1747,6 @@ function accountHomepageUrl(row: Account): string {
 type OpenAICompactBadgeState = 'active' | 'blocked' | 'auto'
 
 function getOpenAICompactState(row: any): OpenAICompactBadgeState | null {
-  if (getOpenAIExecutionBackend(row) === 'pi') return 'blocked'
   if (row.platform !== 'openai' || (row.type !== 'oauth' && row.type !== 'apikey')) return null
   const extra = row.extra as Record<string, unknown> | undefined
   const mode = typeof extra?.openai_compact_mode === 'string' ? extra.openai_compact_mode : 'auto'
@@ -2365,6 +2365,27 @@ const handleSchedule = async (a: Account) => {
 }
 const closeSchedulePanel = () => { showSchedulePanel.value = false; scheduleAcc.value = null; scheduleModelOptions.value = [] }
 const handleReAuth = (a: Account) => { reAuthAcc.value = a; showReAuth.value = true }
+const backendSwitching = ref<number | null>(null)
+const handleSwitchBackend = async (payload: { account: Account; backend: 'cpa' | 'pi' }) => {
+  const { account, backend } = payload
+  if (!account || backendSwitching.value === account.id) return
+  backendSwitching.value = account.id
+  try {
+    const updated = await adminAPI.accounts.switchOpenAIExecutionBackend(
+      account.id,
+      backend,
+      backend === 'pi' ? authStore.user?.id : undefined
+    )
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(backend === 'pi' ? t('admin.accounts.switchToPiSuccess') : t('admin.accounts.switchToCpaSuccess'))
+  } catch (error: any) {
+    console.error('Failed to switch OpenAI execution backend:', error)
+    appStore.showError(error?.response?.data?.message || t('admin.accounts.switchBackendFailed'))
+  } finally {
+    backendSwitching.value = null
+  }
+}
 const duplicatingAccountIDs = new Set<number>()
 const handleDuplicateAccount = async (a: Account) => {
   if (duplicatingAccountIDs.has(a.id)) return

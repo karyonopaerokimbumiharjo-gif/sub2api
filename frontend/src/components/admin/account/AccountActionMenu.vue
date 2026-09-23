@@ -38,6 +38,15 @@
                 {{ t('admin.accounts.refreshToken') }}
               </button>
             </template>
+            <button
+              v-if="openAIBackendSwitchTarget"
+              :data-testid="'switch-openai-backend'"
+              @click="$emit('switch-backend', { account, backend: openAIBackendSwitchTarget }); $emit('close')"
+              class="flex w-full items-center gap-2 px-4 py-2 text-sm text-violet-600 hover:bg-gray-100 dark:hover:bg-dark-700"
+            >
+              <Icon name="sync" size="sm" />
+              {{ openAIBackendSwitchTarget === 'pi' ? t('admin.accounts.switchToPi') : t('admin.accounts.switchToCpa') }}
+            </button>
             <button v-if="isOpenAIOAuthParent" @click="$emit('create-spark-shadow', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-amber-600 hover:bg-gray-100 dark:hover:bg-dark-700">
               <Icon name="sparkles" size="sm" />
               {{ t('admin.accounts.createSparkShadow') }}
@@ -70,7 +79,7 @@ import { Icon } from '@/components/icons'
 import type { Account } from '@/types'
 
 const props = defineProps<{ show: boolean; account: Account | null; anchorRect: DOMRect | null }>()
-const emit = defineEmits(['close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow'])
+const emit = defineEmits(['close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow', 'switch-backend'])
 const { t } = useI18n()
 const menuRef = ref<HTMLElement | null>(null)
 const { width: viewportWidth, height: viewportHeight } = useWindowSize()
@@ -137,6 +146,13 @@ const hasRecoverableState = computed(() => {
 })
 const isAntigravityOAuth = computed(() => props.account?.platform === 'antigravity' && props.account?.type === 'oauth')
 const isOpenAIOAuth = computed(() => props.account?.platform === 'openai' && props.account?.type === 'oauth')
+const openAIBackendSwitchTarget = computed<'cpa' | 'pi' | null>(() => {
+  const account = props.account
+  if (!account || account.platform !== 'openai' || account.parent_account_id != null) return null
+  if (account.type === 'oauth') return account.credentials?.harness_kind === 'pi' ? 'cpa' : 'pi'
+  if (account.type === 'apikey' && (account.extra?.cpa_identity || account.extra?.openai_quota_via_compatible_upstream === true)) return 'pi'
+  return null
+})
 // 影子账号(链接型,持 parent_account_id)不持凭据、type 不可变,凭据/隐私类操作对其无效。
 const isShadow = computed(() => props.account?.parent_account_id != null)
 // A "parent" OpenAI OAuth account is one that is NOT itself a shadow (parent_account_id == null)

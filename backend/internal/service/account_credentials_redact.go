@@ -6,7 +6,7 @@ var SensitiveCredentialKeys = []string{
 	// OAuth
 	"access_token", "refresh_token", "id_token", "agent_private_key",
 	// API Key 类
-	"api_key", "session_key", "cookie",
+	"api_key", "session_key", "cookie", "cpa_bridge_api_key", "cpa_bridge_base_url",
 	// Grok Web SSO / password (must never persist or echo after Build OAuth)
 	"password", "sso_token", "sso", "sso-rw", "clearTextPassword",
 	// 云服务凭据
@@ -41,7 +41,14 @@ func MergePreservingSensitiveCreds(existing, incoming map[string]any) map[string
 		out[k] = v
 	}
 	for _, key := range SensitiveCredentialKeys {
-		if _, hasIncoming := incoming[key]; hasIncoming {
+		if value, hasIncoming := incoming[key]; hasIncoming {
+			// Internal backend switches use an explicit null marker to remove a
+			// credential family after the replacement has been validated. Ordinary
+			// UI edits never send null for secrets, so the historical preserve
+			// behavior remains unchanged for all normal updates.
+			if value == nil {
+				delete(out, key)
+			}
 			continue
 		}
 		if existingVal, ok := existing[key]; ok {

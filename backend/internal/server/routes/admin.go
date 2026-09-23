@@ -467,6 +467,7 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		openai.POST("/import-cpa-files", h.Admin.OpenAIOAuth.ImportCPAAccounts)
 		openai.GET("/cpa/bridge-options", h.Admin.OpenAIOAuth.CPABridgeOptions)
 		openai.POST("/ensure-cpa-bridge", h.Admin.OpenAIOAuth.EnsureCPAQuotaBridge)
+		openai.POST("/accounts/:id/switch-backend", h.Admin.OpenAIOAuth.SwitchExecutionBackend)
 		openai.POST("/accounts/:id/refresh", h.Admin.OpenAIOAuth.RefreshAccountToken)
 		openai.POST("/create-from-oauth", adminhandler.DirectAccountBackendRemoved)
 		openai.POST("/create-from-codex-pat", adminhandler.DirectAccountBackendRemoved)
