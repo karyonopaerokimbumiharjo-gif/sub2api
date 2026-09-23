@@ -250,9 +250,16 @@ func TestNativePiSharedCredentialRequiresGroupAuthorizationAndSeparatesSessions(
 		}
 		key.User.AllowedGroups = []int64{9}
 		key.Group.IsExclusive = false
-		if _, err := piRequestOwner(c, account); err == nil {
-			t.Fatal("public group accepted")
+		if _, err := piRequestOwner(c, account); err != nil {
+			t.Fatalf("authorized public group rejected: %v", err)
 		}
+		key.User.RestrictPublicGroups = true
+		key.User.AllowedGroups = nil
+		if _, err := piRequestOwner(c, account); err == nil {
+			t.Fatal("restricted public group accepted without authorization")
+		}
+		key.User.AllowedGroups = []int64{9}
+
 		key.Group.IsExclusive = true
 		key.Group.ID = 10
 		if _, err := piRequestOwner(c, account); err == nil {

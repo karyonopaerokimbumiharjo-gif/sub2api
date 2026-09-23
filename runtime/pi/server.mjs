@@ -9,7 +9,7 @@ import {runNative,credentialAccount,closeSessions} from './native.mjs';
 
 // A read-only upstream request validates the currently usable access token
 // without rotating the refresh token shared with the operator's local auth.json.
-export async function validateCodexAccess({accessToken,accountId,fetchImpl=fetch}) {
+export async function fetchCodexModels({accessToken,accountId,fetchImpl=fetch}) {
  if(typeof accessToken!=='string'||typeof accountId!=='string'||credentialAccount(accessToken)!==accountId)throw Error('oauth_account_mismatch');
  const response=await fetchImpl('https://chatgpt.com/backend-api/codex/models?client_version=0.144.0',{
   method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),
@@ -19,10 +19,13 @@ export async function validateCodexAccess({accessToken,accountId,fetchImpl=fetch
  if(!response.ok)throw Error('oauth_access_rejected');
  const manifest=await response.json();
  if(!manifest||!Array.isArray(manifest.models))throw Error('oauth_access_invalid_response');
- return accountId;
+ return manifest;
+}
+export async function validateCodexAccess(options) {
+ await fetchCodexModels(options);return options.accountId;
 }
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess}) {
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))};
@@ -96,6 +99,11 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     const account=await verifyAccess({accessToken:body.access_token,accountId:body.account_id});
     if(account!==body.account_id)throw Error('oauth_account_mismatch');
     json(res,200,{chatgpt_account_id:account,harness_kind:'pi',pi_owner_user_id:String(body.owner_id)});return;
+   }
+   if(req.url==='/models') {
+    if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
+    const manifest=await loadModels({accessToken:body.access_token,accountId:body.account_id});
+    json(res,200,manifest);return;
    }
    if(req.url==='/responses') {
     const abort=new AbortController();const timeout=setTimeout(()=>abort.abort(),120000);

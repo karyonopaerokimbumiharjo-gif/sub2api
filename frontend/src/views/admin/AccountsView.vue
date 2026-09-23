@@ -434,8 +434,9 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
-              <button v-if="row.extra?.cpa_identity" type="button" class="btn btn-secondary text-xs" :disabled="cpaEnabling === row.id" @click="handleCPAEnabled(row)">{{ row.status === 'active' ? '停用账号' : '启用账号' }}</button>
+              <button v-if="getOpenAIExecutionBackend(row)" type="button" class="btn btn-secondary text-xs" :disabled="executionEnabling === row.id" @click="handleExecutionEnabled(row)">{{ row.status === 'active' ? '停用账号' : '启用账号' }}</button>
               <button v-if="row.extra?.cpa_identity" class="btn btn-secondary text-xs" @click="selectedCPAAuth = String(row.extra.openai_quota_bridge_auth_name || ''); showCPA = true">授权 / 出口</button>
+              <button v-else-if="getOpenAIExecutionBackend(row) === 'pi'" class="btn btn-secondary text-xs" @click="handleReAuth(row)">{{ text('重新授权', 'Reauthorize') }}</button>
               <button
                 type="button"
                 :title="t('admin.accounts.testConnection')"
@@ -2475,16 +2476,16 @@ const confirmCreateSparkShadow = async () => {
     appStore.showError(error?.response?.data?.message || t('admin.accounts.createSparkShadowFailed'))
   }
 }
-const cpaEnabling = ref<number | null>(null)
-const handleCPAEnabled = async (account: Account) => {
-  cpaEnabling.value = account.id
+const executionEnabling = ref<number | null>(null)
+const handleExecutionEnabled = async (account: Account) => {
+  executionEnabling.value = account.id
   try {
     await adminAPI.accounts.update(account.id, {status: account.status === 'active' ? 'inactive' : 'active'})
     await load()
-    appStore.showSuccess('账号和对应授权状态已同步')
+    appStore.showSuccess(getOpenAIExecutionBackend(account) === 'cpa' ? '账号和对应授权状态已同步' : '账号状态已更新')
   } catch (error: any) {
     appStore.showError(error?.response?.data?.message || '账号启停失败，请刷新后重试')
-  } finally { cpaEnabling.value = null }
+  } finally { executionEnabling.value = null }
 }
 const handleDelete = (a: Account) => { deletingAcc.value = a; showDeleteDialog.value = true }
 const confirmDelete = async () => { if(!deletingAcc.value) return; try { await adminAPI.accounts.delete(deletingAcc.value.id); showDeleteDialog.value = false; deletingAcc.value = null; reload() } catch (error) { console.error('Failed to delete account:', error); appStore.showError((error as any)?.response?.data?.message || '删除未完成，请重试') } }

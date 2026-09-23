@@ -45,7 +45,7 @@ func (s *piImportAdminStub) CreateAccount(_ context.Context, input *service.Crea
 	if s.createErr != nil {
 		return nil, s.createErr
 	}
-	return &service.Account{ID: 81, Name: input.Name, Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, Status: service.StatusDisabled, Schedulable: false}, nil
+	return &service.Account{ID: 81, Name: input.Name, Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, Status: service.StatusActive, Schedulable: true, Concurrency: input.Concurrency}, nil
 }
 
 func piImportJWT(accountID, email string) string {
@@ -84,7 +84,7 @@ func piImportRequest(t *testing.T, stub *piImportAdminStub, body []byte) *httpte
 	return recorder
 }
 
-func TestImportPiAuthVerifiesWithRuntimeAndCreatesDisabledAccount(t *testing.T) {
+func TestImportPiAuthVerifiesWithRuntimeAndCreatesEnabledAccountInExistingGroup(t *testing.T) {
 	const accountID = "account-fixture"
 	calls := 0
 	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,14 +110,16 @@ func TestImportPiAuthVerifiesWithRuntimeAndCreatesDisabledAccount(t *testing.T) 
 	t.Setenv("PI_RUNTIME_URL", runtime.URL)
 	t.Setenv("PI_RUNTIME_SECRET_FILE", secretPath)
 	stub := &piImportAdminStub{
-		owner: service.User{ID: 7, Status: service.StatusActive, AllowedGroups: []int64{42}},
-		group: service.Group{ID: 42, Platform: service.PlatformOpenAI, Status: service.StatusActive, IsExclusive: true},
+		owner:       service.User{ID: 7, Status: service.StatusActive},
+		group:       service.Group{ID: 42, Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		accounts:    []service.Account{{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, AccountGroups: []service.AccountGroup{{GroupID: 42}}}},
+		listMembers: []service.Account{{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}},
 	}
 	recorder := piImportRequest(t, stub, piImportBody(accountID))
 	if recorder.Code != http.StatusOK || calls != 1 || stub.created == nil {
 		t.Fatalf("expected verified Pi account, status=%d calls=%d body=%s", recorder.Code, calls, recorder.Body.String())
 	}
-	if !stub.created.InitiallyDisabled || !stub.created.InitiallyUnschedulable || !stub.created.SkipDefaultGroupBind || len(stub.created.GroupIDs) != 1 || stub.created.GroupIDs[0] != 42 {
+	if stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 10 || !stub.created.SkipDefaultGroupBind || len(stub.created.GroupIDs) != 1 || stub.created.GroupIDs[0] != 42 {
 		t.Fatalf("unsafe initial Pi account options: %#v", stub.created)
 	}
 	if stub.created.Credentials["refresh_token"] != "synthetic-refresh-secret" || stub.created.Credentials["pi_owner_user_id"] != "7" {
@@ -128,7 +130,7 @@ func TestImportPiAuthVerifiesWithRuntimeAndCreatesDisabledAccount(t *testing.T) 
 	}
 }
 
-func TestImportPiAuthRejectsMismatchedIdentityAndCPAMixedGroup(t *testing.T) {
+func TestImportPiAuthRejectsMismatchedIdentity(t *testing.T) {
 	stub := &piImportAdminStub{owner: service.User{ID: 7, Status: service.StatusActive, AllowedGroups: []int64{42}}, group: service.Group{ID: 42, Platform: service.PlatformOpenAI, Status: service.StatusActive, IsExclusive: true}}
 	body := piImportBody("different")
 	var request piAuthImportRequest
@@ -146,10 +148,6 @@ func TestImportPiAuthRejectsMismatchedIdentityAndCPAMixedGroup(t *testing.T) {
 	if got := piImportRequest(t, stub, body); got.Code != http.StatusBadRequest || stub.created != nil {
 		t.Fatalf("mismatched identity accepted: %d", got.Code)
 	}
-	stub.listMembers = []service.Account{{Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}}
-	if got := piImportRequest(t, stub, piImportBody("account-fixture")); got.Code != http.StatusBadRequest || stub.created != nil {
-		t.Fatalf("mixed CPA group accepted: %d", got.Code)
-	}
 }
 
 func TestImportPiAuthRejectsDuplicateIdentityBeforeRefresh(t *testing.T) {
@@ -162,7 +160,7 @@ func TestImportPiAuthRejectsDuplicateIdentityBeforeRefresh(t *testing.T) {
 	}
 }
 
-func TestCreatePiAccountOAuthPathUsesSameDisabledExclusiveBoundary(t *testing.T) {
+func TestCreatePiAccountOAuthPathAllowsExistingGroupsAndDefaultsToTenConcurrent(t *testing.T) {
 	secretPath := filepath.Join(t.TempDir(), "pi-secret")
 	if err := os.WriteFile(secretPath, []byte(strings.Repeat("s", 40)), 0600); err != nil {
 		t.Fatal(err)
@@ -199,11 +197,14 @@ func TestCreatePiAccountOAuthPathUsesSameDisabledExclusiveBoundary(t *testing.T)
 		router.ServeHTTP(recorder, req)
 		return recorder
 	}
-	stub.group.IsExclusive = false
+	stub.group.Status = service.StatusDisabled
 	if got := request(); got.Code != http.StatusBadRequest || calls != 0 || stub.created != nil {
-		t.Fatalf("public group accepted by OAuth path: %d", got.Code)
+		t.Fatalf("inactive group accepted by OAuth path: %d", got.Code)
 	}
-	stub.group.IsExclusive = true
+	stub.group.Status = service.StatusActive
+	stub.group.IsExclusive = false
+	stub.owner.AllowedGroups = nil
+	stub.listMembers = []service.Account{{Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}}
 	stub.createErr = errors.New("synthetic database failure")
 	failed := request()
 	if failed.Code != http.StatusInternalServerError || acks != 0 || !strings.Contains(failed.Body.String(), "PI_ACCOUNT_SAVE_FAILED") {
@@ -218,7 +219,7 @@ func TestCreatePiAccountOAuthPathUsesSameDisabledExclusiveBoundary(t *testing.T)
 	if acks != 1 {
 		t.Fatal("saved account must acknowledge runtime session")
 	}
-	if got.Code != http.StatusOK || calls != 1 || stub.created == nil || !stub.created.InitiallyDisabled || !stub.created.InitiallyUnschedulable {
+	if got.Code != http.StatusOK || calls != 1 || stub.created == nil || stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 10 {
 		t.Fatalf("OAuth Pi account was not created safely: status=%d calls=%d", got.Code, calls)
 	}
 	if strings.Contains(got.Body.String(), "oauth-refresh-secret") {

@@ -1596,49 +1596,27 @@ func propagateAccountProxyToShadows(ctx context.Context, repo AccountRepository,
 	return nil
 }
 
-// validateOpenAIExecutionGroups keeps CPA and native Pi on separate business
-// routes. A group is the operator's backend switch; mixing both execution
-// backends would make the scheduler choose one implicitly.
-func (s *adminServiceImpl) validateOpenAIExecutionGroups(ctx context.Context, candidate *Account, currentAccountID int64, groupIDs []int64) error {
-	if candidate == nil || candidate.Platform != PlatformOpenAI {
+// Business groups represent access and billing, not execution backends. Pi and
+// CPA may share a group; credentials and caller sessions remain independently bound.
+func (s *adminServiceImpl) validateOpenAIExecutionGroups(ctx context.Context, candidate *Account, _ int64, groupIDs []int64) error {
+	if candidate == nil || !candidate.UsesNativePiRuntime() {
 		return nil
 	}
-	pi := candidate.UsesNativePiRuntime()
-	if pi && len(groupIDs) == 0 {
-		return infraerrors.BadRequest("PI_GROUP_REQUIRED", "Pi 账号必须显式选择独立的 OpenAI 分组")
+	if len(groupIDs) == 0 {
+		return infraerrors.BadRequest("PI_GROUP_REQUIRED", "请选择 OpenAI 业务分组")
 	}
-	var piOwner *User
-	if pi {
-		ownerID, err := strconv.ParseInt(candidate.GetCredential("pi_owner_user_id"), 10, 64)
-		if err != nil || ownerID <= 0 || s.userRepo == nil {
-			return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号必须绑定有效归属用户")
-		}
-		piOwner, err = s.userRepo.GetByID(ctx, ownerID)
-		if err != nil || piOwner == nil || !piOwner.IsActive() {
-			return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号归属用户不存在或已停用")
-		}
+	ownerID, err := strconv.ParseInt(candidate.GetCredential("pi_owner_user_id"), 10, 64)
+	if err != nil || ownerID <= 0 || s.userRepo == nil {
+		return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号必须绑定有效归属用户")
+	}
+	owner, err := s.userRepo.GetByID(ctx, ownerID)
+	if err != nil || owner == nil || !owner.IsActive() {
+		return infraerrors.BadRequest("PI_OWNER_INVALID", "Pi 账号归属用户不存在或已停用")
 	}
 	for _, groupID := range groupIDs {
-		if pi {
-			group, err := s.groupRepo.GetByID(ctx, groupID)
-			if err != nil || group == nil || group.Platform != PlatformOpenAI || !group.IsActive() || !group.IsExclusive {
-				return infraerrors.BadRequest("PI_GROUP_INVALID", "Pi 账号只能绑定已开启的 OpenAI 专属分组")
-			}
-			if !piOwner.CanBindGroup(groupID, true) {
-				return infraerrors.BadRequest("PI_GROUP_OWNER_MISMATCH", "Pi 账号归属用户未获该专属分组授权")
-			}
-		}
-		members, err := s.accountRepo.ListByGroup(ctx, groupID)
-		if err != nil {
-			return fmt.Errorf("list OpenAI execution group %d: %w", groupID, err)
-		}
-		for _, member := range members {
-			if member.ID == currentAccountID || member.Platform != PlatformOpenAI {
-				continue
-			}
-			if member.UsesNativePiRuntime() != pi {
-				return infraerrors.BadRequest("OPENAI_BACKEND_GROUP_MIXED", "CPA 与 Pi 账号必须使用不同的分组")
-			}
+		group, err := s.groupRepo.GetByID(ctx, groupID)
+		if err != nil || group == nil || groupID <= 0 || group.ID != groupID || group.Platform != PlatformOpenAI || !group.IsActive() {
+			return infraerrors.BadRequest("PI_GROUP_INVALID", "Pi 账号只能绑定已开启的 OpenAI 业务分组")
 		}
 	}
 	return nil

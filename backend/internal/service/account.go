@@ -47,6 +47,10 @@ type Account struct {
 
 	Schedulable bool
 
+	// Set only on credential-free scheduler projections. Forwarding still validates
+	// the full account after hydration; callers cannot supply this through the API.
+	SchedulerExecutionValid *bool `json:",omitempty"`
+
 	RateLimitedAt    *time.Time
 	RateLimitResetAt *time.Time
 	OverloadUntil    *time.Time
@@ -195,7 +199,14 @@ func (a *Account) EffectiveLoadFactor() int {
 }
 
 func (a *Account) IsSchedulable() bool {
-	if ValidateExecutionAccount(a) != nil {
+	if a == nil {
+		return false
+	}
+	if a.SchedulerExecutionValid != nil {
+		if !*a.SchedulerExecutionValid {
+			return false
+		}
+	} else if ValidateExecutionAccount(a) != nil {
 		return false
 	}
 	if !a.IsActive() || !a.Schedulable {

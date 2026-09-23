@@ -2785,6 +2785,27 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		if account.UsesNativePiRuntime() {
+			if h.accountTestService == nil {
+				response.Error(c, http.StatusServiceUnavailable, "Pi 模型目录服务不可用")
+				return
+			}
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+			defer cancel()
+			models, err := h.accountTestService.FetchOpenAIAccountModels(ctx, account)
+			if err != nil {
+				response.Error(c, http.StatusBadGateway, "无法读取 Pi 账号模型目录，请检查授权后重试")
+				return
+			}
+			available := make([]openai.Model, 0, len(models))
+			for _, model := range models {
+				if !service.IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) {
+					available = append(available, model)
+				}
+			}
+			response.Success(c, available)
+			return
+		}
 		// The local CPA bridge publishes its current catalog upstream.
 		// The test picker must include new models without requiring an app release.
 		if service.ValidateCPAAccount(account) == nil &&

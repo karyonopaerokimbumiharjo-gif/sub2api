@@ -18,7 +18,7 @@ const (
 	schedulerBucketSetKey          = "sched:buckets"
 	schedulerOutboxWatermarkKey    = "sched:outbox:watermark"
 	schedulerAccountPrefix         = "sched:acc:"
-	schedulerAccountMetaPrefix     = "sched:meta:cpa-v1:"
+	schedulerAccountMetaPrefix     = "sched:meta:execution-v2:"
 	schedulerAccountLastUsedPrefix = "sched:acc:last_used:"
 	schedulerActivePrefix          = "sched:active:"
 	schedulerReadyPrefix           = "sched:ready:"
@@ -863,7 +863,9 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 }
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
+	valid := service.ValidateExecutionAccount(&account) == nil
 	return service.Account{
+		SchedulerExecutionValid: &valid,
 		ID:                      account.ID,
 		Name:                    account.Name,
 		Platform:                account.Platform,
@@ -956,7 +958,7 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	}
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
-	keys := []string{"base_url", "model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
+	keys := []string{"harness_kind", "pi_owner_user_id", "chatgpt_account_id", "pi_transport", "base_url", "model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {

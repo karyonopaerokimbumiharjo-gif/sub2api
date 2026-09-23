@@ -63,13 +63,13 @@ func parsePiCodexAuth(content string) (*piCodexAuth, int64, error) {
 	return &auth, accessClaims.Exp, nil
 }
 
-// ImportPiAuth imports a local Codex auth.json directly into a dedicated Pi
+// ImportPiAuth imports a local Codex auth.json directly into a Pi
 // business account. It never stores the file in CPA or returns token values.
 func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, piAuthImportLimit)
 	var req piAuthImportRequest
 	if c.ShouldBindJSON(&req) != nil || req.OwnerUserID <= 0 || len(req.GroupIDs) != 1 {
-		response.BadRequest(c, "Provide one auth.json file, an active Pi owner and one dedicated OpenAI group")
+		response.BadRequest(c, "Provide one auth.json file, an active Pi owner and one active OpenAI group")
 		return
 	}
 	auth, expiresAt, err := parsePiCodexAuth(req.Content)
@@ -85,16 +85,16 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 	}
 	groupID := req.GroupIDs[0]
 	if groupID <= 0 {
-		response.BadRequest(c, "Choose a dedicated OpenAI group for Pi")
+		response.BadRequest(c, "Choose an active OpenAI group")
 		return
 	}
 	group, err := h.adminService.GetGroup(ctx, groupID)
-	if err != nil || group == nil || group.Platform != service.PlatformOpenAI || !group.IsActive() || !group.IsExclusive || !owner.CanBindGroup(groupID, true) {
-		response.BadRequest(c, "Pi requires an active exclusive OpenAI group assigned to its owner")
+	if err != nil || group == nil || group.ID != groupID || group.Platform != service.PlatformOpenAI || !group.IsActive() {
+		response.BadRequest(c, "Choose an active OpenAI business group")
 		return
 	}
-	// Check all accounts, including disabled ones. A dormant CPA account still
-	// makes this group mixed, and a second Pi import must not duplicate identity.
+	// A second Pi import must not duplicate the credential refresh owner.
+	// Business groups may contain either execution backend.
 	accounts, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, "", "", "", 0, "")
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -104,25 +104,6 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 		account := &accounts[i]
 		if account.UsesNativePiRuntime() && account.GetCredential("chatgpt_account_id") == auth.Tokens.AccountID {
 			response.Error(c, http.StatusConflict, "This ChatGPT identity already has a Pi account; reauthorize that account instead")
-			return
-		}
-		for _, binding := range account.AccountGroups {
-			if binding.GroupID == groupID && !account.UsesNativePiRuntime() {
-				response.BadRequest(c, "CPA and Pi accounts must use separate groups")
-				return
-			}
-		}
-	}
-	// Use the same group membership check as OAuth import, in case this service
-	// returns account group bindings separately from the global account listing.
-	members, err := h.adminService.ListAccountsForSchedulerScoreFilter(ctx, service.PlatformOpenAI, "", "", "", groupID, "")
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	for i := range members {
-		if !members[i].UsesNativePiRuntime() {
-			response.BadRequest(c, "CPA and Pi accounts must use separate groups")
 			return
 		}
 	}
@@ -154,10 +135,14 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 		shortID = shortID[len(shortID)-8:]
 	}
 	name := "Pi OpenAI · " + shortID
+	if claims, err := openai.DecodeIDToken(auth.Tokens.IDToken); err == nil && claims.Email != "" {
+		name = claims.Email
+		token.Email = claims.Email
+	}
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 		Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 1,
-		GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true, InitiallyUnschedulable: true, InitiallyDisabled: true,
+		Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 10,
+		GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

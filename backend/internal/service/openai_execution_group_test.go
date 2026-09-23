@@ -32,7 +32,7 @@ func (r piExecutionGroupRepo) GetByID(_ context.Context, _ int64) (*Group, error
 	return &r.group, nil
 }
 
-func TestOpenAIExecutionGroupIsolation(t *testing.T) {
+func TestOpenAIExecutionGroupsShareBusinessBindings(t *testing.T) {
 	pi := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "7"}}
 	cpa := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	for _, tc := range []struct {
@@ -43,8 +43,8 @@ func TestOpenAIExecutionGroupIsolation(t *testing.T) {
 		wantError bool
 	}{
 		{name: "Pi requires a chosen group", candidate: pi, wantError: true},
-		{name: "Pi cannot join CPA", candidate: pi, members: []Account{{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}}, groups: []int64{1}, wantError: true},
-		{name: "CPA cannot join Pi", candidate: cpa, members: []Account{{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi"}}}, groups: []int64{1}, wantError: true},
+		{name: "Pi may join CPA", candidate: pi, members: []Account{{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}}, groups: []int64{1}},
+		{name: "CPA may join Pi", candidate: cpa, members: []Account{{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi"}}}, groups: []int64{1}},
 		{name: "Pi may share a dedicated Pi group", candidate: pi, members: []Account{{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi"}}}, groups: []int64{1}},
 		{name: "CPA may share a CPA group", candidate: cpa, members: []Account{{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}}, groups: []int64{1}},
 	} {
@@ -62,11 +62,11 @@ func TestOpenAIExecutionGroupIsolation(t *testing.T) {
 	}
 }
 
-func TestPiExecutionAccountRejectsPublicOpenAIGroup(t *testing.T) {
+func TestPiExecutionAccountAllowsPublicOpenAIGroup(t *testing.T) {
 	pi := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "7"}}
 	svc := &adminServiceImpl{accountRepo: piExecutionAccountRepo{}, groupRepo: piExecutionGroupRepo{group: Group{ID: 1, Platform: PlatformOpenAI, Status: StatusActive}}, userRepo: piExecutionUserRepo{owner: User{ID: 7, Status: StatusActive, AllowedGroups: []int64{1}}}}
-	if err := svc.validateOpenAIExecutionGroups(context.Background(), pi, 0, []int64{1}); err == nil {
-		t.Fatal("Pi account accepted a public group")
+	if err := svc.validateOpenAIExecutionGroups(context.Background(), pi, 0, []int64{1}); err != nil {
+		t.Fatalf("Pi account rejected a public group: %v", err)
 	}
 }
 

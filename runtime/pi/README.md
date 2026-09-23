@@ -2,7 +2,7 @@
 
 This is the private execution component of the existing Sub2API product. The account UI's **Native Pi** OAuth option uses the pinned official `@earendil-works/pi-ai@0.85.1` package for login, refresh, and `openai-codex-responses`. Standard accounts retain their existing route.
 
-The admin starts authorization with a Sub2API owner user ID. The runtime owns PKCE and state; the completed credentials carry `harness_kind=pi` and `pi_owner_user_id`. Only API keys owned by that user can use the account. Use a dedicated group to avoid unrelated users selecting this account. Per-account proxies and compact requests are currently rejected on this route.
+The admin starts authorization with a Sub2API owner user ID. The runtime owns PKCE and state; the completed credentials carry `harness_kind=pi` and `pi_owner_user_id`. The credential owner controls refresh. Authorized users share the account through the same existing OpenAI business groups used by CPA. New Pi imports are active and schedulable with concurrency 10. User and API-key session namespaces remain separate. Per-account proxies and compact requests are currently rejected on this route.
 
 Requests enter the same `/v1/responses` endpoint. Sub2API obtains the account's token under its existing refresh/cache lock and calls the private runtime. Pi constructs its native headers, including `originator=pi`. Incoming Codex turn metadata and non-null caller-supplied `previous_response_id` are rejected. This route does not relabel an arbitrary Codex request. It accepts Responses input plus function tools, reasoning and output options; it forces `stream=true` and `store=false` upstream. The gateway returns an ordinary JSON Responses object with a JSON content type when the downstream request is nonstreaming.
 
@@ -32,6 +32,7 @@ The private runtime API is bearer authenticated:
 - `POST /oauth/start`: owner ID; returns authorization URL/session ID.
 - `POST /oauth/complete`: matching owner/session and callback URL; returns credentials to the authenticated admin workflow.
 - `POST /oauth/refresh`: refresh token plus expected owner/account; rejects a changed account.
+- `POST /models`: current credential-bound upstream model manifest, with no static model fallback.
 - `POST /responses`: bound account credential and Responses input; returns raw upstream SSE, or SSE frames representing native WebSocket events.
 
 Do not publish these endpoints directly. The gateway does not follow redirects or use ambient HTTP proxies when communicating with this private service.

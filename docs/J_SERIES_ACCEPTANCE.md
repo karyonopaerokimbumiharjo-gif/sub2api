@@ -68,15 +68,15 @@ HTTP 200, imports or container health as end-to-end acceptance.
   moderation fixture attempts an external endpoint forbidden by deployment policy.
   These baseline incompatibilities remain visible; do not weaken production
   account validation merely to make legacy direct-backend fixtures pass.
-- No candidate has been deployed. Do not report the production service as updated.
+- The audit/Pi changes through commit `7c17d5854` were deployed as `0.2.7-pi.10-oauth-recovery`. Generic J collaboration and Tool Bridge remain outside that release.
 
 ## Pi shared-account correction
 
 - Keep credential ownership and token refresh binding with the importing owner.
-- Authorize each caller using the authenticated key, active user, active exclusive
+- Authorize each caller using the authenticated key, active user, active
   OpenAI group and the selected account's group membership. Reject foreign groups.
 - Include both caller user and API key in the native session namespace; client
-  session names cannot merge two callers. CPA group separation remains enforced.
+  session names cannot merge two callers. Business groups may contain CPA and Pi accounts; caller authorization remains enforced.
 - Targeted Go race tests pass. Twelve Pi runtime tests pass, including two
   simultaneous cached-WebSocket sessions using one synthetic credential against
   a local test upstream: cancelling A preserves B and no output crosses callers.
@@ -100,3 +100,26 @@ race tests and PostgreSQL migration checks pass; frontend production build
 and Linux embedded backend build pass. A fresh production OAuth import still
 requires a new authorization, since the old runtime discarded the failed
 import's exchanged credential. Deployment and acceptance results follow below.
+
+## Pi parity and scheduler repair (2026-09-23)
+
+The user completed fresh production OAuth; account 46 exists with its own Pi
+credential. Its operator-approved settings are now active, schedulable, concurrency
+10. Import defaults and the frontend now use those same settings, allow existing
+public or exclusive OpenAI groups and permit CPA/Pi in the same business group.
+Credential ownership is independent of group access. Pi gets enable/disable and
+reauthorization actions beside the standard test, edit and delete controls.
+
+A real gateway request exposed a scheduler projection defect: metadata discarded
+Pi identification and tokens, then attempted full credential validation. New
+versioned projections carry only the backend identity and the result of full
+validation. Selected accounts still require credential hydration and full
+validation before forwarding. OAuth tokens remain outside candidate projections.
+The Pi test-model picker now reads its credential's actual runtime catalog instead
+of advertising the generic list and unsupported image-generation entries.
+
+Production DeepSeek audit timed out at 10 seconds on a harmless synthetic request,
+which later passed background review. Its configured timeout is now 30 seconds;
+a real synthetic endpoint probe passed in 4.2 seconds. Blocking policy, other
+endpoint switches, and hard rules were preserved. This is availability evidence,
+not proof of classifier accuracy.

@@ -32,12 +32,12 @@ func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 	}
 	// The credential owner controls refresh, not exclusive use of the account.
 	// A selected shared account is usable only inside the authenticated key's
-	// active, exclusive Pi group. Never take this binding from request headers.
+	// active OpenAI group. Never take this binding from request headers.
 	if key.GroupID == nil || key.Group == nil || key.Group.ID != *key.GroupID ||
-		!key.Group.IsActive() || !key.Group.IsExclusive || key.Group.Platform != PlatformOpenAI ||
+		!key.Group.IsActive() || key.Group.Platform != PlatformOpenAI ||
 		key.User == nil || key.User.ID != key.UserID || !key.User.IsActive() ||
-		!key.User.CanBindGroup(*key.GroupID, true) {
-		return 0, errors.New("Pi request requires an authorized exclusive OpenAI group")
+		(!key.Group.IsSubscriptionType() && !key.User.CanBindGroup(*key.GroupID, key.Group.IsExclusive)) {
+		return 0, errors.New("Pi request requires an authorized OpenAI group")
 	}
 	for _, groupID := range account.GroupIDs {
 		if groupID == *key.GroupID {
@@ -83,6 +83,9 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
 		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
 		return nil, errors.New(message)
+	}
+	if err := ValidateExecutionAccount(account); err != nil {
+		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
 	}
 	owner, err := piRequestOwner(c, account)
 	if err != nil {

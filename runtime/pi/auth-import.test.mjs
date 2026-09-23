@@ -69,3 +69,16 @@ test('early callback survives delayed SDK prompt and failed exchanges never expo
   assert.equal(result.status,400);assert.deepEqual(await result.json(),{error:'oauth_exchange_failed'});assert.equal(exchanges,1);
  }finally{release();runtime.closeAllConnections();await new Promise(resolve=>runtime.close(resolve))}
 });
+
+test('private models endpoint returns only the selected account catalog',async()=>{
+ const secret='s'.repeat(40);let calls=0;
+ const runtime=createRuntime({secret,loadModels:async({accountId,accessToken})=>{
+  calls++;assert.equal(accountId,'account-a');assert.equal(accessToken,jwt('account-a'));
+  return {models:[{slug:'gpt-5.6-sol',display_name:'Sol'}]};
+ }});
+ runtime.listen(0,'127.0.0.1');await once(runtime,'listening');
+ try{
+  const response=await fetch(`http://127.0.0.1:${runtime.address().port}/models`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({owner_id:7,account_id:'account-a',access_token:jwt('account-a')})});
+  assert.equal(response.status,200);assert.deepEqual(await response.json(),{models:[{slug:'gpt-5.6-sol',display_name:'Sol'}]});assert.equal(calls,1);
+ }finally{runtime.closeAllConnections();await new Promise(resolve=>runtime.close(resolve))}
+});

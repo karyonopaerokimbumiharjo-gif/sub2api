@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
+	"strconv"
 )
 
 // FetchOpenAIModelsList discovers a single account's raw public model catalog.
@@ -22,6 +24,28 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 	credentialAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 	if err != nil {
 		return nil, fmt.Errorf("resolve model list credentials: %w", err)
+	}
+	if credentialAccount.UsesNativePiRuntime() {
+		if err := ValidateExecutionAccount(credentialAccount); err != nil {
+			return nil, err
+		}
+		if s.openAITokenProvider == nil {
+			return nil, fmt.Errorf("Pi token provider unavailable")
+		}
+		token, err := s.openAITokenProvider.GetAccessToken(ctx, credentialAccount)
+		if err != nil {
+			return nil, fmt.Errorf("Pi credential unavailable")
+		}
+		owner, _ := strconv.ParseInt(credentialAccount.GetCredential("pi_owner_user_id"), 10, 64)
+		var manifest json.RawMessage
+		if err := piruntime.JSON(ctx, "/models", map[string]any{"owner_id": owner, "account_id": credentialAccount.GetCredential("chatgpt_account_id"), "access_token": token}, &manifest); err != nil {
+			return nil, err
+		}
+		body, err := standardOpenAIModelsBody(manifest, true)
+		if err != nil {
+			return nil, invalidOpenAIModelsList(err)
+		}
+		return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}, nil
 	}
 	if credentialAccount.IsOpenAIOAuth() {
 		clientVersion := CodexCanonicalClientVersion()

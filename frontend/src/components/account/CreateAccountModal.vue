@@ -19,15 +19,15 @@
           <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
             {{ text('Pi 归属用户 ID', 'Pi owner user ID') }}
             <input v-model.number="oauth.piOwnerUserId.value" type="number" min="1" step="1" class="input mt-2 w-full" data-testid="pi-owner-user-id" :disabled="busy || oauth.loading.value || !!oauth.authUrl.value" />
-            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('填写凭据归属用户 ID；获此专属分组授权的用户可以共享账号，彼此会话独立。', 'Credential owner ID. Authorized users in this exclusive group may share the account with isolated sessions.') }}</span>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('填写凭据归属用户 ID；获所选分组授权的用户可以共享账号，彼此会话独立。', 'Credential owner ID. Authorized users in the selected group may share the account with isolated sessions.') }}</span>
           </label>
           <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
-            {{ text('Pi 业务分组', 'Pi business group') }}
+            {{ text('业务分组', 'Business group') }}
             <select v-model.number="piGroupId" class="input mt-2 w-full" data-testid="pi-group-id" :disabled="busy || oauth.loading.value || !piOpenAIGroups.length">
               <option value="">{{ text('请选择已启用的 OpenAI 分组', 'Select an active OpenAI group') }}</option>
               <option v-for="group in piOpenAIGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
             </select>
-            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('创建时必须明确选择分组；Pi 不会自动加入默认分组。', 'Choose a group explicitly before creating this account. Pi never joins a default group automatically.') }}</span>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('可以选择现有 OpenAI 分组，与 CPA 共用；默认启用、参与调度，账号并发为 10。', 'Use an existing OpenAI group, including one shared with CPA. Accounts start enabled and schedulable with concurrency 10.') }}</span>
           </label>
           <p v-if="oauth.harnessKind.value === 'pi' && !piOpenAIGroups.length" data-testid="pi-no-groups" class="mt-2 text-sm text-amber-700 dark:text-amber-300">{{ text('没有可用的 OpenAI 分组，请先创建或启用分组。', 'No active OpenAI group is available. Create or enable one first.') }}</p>
         </div>
@@ -51,18 +51,18 @@
           </select>
         </label>
         <template v-if="jsonBackend === 'pi'">
-          <p class="text-sm text-amber-700 dark:text-amber-300" data-testid="pi-auth-rotation-warning">{{ text('只接受单个本机 Codex auth.json。导入时只读验证当前 Access Token，不会轮换 Refresh Token，也不会改写本机文件；这不能证明后续 Refresh Token 一定可续期。导入后本机与服务器共用 Refresh Token，后续自动刷新可能相互覆盖；建议使用独立授权。新账号默认禁用且不参与调度，须显式开启。', 'Import one local Codex auth.json. Import validates the current access token without rotating the refresh token or changing the local file; this does not prove a future refresh will succeed. Local Codex and the server then share a refresh token, so later refreshes may conflict. A separate authorization is recommended. The new account starts disabled and unschedulable until explicitly enabled.') }}</p>
+          <p class="text-sm text-amber-700 dark:text-amber-300" data-testid="pi-auth-rotation-warning">{{ text('只接受单个本机 Codex auth.json。导入时只读验证当前 Access Token，不会轮换 Refresh Token，也不会改写本机文件；这不能证明后续 Refresh Token 一定可续期。导入后本机与服务器共用 Refresh Token，后续自动刷新可能相互覆盖；建议使用独立授权。新账号默认启用，并发为 10。', 'Import one local Codex auth.json. Import validates the current access token without rotating the refresh token or changing the local file; this does not prove a future refresh will succeed. Local Codex and the server then share a refresh token, so later refreshes may conflict. A separate authorization is recommended. The new account starts enabled with concurrency 10.') }}</p>
           <label class="block text-sm font-medium">
             {{ text('Pi 归属用户 ID', 'Pi owner user ID') }}
             <input v-model.number="oauth.piOwnerUserId.value" type="number" min="1" step="1" class="input mt-2 w-full" data-testid="pi-auth-owner-user-id" :disabled="busy" />
           </label>
           <label class="block text-sm font-medium">
-            {{ text('Pi 独立业务分组', 'Dedicated Pi business group') }}
+            {{ text('业务分组', 'Business group') }}
             <select v-model.number="piGroupId" class="input mt-2 w-full" data-testid="pi-auth-group-id" :disabled="busy || !piOpenAIGroups.length">
               <option value="">{{ text('请选择已启用的 OpenAI 分组', 'Select an active OpenAI group') }}</option>
               <option v-for="group in piOpenAIGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
             </select>
-            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('该分组须为空或仅有 Pi 账号；已有 CPA 账号的分组会被拒绝。', 'The group must be empty or contain Pi accounts only; groups with CPA accounts are rejected.') }}</span>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('可以选择已有 CPA 账号的 OpenAI 分组；默认启用、参与调度，账号并发为 10。', 'Existing CPA groups are supported. Accounts start enabled and schedulable with concurrency 10.') }}</span>
           </label>
         </template>
         <p v-else class="text-sm text-gray-500">{{ text('支持 Codex auth.json，以及 CPA 原生 OpenAI、Claude、Gemini、Antigravity OAuth 文件。无法识别的文件会显示错误。', 'Supports Codex auth.json and native CPA OAuth files for OpenAI, Claude, Gemini and Antigravity. Unsupported files return an error.') }}</p>
@@ -129,7 +129,7 @@ const summary = ref('')
 const routingWarning = ref(false)
 const bridgeRefresh = ref(0)
 const piGroupId = ref<number | ''>('')
-const piOpenAIGroups = computed(() => (props.groups || []).filter((group) => group.platform === 'openai' && group.status === 'active' && group.is_exclusive))
+const piOpenAIGroups = computed(() => (props.groups || []).filter((group) => group.platform === 'openai' && group.status === 'active'))
 
 function selectedPiGroupId(): number | null {
   const id = Number(piGroupId.value)
@@ -191,9 +191,9 @@ async function submit() {
         const groupId = selectedPiGroupId()
         if (contents.length !== 1) throw new Error(text('Pi 每次只能导入一份 auth.json。', 'Pi accepts exactly one auth.json per import.'))
         if (!Number.isSafeInteger(oauth.piOwnerUserId.value) || !oauth.piOwnerUserId.value || oauth.piOwnerUserId.value < 1) throw new Error(text('Pi 归属用户 ID 必须是正整数。', 'Pi owner user ID must be a positive integer.'))
-        if (groupId === null) throw new Error(text('请先选择一个已启用的 Pi 独立 OpenAI 分组。', 'Select an active dedicated Pi OpenAI group first.'))
+        if (groupId === null) throw new Error(text('请先选择一个已启用的 OpenAI 分组。', 'Select an active OpenAI group first.'))
         await apiClient.post('/admin/openai/import-pi-auth', { content: contents[0], pi_owner_user_id: oauth.piOwnerUserId.value, group_ids: [groupId] })
-        summary.value = text('当前 Access Token 已验证，账号已创建为禁用且不可调度；启用前需另行验收续期，建议使用独立授权。', 'The current access token is verified. The account was created disabled and unschedulable; verify refresh separately before enabling it, preferably with a separate authorization.')
+        summary.value = text('账号已导入所选分组，已启用并参与调度，并发为 10。', 'Account imported into the selected group, enabled and schedulable with concurrency 10.')
         content.value = ''
         fileContents.value = []
         emit('created')
@@ -228,7 +228,7 @@ async function submit() {
         const groupId = selectedPiGroupId()
         if (groupId === null) throw new Error(text('请先选择一个已启用的 OpenAI 分组。', 'Select an active OpenAI group first.'))
         await apiClient.post('/admin/openai/create-pi-account', {session_id: oauth.sessionId.value, code, state, pi_owner_user_id: oauth.piOwnerUserId.value, group_ids: [groupId]})
-        summary.value = text('Pi 账号已创建并关联所选专属分组，默认禁用且不可调度；请核对后显式开启。', 'Pi account created in the selected exclusive group, disabled and unschedulable until explicitly enabled.')
+        summary.value = text('账号已导入所选分组，已启用并参与调度，并发为 10。', 'Account imported into the selected group, enabled and schedulable with concurrency 10.')
         callback.value = ''
         emit('created')
         return

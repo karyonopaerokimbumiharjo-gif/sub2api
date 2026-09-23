@@ -755,7 +755,7 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 		return
 	}
 	if len(req.GroupIDs) == 0 {
-		response.BadRequest(c, "Choose a dedicated OpenAI group for Pi before creating the account")
+		response.BadRequest(c, "Choose an active OpenAI group before creating the account")
 		return
 	}
 	owner, err := h.adminService.GetUser(c.Request.Context(), req.Owner)
@@ -775,20 +775,9 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 		}
 		seenGroups[groupID] = struct{}{}
 		group, err := h.adminService.GetGroup(c.Request.Context(), groupID)
-		if err != nil || group == nil || group.Platform != service.PlatformOpenAI || !group.IsActive() || !group.IsExclusive || !owner.CanBindGroup(groupID, true) {
-			response.BadRequest(c, "Pi requires an active exclusive OpenAI group assigned to its owner")
+		if err != nil || group == nil || group.ID != groupID || group.Platform != service.PlatformOpenAI || !group.IsActive() {
+			response.BadRequest(c, "Choose an active OpenAI business group")
 			return
-		}
-		members, err := h.adminService.ListAccountsForSchedulerScoreFilter(c.Request.Context(), service.PlatformOpenAI, "", "", "", groupID, "")
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-		for _, member := range members {
-			if !member.UsesNativePiRuntime() {
-				response.BadRequest(c, "CPA and Pi accounts must use separate groups")
-				return
-			}
 		}
 	}
 	callback := "http://localhost:1455/auth/callback?" + url.Values{"code": {req.Code}, "state": {req.State}}.Encode()
@@ -818,7 +807,7 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 	if name == "" {
 		name = "Pi OpenAI"
 	}
-	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 1, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true, InitiallyDisabled: true, InitiallyUnschedulable: true})
+	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 10, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true})
 	if err != nil {
 		if infraerrors.Code(err) >= 500 {
 			err = infraerrors.New(http.StatusInternalServerError, "PI_ACCOUNT_SAVE_FAILED", "Pi 授权已完成，但保存账号失败。请保留当前页面并在本次授权开始后 10 分钟内重试导入；超时后需重新授权").WithCause(err)
