@@ -16,7 +16,7 @@ import (
 )
 
 func nativePiAccount() *Account {
-	return &Account{ID: 7, GroupIDs: []int64{9}, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "42", "chatgpt_account_id": "fixture-account", "refresh_token": "fixture-refresh"}}
+	return &Account{ID: 7, GroupIDs: []int64{9}, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "42", "chatgpt_account_id": "fixture-account", "refresh_token": "fixture-refresh", "access_token": "fixture-access"}}
 }
 
 func nativePiTestKey(userID int64) *APIKey {
@@ -274,5 +274,18 @@ func TestNativePiSharedCredentialRequiresGroupAuthorizationAndSeparatesSessions(
 	account.GroupIDs = []int64{10}
 	if _, err := piRequestOwner(c, account); err == nil {
 		t.Fatal("foreign account accepted")
+	}
+}
+
+func TestNativePiRejectsSchedulerProjectionBeforeForwarding(t *testing.T) {
+	account := nativePiAccount()
+	delete(account.Credentials, "access_token")
+	valid := true
+	account.SchedulerExecutionValid = &valid
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	c.Set("api_key", nativePiTestKey(42))
+	if _, err := (&OpenAIGatewayService{}).forwardNativePi(context.Background(), c, account, []byte(`{"model":"gpt-5.6-sol","input":"fixture"}`)); err == nil {
+		t.Fatal("scheduler projection cannot authorize an upstream call")
 	}
 }
