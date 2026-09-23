@@ -16,7 +16,12 @@ import (
 )
 
 func nativePiAccount() *Account {
-	return &Account{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "42", "chatgpt_account_id": "fixture-account", "refresh_token": "fixture-refresh"}}
+	return &Account{ID: 7, GroupIDs: []int64{9}, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "42", "chatgpt_account_id": "fixture-account", "refresh_token": "fixture-refresh"}}
+}
+
+func nativePiTestKey(userID int64) *APIKey {
+	groupID := int64(9)
+	return &APIKey{ID: 11, UserID: userID, GroupID: &groupID, Group: &Group{ID: 9, Platform: PlatformOpenAI, Status: StatusActive, IsExclusive: true}, User: &User{ID: userID, Status: StatusActive, AllowedGroups: []int64{9}}}
 }
 
 func TestNativePiStableSessionIgnoresPerRequestTraceID(t *testing.T) {
@@ -41,7 +46,7 @@ func TestNativePiStableSessionIgnoresPerRequestTraceID(t *testing.T) {
 func TestNativePiSessionIsIsolatedPerAPIKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set("api_key", &APIKey{ID: 11, UserID: 42})
+	c.Set("api_key", nativePiTestKey(42))
 	first, err := scopedNativePiSession(c, "same-client-session")
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +65,7 @@ func TestNativePiOwnerAndIngress(t *testing.T) {
 		body, metadata, session string
 		status                  int
 	}{
-		{"wrong owner", 43, `{"model":"gpt-6-astra","input":"test"}`, "", "session", 403},
+		{"unauthorized group", 43, `{"model":"gpt-6-astra","input":"test"}`, "", "session", 403},
 		{"missing key", 0, `{}`, "", "", 403},
 		{"codex header", 42, `{}`, `{"turn_id":"fixture"}`, "", 400},
 		{"codex body", 42, `{"client_metadata":{}}`, "", "", 400},
@@ -72,7 +77,11 @@ func TestNativePiOwnerAndIngress(t *testing.T) {
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
 			if tc.user > 0 {
-				c.Set("api_key", &APIKey{ID: 11, UserID: tc.user})
+				key := nativePiTestKey(tc.user)
+				if tc.user == 43 {
+					key.User.AllowedGroups = nil
+				}
+				c.Set("api_key", key)
 			}
 			if tc.metadata != "" {
 				c.Request.Header.Set("x-codex-turn-metadata", tc.metadata)
@@ -153,7 +162,7 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 		if payload.OwnerID != 42 || payload.CredentialID != 7 || payload.AccessToken != "fixture-access" || payload.Request["model"] != "gpt-6-astra" {
 			t.Error("binding not forwarded")
 		}
-		if payload.SessionID != "11:fixture-session" && !strings.HasPrefix(payload.SessionID, "11:one-shot:") {
+		if payload.SessionID != "42:11:fixture-session" && !strings.HasPrefix(payload.SessionID, "42:11:one-shot:") {
 			t.Errorf("unexpected Pi session binding: %q", payload.SessionID)
 		}
 		for _, field := range []string{"previous_response_id", "max_output_tokens", "client_metadata"} {
@@ -182,7 +191,7 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
-		c.Set("api_key", &APIKey{ID: 11, UserID: 42})
+		c.Set("api_key", nativePiTestKey(42))
 		if streaming {
 			c.Request.Header.Set("session-id", "fixture-session")
 		}
@@ -216,5 +225,47 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 				t.Fatalf("stream=false lost the function tool call: %v", err)
 			}
 		}
+	}
+}
+
+func TestNativePiSharedCredentialRequiresGroupAuthorizationAndSeparatesSessions(t *testing.T) {
+	account := nativePiAccount()
+	var sessions []string
+	for _, userID := range []int64{42, 43} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		key := nativePiTestKey(userID)
+		c.Set("api_key", key)
+		owner, err := piRequestOwner(c, account)
+		if err != nil || owner != 42 {
+			t.Fatalf("authorized shared caller rejected: owner=%d err=%v", owner, err)
+		}
+		session, err := scopedNativePiSession(c, "same-client-session")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, session)
+		key.User.AllowedGroups = nil
+		if _, err := piRequestOwner(c, account); err == nil {
+			t.Fatal("removed group authorization accepted")
+		}
+		key.User.AllowedGroups = []int64{9}
+		key.Group.IsExclusive = false
+		if _, err := piRequestOwner(c, account); err == nil {
+			t.Fatal("public group accepted")
+		}
+		key.Group.IsExclusive = true
+		key.Group.ID = 10
+		if _, err := piRequestOwner(c, account); err == nil {
+			t.Fatal("foreign group accepted")
+		}
+	}
+	if sessions[0] == sessions[1] {
+		t.Fatal("users share a session namespace")
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("api_key", nativePiTestKey(42))
+	account.GroupIDs = []int64{10}
+	if _, err := piRequestOwner(c, account); err == nil {
+		t.Fatal("foreign account accepted")
 	}
 }

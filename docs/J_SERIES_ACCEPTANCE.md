@@ -34,7 +34,7 @@ This is an implementation ledger, not a declaration of production completion.
 
 ## Still required before complete release
 
-- T03/T04: validate execution contract, account binding, refresh ownership, isolated
+- T03/T04: complete live validation of execution contract, account binding, refresh ownership, isolated
   sessions, per-account capacity and cancellation under actual concurrent requests.
 - T05/T06: current CPA/Pi real account import, refresh, continuation and failure tests.
   Cached token or mock success is insufficient evidence of fresh OAuth/refresh.
@@ -69,3 +69,15 @@ HTTP 200, imports or container health as end-to-end acceptance.
   These baseline incompatibilities remain visible; do not weaken production
   account validation merely to make legacy direct-backend fixtures pass.
 - No candidate has been deployed. Do not report the production service as updated.
+
+## Pi shared-account correction
+
+- Keep credential ownership and token refresh binding with the importing owner.
+- Authorize each caller using the authenticated key, active user, active exclusive
+  OpenAI group and the selected account's group membership. Reject foreign groups.
+- Include both caller user and API key in the native session namespace; client
+  session names cannot merge two callers. CPA group separation remains enforced.
+- Targeted Go race tests pass. Twelve Pi runtime tests pass, including two
+  simultaneous cached-WebSocket sessions using one synthetic credential against
+  a local test upstream: cancelling A preserves B and no output crosses callers.
+  This is protocol/isolation coverage, not proof of fresh production OAuth.

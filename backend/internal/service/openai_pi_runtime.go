@@ -23,14 +23,28 @@ func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 		return 0, errors.New("Pi account requires an authenticated API key")
 	}
 	key, ok := value.(*APIKey)
-	if !ok || key == nil {
+	if !ok || key == nil || key.ID <= 0 || key.UserID <= 0 {
 		return 0, errors.New("Pi account requires an authenticated API key")
 	}
 	owner, err := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
-	if err != nil || owner <= 0 || key.UserID != owner {
-		return 0, errors.New("Pi credential does not belong to this user")
+	if err != nil || owner <= 0 {
+		return 0, errors.New("Pi credential owner is invalid")
 	}
-	return owner, nil
+	// The credential owner controls refresh, not exclusive use of the account.
+	// A selected shared account is usable only inside the authenticated key's
+	// active, exclusive Pi group. Never take this binding from request headers.
+	if key.GroupID == nil || key.Group == nil || key.Group.ID != *key.GroupID ||
+		!key.Group.IsActive() || !key.Group.IsExclusive || key.Group.Platform != PlatformOpenAI ||
+		key.User == nil || key.User.ID != key.UserID || !key.User.IsActive() ||
+		!key.User.CanBindGroup(*key.GroupID, true) {
+		return 0, errors.New("Pi request requires an authorized exclusive OpenAI group")
+	}
+	for _, groupID := range account.GroupIDs {
+		if groupID == *key.GroupID {
+			return owner, nil
+		}
+	}
+	return 0, errors.New("Pi account does not belong to the selected group")
 }
 
 // A request correlation ID can change every turn; it cannot establish the
@@ -60,10 +74,10 @@ func scopedNativePiSession(c *gin.Context, session string) (string, error) {
 		return "", errors.New("Pi account requires an authenticated API key")
 	}
 	key, ok := value.(*APIKey)
-	if !ok || key == nil || key.ID <= 0 {
+	if !ok || key == nil || key.ID <= 0 || key.UserID <= 0 {
 		return "", errors.New("Pi account requires an authenticated API key")
 	}
-	return strconv.FormatInt(key.ID, 10) + ":" + session, nil
+	return strconv.FormatInt(key.UserID, 10) + ":" + strconv.FormatInt(key.ID, 10) + ":" + session, nil
 }
 func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {

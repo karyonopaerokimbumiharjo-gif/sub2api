@@ -114,3 +114,32 @@ test('cached request input is isolated from caller mutations',()=>{
  original.input.push({role:'user',content:'mutated'});
  assert.equal(body.input.length,1);
 });
+
+test('two callers share one credential concurrently; cancelling one cached WS turn preserves the other', {timeout:5000}, async()=>{
+ const http=createServer();const wss=new WebSocketServer({server:http});
+ const sent=[];let both;const ready=new Promise(resolve=>both=resolve);
+ wss.on('connection',socket=>socket.on('message',raw=>{
+  const body=JSON.parse(raw);sent.push({socket,body});if(sent.length===2)both();
+ }));
+ http.listen(0,'127.0.0.1');await once(http,'listening');const baseUrl=`http://127.0.0.1:${http.address().port}/backend-api`;
+ const cancelA=new AbortController();const outputA=[],outputB=[];
+ const call=(sessionId,signal,onBytes)=>runNative({...base,baseUrl,sessionId,signal,onBytes,transport:'websocket-cached'});
+ try {
+  const a=call('42:11:shared-name',cancelA.signal,b=>outputA.push(Buffer.from(b)));
+  const b=call('43:12:shared-name',undefined,b=>outputB.push(Buffer.from(b)));
+  await ready;
+  assert.notEqual(sent[0].body.prompt_cache_key,sent[1].body.prompt_cache_key);
+  cancelA.abort();
+  const resultA=await a;
+  assert.equal(resultA.result.stopReason,'aborted');
+  const bScope=scopedSession(base.sessionSecret,base.ownerId,base.credentialId,base.accountId,request.model,'43:12:shared-name');
+  const bSocket=sent.find(item=>item.body.prompt_cache_key===bScope)?.socket;
+  assert.ok(bSocket);bSocket.send(completed('only_b_completed'));
+  const resultB=await b;
+  assert.equal(resultB.evidence.terminal_status,'completed');
+  assert.match(Buffer.concat(outputB).toString(),/only_b_completed/);
+  assert.doesNotMatch(Buffer.concat(outputA).toString(),/only_b_completed/);
+ } finally {
+  cancelA.abort();closeSessions();for(const socket of wss.clients)socket.terminate();wss.close();http.closeAllConnections();await new Promise(r=>http.close(r));
+ }
+});

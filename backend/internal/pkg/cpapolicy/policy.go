@@ -13,7 +13,7 @@ import (
 const BaseURL = "http://cpa:8317"
 
 func Required() error {
-	return infraerrors.BadRequest("CPA_BACKEND_REQUIRED", "所有账号和审计必须通过 CPA；请使用 CPA 账号导入入口")
+	return infraerrors.BadRequest("CPA_BACKEND_REQUIRED", "此调用路径需要 CPA 账号；Pi 请使用独立导入入口和专属分组，不能混入直连配置")
 }
 
 func ValidateBaseURL(raw string) error {
