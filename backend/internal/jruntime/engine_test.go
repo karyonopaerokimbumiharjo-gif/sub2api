@@ -247,3 +247,34 @@ func TestFiniteCandidatesValidateTypesAndCallerChoice(t *testing.T) {
 	require.Empty(t, requestedCandidates([]Tool{fixtureTool}, json.RawMessage(`{"type":"function","name":"different"}`), 64))
 	require.Len(t, requestedCandidates([]Tool{fixtureTool}, json.RawMessage(`{"type":"function","name":"check_job"}`), 64), 1)
 }
+
+func TestJActionGuardRejectsBeforeClientOrBridgeExecution(t *testing.T) {
+	for _, bridge := range []bool{false, true} {
+		runner := &fixtureRunner{}
+		e := Engine{Record: fixtureRecord, InitialActor: "base", Base: func(_ context.Context, b Binding, _ json.RawMessage) (BaseResult, error) {
+			return fixtureResponse(b.BaseModel, map[string]any{"type": "function_call", "name": "check_job", "call_id": "guarded", "arguments": `{"job":"job-a"}`}), nil
+		}, GuardCall: func(context.Context, Binding, Tool, Call) error { return errors.New("safety_rejected") }}
+		if bridge {
+			e.Tools = runner
+		}
+		result, err := e.Run(context.Background(), fixtureBinding("gpt-5.6-sol"), fixtureBody())
+		require.ErrorContains(t, err, "safety_rejected")
+		require.Zero(t, runner.calls)
+		require.Empty(t, result.Response)
+	}
+}
+func TestJResultGuardPreventsUnsafeToolResultConsumption(t *testing.T) {
+	runner := &fixtureRunner{}
+	base := 0
+	e := Engine{Record: fixtureRecord, InitialActor: "base", Tools: runner, Base: func(_ context.Context, b Binding, _ json.RawMessage) (BaseResult, error) {
+		base++
+		return fixtureResponse(b.BaseModel, map[string]any{"type": "function_call", "name": "check_job", "call_id": "guarded", "arguments": `{"job":"job-a"}`}), nil
+	}, GuardResult: func(context.Context, Binding, Call, json.RawMessage) error {
+		return errors.New("result_safety_rejected")
+	}}
+	result, err := e.Run(context.Background(), fixtureBinding("gpt-5.6-sol"), fixtureBody())
+	require.ErrorContains(t, err, "result_safety_rejected")
+	require.Equal(t, 1, runner.calls)
+	require.Equal(t, 1, base)
+	require.Empty(t, result.Response)
+}

@@ -212,6 +212,9 @@ func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig,
 		Kind: decisionKindForResult(aggregated), Result: aggregated,
 		AllowNextStage: aggregated.Action != ActionBlock,
 	}
+	if aggregated.Decision == EventReviewRequired {
+		decision.ErrorCode = ErrorCodeReviewRequired
+	}
 	if r.auditComplete != nil {
 		r.auditComplete(cfg, job.Snapshot, decision)
 	}
@@ -246,6 +249,9 @@ func (r *Runner) observeAsyncFailure(err error, latency time.Duration) {
 func decisionKindForResult(result *NormalizedResult) DecisionKind {
 	if result == nil {
 		return DecisionInvalid
+	}
+	if result.Decision == EventReviewRequired {
+		return DecisionUnavailable
 	}
 	switch result.Action {
 	case ActionBlock:

@@ -63,6 +63,9 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 			aggregated.PolicyID = result.PolicyID
 			aggregated.PolicyVersion = result.PolicyVersion
 		}
+		if result.BioTier > aggregated.BioTier {
+			aggregated.BioTier = result.BioTier
+		}
 		for _, category := range result.Categories {
 			categories[category] = struct{}{}
 		}
@@ -88,6 +91,10 @@ func AggregateResults(results []*NormalizedResult, latency time.Duration) (*Norm
 		for _, category := range result.UnknownCategories {
 			unknown[category] = struct{}{}
 		}
+	}
+	if aggregated.BioTier != "" {
+		aggregated.ScannerEvidence["bio_tier"] = aggregated.BioTier
+		aggregated.ScannerEvidence["bio_policy_version"] = BioPolicyVersion
 	}
 	aggregated.Categories = orderedScannerKeys(categories)
 	aggregated.IntentCategories = orderedScannerKeys(intentCategories)
@@ -115,6 +122,8 @@ func orderedContentCategoryKeys(values map[string]struct{}) []string {
 func resultSeverity(decision EventDecision) int {
 	switch decision {
 	case EventCritical:
+		return 4
+	case EventReviewRequired:
 		return 3
 	case EventFlag:
 		return 2

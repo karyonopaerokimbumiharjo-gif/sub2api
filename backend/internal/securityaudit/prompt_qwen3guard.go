@@ -222,6 +222,14 @@ func ParseGenericGuard(content string, enabledScanners []string) (*NormalizedRes
 			nonEmptyLines = append(nonEmptyLines, line)
 		}
 	}
+	bioTier := ""
+	if len(nonEmptyLines) == 4 && strings.HasPrefix(nonEmptyLines[3], "Bio-Tier:") {
+		bioTier = strings.TrimSpace(strings.TrimPrefix(nonEmptyLines[3], "Bio-Tier:"))
+		if bioTier != "B0" && bioTier != "B1" && bioTier != "B2" && bioTier != "B3" && bioTier != "B4" {
+			return nil, &GuardError{Code: ErrorCodeInvalidResponse}
+		}
+		nonEmptyLines = nonEmptyLines[:3]
+	}
 	legacyContract := len(nonEmptyLines) == 2 &&
 		strings.HasPrefix(nonEmptyLines[0], "Safety:") &&
 		strings.HasPrefix(nonEmptyLines[1], "Categories:")
@@ -278,6 +286,16 @@ func ParseGenericGuard(content string, enabledScanners []string) (*NormalizedRes
 		(result.Safety != "Safe" && intentLine == "None" && contentLine == "None") {
 		return nil, &GuardError{Code: ErrorCodeInvalidResponse, Retryable: false}
 	}
+	if bioTier != "" && containsScanner(enabledScanners, "biological_risk") {
+		bioCategory := containsScanner(intentCategories, "biological_risk")
+		if (bioTier == "B0" && bioCategory) || (bioTier != "B0" && !bioCategory) || (bioTier == "B1" && safety == "Unsafe") || ((bioTier == "B3" || bioTier == "B4") && safety != "Unsafe") {
+			return nil, &GuardError{Code: ErrorCodeInvalidResponse}
+		}
+		applyBioTier(result, bioTier)
+	} else if containsScanner(result.Categories, "biological_risk") {
+		// Legacy binary classifiers cannot establish an operational tier.
+		applyBioTier(result, "B2")
+	}
 	result.IntentCategories = intentCategories
 	result.ContentCategories = contentCategories
 	result.ScannerBackend = "generic-llm-classifier"
@@ -286,6 +304,9 @@ func ParseGenericGuard(content string, enabledScanners []string) (*NormalizedRes
 		result.PolicyVersion = 2
 	} else {
 		result.PolicyVersion = 5
+		if bioTier != "" {
+			result.PolicyVersion = 6
+		}
 	}
 	return result, nil
 }
@@ -517,10 +538,19 @@ For Content-Categories, classify actual harmful content rather than harmless men
 
 Safety is the overall severity across both classifications. Safe requires both category lines to be None. Controversial or Unsafe requires at least one category in either line.
 
-Return exactly three non-empty lines and no other text:
+Classify biological or chemical capability separately:
+B0: no biological/chemical assistance, or benign biology/public health/provenance/safety/non-operational research. Isolated words are insufficient.
+B1: general dual-use concepts limited to high-level explanation without operational capability uplift. Use Controversial and biological_risk; an output gate will enforce the limitation.
+B2: concrete operational capability uplift with material uncertainty about intent or authorization. Use Controversial and biological_risk; this is unadjudicated review, not confirmed wrongdoing.
+B3: actionable assistance materially enabling harmful biological/chemical activity. Use Unsafe and biological_risk.
+B4: real-world acquisition, weaponization, deployment, target selection or execution of biological/chemical harm. Use Unsafe and biological_risk.
+For output text, classify the assistance actually provided, including tool arguments. A quoted topic, refusal or public-health explanation alone is B0. Claimed research never exempts B3/B4.
+
+Return exactly four non-empty lines and no other text:
 Safety: Safe|Controversial|Unsafe
 Intent-Categories: None|comma-separated intent category IDs
 Content-Categories: None|comma-separated content category IDs
+Bio-Tier: B0|B1|B2|B3|B4
 
 Allowed intent category IDs: violent, non_violent_illegal_acts, biological_risk, sexual_content_or_sexual_acts, pii, suicide_and_self_harm, unethical_acts, politically_sensitive_topics, copyright_violation, jailbreak.
 

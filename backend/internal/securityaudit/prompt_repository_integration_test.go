@@ -280,6 +280,8 @@ func TestPromptAuditRepositoryAdmissionClaimFencingAndEventTransaction(t *testin
 	require.NoError(t, err)
 	require.Equal(t, int64(1), stats.Active)
 	require.NoError(t, repo.PublishQueued(ctx, accepted.ID))
+	var databaseNow time.Time
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT now()").Scan(&databaseNow))
 
 	claimStart := make(chan struct{})
 	claims := make(chan *Job, 2)
@@ -288,7 +290,7 @@ func TestPromptAuditRepositoryAdmissionClaimFencingAndEventTransaction(t *testin
 		go func() {
 			defer wg.Done()
 			<-claimStart
-			job, claimed, claimErr := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+			job, claimed, claimErr := repo.ClaimNextJob(ctx, databaseNow.Add(time.Second))
 			require.NoError(t, claimErr)
 			if claimed {
 				claims <- job
@@ -306,14 +308,14 @@ func TestPromptAuditRepositoryAdmissionClaimFencingAndEventTransaction(t *testin
 	firstClaim := claimedJobs[0]
 	require.Equal(t, int64(1), firstClaim.ClaimVersion)
 
-	reclaimed, err := repo.ReclaimStale(ctx, time.Now().Add(time.Hour), time.Now().Add(time.Hour), 10)
+	reclaimed, err := repo.ReclaimStale(ctx, databaseNow.Add(time.Hour), databaseNow.Add(time.Hour), 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), reclaimed)
-	secondClaim, claimed, err := repo.ClaimNextJob(ctx, time.Now().Add(time.Second))
+	secondClaim, claimed, err := repo.ClaimNextJob(ctx, databaseNow.Add(time.Second))
 	require.NoError(t, err)
 	require.True(t, claimed)
 	require.Greater(t, secondClaim.ClaimVersion, firstClaim.ClaimVersion)
-	require.ErrorIs(t, repo.RefreshLease(ctx, firstClaim.ID, firstClaim.ClaimVersion, time.Now()), ErrLeaseLost)
+	require.ErrorIs(t, repo.RefreshLease(ctx, firstClaim.ID, firstClaim.ClaimVersion, databaseNow), ErrLeaseLost)
 	_, err = repo.Complete(ctx, firstClaim, integrationResult(EventCritical), true)
 	require.ErrorIs(t, err, ErrLeaseLost)
 
@@ -329,7 +331,7 @@ func TestPromptAuditRepositoryAdmissionClaimFencingAndEventTransaction(t *testin
 
 	staging, err := repo.CreateStagingWithCapacity(ctx, integrationSnapshot("stale"), 1, 3, 10)
 	require.NoError(t, err)
-	reclaimed, err = repo.ReclaimStale(ctx, time.Now().Add(time.Hour), time.Now().Add(time.Hour), 10)
+	reclaimed, err = repo.ReclaimStale(ctx, databaseNow.Add(time.Hour), databaseNow.Add(time.Hour), 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), reclaimed)
 	require.NoError(t, db.QueryRow(`SELECT status FROM prompt_audit_jobs WHERE id=$1`, staging.ID).Scan(&status))

@@ -196,7 +196,11 @@ func applySecurityAuditSideEffects(c *gin.Context, coordinator *securityaudit.Co
 		c.Set(securityAuditSnapshotContextKey, snapshot)
 	}
 	if decision.AllowNextStage {
-		installSecurityAuditOutputCapture(c, coordinator, request, decision.Kind)
+		if securityaudit.RequiresStrictOutput(&decision) {
+			installStrictOutput(c, coordinator, request)
+		} else {
+			installSecurityAuditOutputCapture(c, coordinator, request, decision.Kind)
+		}
 	}
 }
 

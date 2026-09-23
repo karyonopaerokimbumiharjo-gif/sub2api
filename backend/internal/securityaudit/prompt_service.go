@@ -313,9 +313,15 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	if cached, matched := s.matchCachedBlock(ctx, req, cfg, snapshot); matched {
 		return cached, nil
 	}
+	snapshot.ResearchProfileID = s.activeResearchProfile(ctx, req.UserID, req.APIKeyID)
 	decision, err := s.evaluator.EvaluateFor(ctx, cfg, snapshot, req.RequireJev)
 	if err != nil || decision == nil {
 		return decision, err
+	}
+	if decision.Result != nil && decision.Result.BioTier == "B1" && req.Stage != "http" {
+		decision.Kind = DecisionUnavailable
+		decision.AllowNextStage = false
+		decision.ErrorCode = ErrorCodeReviewRequired
 	}
 	if decision.Kind == DecisionAllow && len(snapshot.SegmentFingerprints) > 0 && s.segmentCache != nil {
 		cacheCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)

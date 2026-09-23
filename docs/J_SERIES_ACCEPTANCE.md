@@ -168,3 +168,28 @@ testing. Manual Pi refresh now uses the automatic refresh lock and durable write
 a duplicate request holding the old credential snapshot reuses the rotated result.
 The full frontend run found one stale reauthorization assertion (2253 other tests
 passed); the corrected assertion and affected test-modal tests pass (9 tests).
+
+## Safety candidate checkpoint (2026-09-23, not deployed)
+
+- Structured B0–B4 biology decisions distinguish limited assistance, review and
+  confirmed block candidates. Review-required results retain their own event status,
+  do not become confirmed-block metrics, and preserve existing hard-rule blocks.
+- B1 HTTP output is buffered until complete content and tool arguments pass a
+  synchronous output gate. Partial/oversized/cancelled outputs are never released.
+  Strict-output WebSocket requests are rejected before forwarding rather than
+  pretending that post-delivery observation can prevent disclosure.
+- J local tool batches retain authorization before dispatch. Action and result
+  guards also run under the configured Safety policy; rejected actions terminate
+  the task and are not silently moved to another account.
+- Administrator research approvals are immutable, user/key-bound, explicitly
+  scoped, expire within 90 days and retain revocation evidence. They annotate
+  audit evidence; they do not bypass B2 review or any hard block/tool grant.
+- Pseudonymous HMAC safety identifiers are injected only for supported OpenAI
+  Platform API routes. CPA/Pi Codex OAuth paths do not support that public field;
+  client-supplied identifiers are stripped, and support is not claimed there.
+- The J checkbox now preserves the actual saved state after save failure.
+- Validation: full securityaudit and jruntime suites with race detection and real
+  PostgreSQL pass; 48 audit/UI tests pass; backend and frontend builds pass.
+  Whole handler/service test runs still contain 79 failing top-level tests and a
+  legacy service-fixture panic. Most visible failures use retired direct OAuth,
+  Grok or external WebSocket fixtures; they are not reported as passing or bypassed.

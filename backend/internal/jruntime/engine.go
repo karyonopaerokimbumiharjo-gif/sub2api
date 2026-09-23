@@ -22,6 +22,7 @@ var (
 	ErrBudget         = errors.New("j_execution_budget_exhausted")
 	ErrModel          = errors.New("j_base_model_mismatch")
 	ErrTool           = errors.New("j_tool_not_authorized")
+	ErrSafety         = errors.New("j_safety_rejected")
 	ErrUnknownOutcome = errors.New("j_tool_outcome_unknown")
 )
 
@@ -84,6 +85,8 @@ func DefaultBudget() Budget {
 }
 
 type Engine struct {
+	GuardCall    func(context.Context, Binding, Tool, Call) error
+	GuardResult  func(context.Context, Binding, Call, json.RawMessage) error
 	InitialActor string
 	Choose       Choose
 	Base         BaseCall
@@ -238,6 +241,11 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 				actor = "base"
 				continue
 			}
+			if e.GuardCall != nil {
+				if err = e.GuardCall(ctx, binding, declared[calls[0].Name], calls[0]); err != nil {
+					return result, err
+				}
+			}
 			input = append(input, callItem(calls[0]))
 		} else {
 			if result.BaseCalls >= budget.BaseCalls {
@@ -281,7 +289,8 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 			}
 			for _, item := range envelope.Output {
 				var value struct {
-					Type string `json:"type"`
+					Type  string `json:"type"`
+					Input string `json:"input"`
 					Call
 				}
 				if json.Unmarshal(item, &value) != nil {
@@ -291,6 +300,15 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 					tool, exists := declared[value.Name]
 					if e.Tools != nil || !exists || tool.Type != "custom" {
 						return result, ErrTool
+					}
+				}
+				if (value.Type == "function_call" || value.Type == "custom_tool_call") && value.Name != HandoffTool && e.GuardCall != nil {
+					call := value.Call
+					if value.Type == "custom_tool_call" {
+						call.Arguments = value.Input
+					}
+					if err = e.GuardCall(ctx, binding, declared[value.Name], call); err != nil {
+						return result, err
 					}
 				}
 				if value.Type == "function_call" {
@@ -355,6 +373,11 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 			}
 			if len(output) > budget.MaxBytes || !json.Valid(output) {
 				return result, errors.New("j_invalid_tool_result")
+			}
+			if e.GuardResult != nil {
+				if err = e.GuardResult(ctx, binding, call, output); err != nil {
+					return result, err
+				}
 			}
 			if err = record(Event{Stage: "tool_result", Actor: actor, CallID: call.ID, Tool: call.Name, Outcome: "completed"}); err != nil {
 				return result, err

@@ -137,6 +137,10 @@ func RegisterAdminRoutes(
 func registerPromptAuditRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	promptAudit := admin.Group("/prompt-audit")
 	{
+		promptAudit.GET("/bio-catalog", h.Admin.PromptAudit.BioCatalog)
+		promptAudit.GET("/research-profiles", h.Admin.PromptAudit.ResearchProfiles)
+		promptAudit.POST("/research-profiles", h.Admin.PromptAudit.ResearchProfiles)
+		promptAudit.DELETE("/research-profiles/:id", h.Admin.PromptAudit.ResearchProfiles)
 		promptAudit.GET("/config", h.Admin.PromptAudit.GetConfig)
 		promptAudit.PUT("/config", h.Admin.PromptAudit.UpdateConfig)
 		promptAudit.GET("/policy-versions", h.Admin.PromptAudit.ListPolicyVersions)

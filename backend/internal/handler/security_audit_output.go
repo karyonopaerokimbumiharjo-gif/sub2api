@@ -60,6 +60,12 @@ func installSecurityAuditOutputCapture(c *gin.Context, coordinator *securityaudi
 func SecurityAuditOutputFinalizer() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
+			if value, ok := c.Get(strictOutputKey); ok {
+				if w, ok := value.(*strictOutputWriter); ok {
+					w.finish(c.Request.Context())
+				}
+				return
+			}
 			if value, ok := c.Get(securityAuditOutputCaptureContextKey); ok {
 				if writer, ok := value.(*securityAuditOutputWriter); ok {
 					writer.mu.Lock()

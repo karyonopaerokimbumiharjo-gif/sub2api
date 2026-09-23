@@ -19,6 +19,7 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	body = s.applySafetyIdentifier(c, account, body)
 	beginUpstreamResponseModelObservation(c)
 	if account.UsesNativePiRuntime() {
 		return s.forwardNativePi(ctx, c, account, body)

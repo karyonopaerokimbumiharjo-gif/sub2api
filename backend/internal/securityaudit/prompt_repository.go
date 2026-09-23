@@ -302,7 +302,11 @@ func (r *PostgreSQLRepository) RecordBlocking(ctx context.Context, snapshot Prom
 	}
 	var event *Event
 	if shouldStorePromptAuditEvent(result.Decision, storePassEvents) {
-		event, err = insertEvent(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result)
+		if result.Decision == EventReviewRequired {
+			event, err = insertEventWithAuditStatus(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result, "review_required")
+		} else {
+			event, err = insertEvent(ctx, tx, job.ID, snapshot.AuditEvidence(), configVersion, result)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -443,6 +447,9 @@ func insertJob(ctx context.Context, queryer sqlQueryer, snapshot PromptSnapshot,
 }
 
 func insertEvent(ctx context.Context, queryer sqlQueryer, jobID int64, snapshot PromptSnapshot, configVersion int64, result *NormalizedResult) (*Event, error) {
+	if result.Decision == EventReviewRequired {
+		return insertEventWithAuditStatus(ctx, queryer, jobID, snapshot, configVersion, result, "review_required")
+	}
 	return insertEventWithAuditStatus(ctx, queryer, jobID, snapshot, configVersion, result, "audited")
 }
 
@@ -458,6 +465,9 @@ func insertEventWithAuditStatus(ctx context.Context, queryer sqlQueryer, jobID i
 	evidence := make(map[string]string, len(result.ScannerEvidence))
 	for key, value := range result.ScannerEvidence {
 		evidence[key] = RedactPreview(value, 160)
+	}
+	if snapshot.ResearchProfileID > 0 {
+		evidence["research_profile_id"] = fmt.Sprint(snapshot.ResearchProfileID)
 	}
 	evidenceJSON, _ := json.Marshal(evidence)
 	outputCapture, _ := json.Marshal(snapshot.OutputCapture)

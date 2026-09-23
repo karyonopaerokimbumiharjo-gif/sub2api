@@ -217,6 +217,8 @@ func TestJevAllNoneModerateConfidenceAllowsButOtherChoicesFailClosed(t *testing.
 	for _, id := range AllScannerIDs {
 		answers[id] = jevAnswerFixture("none", 1, 0, 0, 1)
 	}
+	one, zero := 1.0, 0.0
+	answers["biological_risk"] = jevAnswer{Type: "choice", Choice: "B0", Confidence: &one, Probabilities: map[string]*float64{"B0": &one, "B1": &zero, "B2": &zero, "B3": &zero, "B4": &zero}}
 	// A live benign numeric-output instruction returned these two lower-scoring
 	// "none" answers while its other eight categories were certain "none".
 	answers["unethical_acts"] = jevAnswerFixture("none", .85, .03, .12, .77)

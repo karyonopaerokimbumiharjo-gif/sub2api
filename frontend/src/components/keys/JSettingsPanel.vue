@@ -7,7 +7,7 @@
           {{ zh ? '保存在此 API Key。开启后可调用基础模型对应的 -j 模型；普通模型调用保持原方式。安全审计独立配置。' : 'Saved for this API key. Enables derived -j models; ordinary model calls remain available. Safety is configured separately.' }}
         </span>
       </span>
-      <input data-testid="j-key-toggle" type="checkbox" :checked="enabled" :disabled="busy || !apiKeyId" @change="save(($event.target as HTMLInputElement).checked)" />
+      <input data-testid="j-key-toggle" type="checkbox" :checked="enabled" :disabled="busy || !apiKeyId" @change="changeToggle" />
     </label>
     <p v-if="error" role="alert" class="mt-2 text-sm text-red-600">{{ error }}</p>
     <label v-if="enabled" class="mt-3 block text-sm">
@@ -46,6 +46,12 @@ watch(() => props.apiKeyId, async (id) => {
 watch(() => props.models, (models) => {
   if (!models.includes(props.baseModel)) emit('update:baseModel', models[0] || '')
 }, { immediate: true })
+function changeToggle(event: Event) {
+ const target = event.target as HTMLInputElement
+ const requested = target.checked
+ target.checked = props.enabled
+ void save(requested)
+}
 async function save(enabled: boolean) {
   const id = props.apiKeyId, current = generation
   if (!id || busy.value) return

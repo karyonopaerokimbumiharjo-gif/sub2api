@@ -77,7 +77,7 @@ func TestOpenAICompatibleGenericClassifierContract(t *testing.T) {
 		system, ok := messages[0].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "system", system["role"])
-		require.Contains(t, system["content"], "exactly three non-empty lines")
+		require.Contains(t, system["content"], "exactly four non-empty lines")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Safety: Controversial\nIntent-Categories: politically_sensitive_topics\nContent-Categories: None"}}]}`))
 	}))
 	defer server.Close()

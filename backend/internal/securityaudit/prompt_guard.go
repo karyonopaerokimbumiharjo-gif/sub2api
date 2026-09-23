@@ -198,7 +198,12 @@ func (g *GuardEvaluator) evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 func (g *GuardEvaluator) finishEvaluation(ctx context.Context, cfg ActiveConfig, snapshot PromptSnapshot, result *NormalizedResult, persistEvent bool, start time.Time, baseFields map[string]any) (*PromptDecision, error) {
 	kind := decisionKindForResult(result)
 	decision := &PromptDecision{Kind: kind, Result: result, AllowNextStage: kind == DecisionAllow || kind == DecisionFlag}
-	if kind == DecisionBlock {
+	if result.Decision == EventReviewRequired {
+		decision.Kind = DecisionUnavailable
+		decision.ErrorCode = ErrorCodeReviewRequired
+		decision.AllowNextStage = false
+	}
+	if kind == DecisionBlock && result.Decision != EventReviewRequired {
 		decision.ErrorCode = ErrorCodeBlocked
 	}
 	if g.metrics != nil {
@@ -228,7 +233,7 @@ func (g *GuardEvaluator) finishEvaluation(ctx context.Context, cfg ActiveConfig,
 			"latency_ms": result.LatencyMS, "status": "blocked", "error_code": ErrorCodeBlocked,
 			"stage": snapshot.Stage, "upstream_dispatched": false, "billing_preconsumed": false,
 		}))
-	} else {
+	} else if decision.AllowNextStage {
 		LogInfo(EventGuardAllowed, mergeLogFields(baseFields, map[string]any{
 			"decision": kind, "risk_level": result.RiskLevel, "action": result.Action,
 			"guard_endpoint_id": result.GuardEndpointID, "chunk_total": result.ChunkTotal,

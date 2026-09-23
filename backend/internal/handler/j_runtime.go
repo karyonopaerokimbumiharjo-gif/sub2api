@@ -70,12 +70,18 @@ func (h *OpenAIGatewayHandler) forwardJ(c *gin.Context, key *service.APIKey, acc
 		return fail(409, "J continuation does not match this key, session, account and model")
 	}
 	engine := jruntime.Engine{InitialActor: actor, Record: h.jStore.Record}
+	h.installJSafety(c, key, body, &engine)
 	if token := h.securityAuditCoordinator.JevDecisionToken(); token != "" {
 		client := jruntime.JevClient{Token: token}
 		engine.Choose = client.Choose
 	}
 	if grant != "" {
 		engine.Tools = &jruntime.BridgeRunner{Store: h.jStore, GrantID: grant}
+		if value, ok := c.Get(strictOutputKey); ok {
+			if gate, ok := value.(*strictOutputWriter); ok {
+				engine.Tools = &gatedJTools{ToolRunner: engine.Tools, gate: gate}
+			}
+		}
 	}
 	c.Request.Header.Del("X-Sub2API-Tool-Grant")
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
@@ -123,7 +129,7 @@ func (h *OpenAIGatewayHandler) forwardJ(c *gin.Context, key *service.APIKey, acc
 	}
 	if runErr != nil {
 		status := 502
-		if blocked {
+		if blocked || errors.Is(runErr, jruntime.ErrSafety) {
 			status = 403
 		}
 		if c.Request.Context().Err() != nil {

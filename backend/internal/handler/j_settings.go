@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -36,13 +38,21 @@ func (h *APIKeyHandler) JSettings(c *gin.Context) {
 			return
 		}
 		if err := h.jStore.SetEnabled(c.Request.Context(), subject.UserID, id, *input.Enabled); err != nil {
-			response.Error(c, 404, "API key not found")
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, jruntime.ErrBinding) {
+				response.Error(c, 404, "API key not found")
+			} else {
+				response.Error(c, 503, "J settings are unavailable")
+			}
 			return
 		}
 	}
 	enabled, err := h.jStore.Enabled(c.Request.Context(), subject.UserID, id)
 	if err != nil {
-		response.Error(c, 404, "API key not found")
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, jruntime.ErrBinding) {
+			response.Error(c, 404, "API key not found")
+		} else {
+			response.Error(c, 503, "J settings are unavailable")
+		}
 		return
 	}
 	response.Success(c, gin.H{"enabled": enabled})

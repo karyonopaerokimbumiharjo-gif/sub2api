@@ -52,6 +52,7 @@
               />
               <div v-if="loadErrors.groups || loadErrors.accounts" role="alert" class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ loadErrors.groups || loadErrors.accounts }}</div>
               <PolicyPanel :draft="draft" :groups="groups" @update:draft="replaceDraft" />
+              <ResearchProfiles />
               <PolicyHistory
                 :versions="policyVersions"
                 :current-version="serverConfig?.config_version || 0"
@@ -232,6 +233,7 @@ import EventWorkspace from './components/EventWorkspace.vue'
 import EventDetailDialog from './components/EventDetailDialog.vue'
 import FilterDeleteDialog from './components/FilterDeleteDialog.vue'
 import AdaptiveWorkspace from './components/AdaptiveWorkspace.vue'
+import ResearchProfiles from './components/ResearchProfiles.vue'
 import PolicyHistory from './components/PolicyHistory.vue'
 import promptAuditAPI from './api'
 import type {

@@ -23,7 +23,7 @@ const (
 	JevProtocol         = "typesafe_systemone"
 	DefaultJevModel     = "jev-1.13.0"
 	JevBaseURL          = "https://api.typesafe.ai"
-	jevPolicyID         = "silicon-jev-security-v2"
+	jevPolicyID         = "silicon-jev-security-v3"
 	jevMaxInputRunes    = 4000
 	jevMaxInputBytes    = 16000
 	jevMaxResponseBytes = 256 * 1024
@@ -139,6 +139,10 @@ func buildJevPayload(endpoint ActiveEndpoint, chunk string, scanners []string) (
 			continue
 		}
 		ids = append(ids, id)
+		if id == "biological_risk" {
+			questions[id] = bioQuestion()
+			continue
+		}
 		questions[id] = jevQuestion{
 			Type: "choice",
 			Instructions: map[string]string{
@@ -338,13 +342,26 @@ func parseJevResponse(body []byte, endpoint ActiveEndpoint, ids []string) (*Norm
 		ScannerVersion:  wire.Model,
 		GuardEndpointID: endpoint.ID,
 		PolicyID:        jevPolicyID,
-		PolicyVersion:   2,
+		PolicyVersion:   3,
 	}
 
+	bioTier := ""
 	uncertain := false
 	uncertainEvidence := []string{}
 	for _, id := range ids {
 		a, ok := wire.Answers[id]
+		if id == "biological_risk" {
+			if !ok {
+				return invalid()
+			}
+			tier, valid := parseBioAnswer(a)
+			if !valid {
+				return invalid()
+			}
+			bioTier = tier
+			result.ScannerScores[id] = *a.Probabilities["B3"] + *a.Probabilities["B4"]
+			continue
+		}
 		if !ok || a.Type != "choice" || a.Confidence == nil || !jevProbability(*a.Confidence) || len(a.Probabilities) != 3 {
 			return invalid()
 		}
@@ -382,6 +399,9 @@ func parseJevResponse(body []byte, endpoint ActiveEndpoint, ids []string) (*Norm
 		}
 	}
 
+	if bioTier != "" {
+		applyBioTier(result, bioTier)
+	}
 	if result.Action != ActionBlock && uncertain {
 		return nil, &GuardError{Code: ErrorCodeReviewRequired, Retryable: false, HTTPStatus: http.StatusOK, Cause: fmt.Errorf("%w: %s", errJevReviewRequired, strings.Join(uncertainEvidence, ","))}
 	}

@@ -132,6 +132,7 @@ func (r Request) Clone() Request {
 }
 
 type PromptSnapshot struct {
+	ResearchProfileID  int64          `json:"research_profile_id,omitempty"`
 	PolicyCacheVersion int64          `json:"-"`
 	OutputCapture      *OutputCapture `json:"output_capture,omitempty"`
 	RequestID          string         `json:"request_id"`
@@ -177,6 +178,7 @@ func (s PromptSnapshot) AuditEvidence() PromptSnapshot {
 }
 
 type NormalizedResult struct {
+	BioTier           string             `json:"bio_tier,omitempty"`
 	Decision          EventDecision      `json:"decision"`
 	RiskLevel         RiskLevel          `json:"risk_level"`
 	Action            Action             `json:"action"`
