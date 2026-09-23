@@ -343,8 +343,19 @@ func cleanRuntimeAuditSegment(value string) string {
 }
 
 func cleanRuntimeAuditPromptSegments(values []promptSegment) []promptSegment {
+	normalized := normalizedPromptSegments(values)
+	// The Grok CLI system policy is a fixed client runtime envelope. It is
+	// useful evidence when it is the only audited segment (the deterministic
+	// benign-runtime policy handles that case), but including it beside every
+	// user turn makes the semantic auditor repeatedly classify tool policy
+	// prose as if it were the requested action. Keep the complete envelope in
+	// FullPrompt while removing it from the mixed classifier input.
+	keepGrokRuntime := len(normalized) == 1
 	cleaned := make([]promptSegment, 0, len(values))
-	for _, value := range normalizedPromptSegments(values) {
+	for _, value := range normalized {
+		if !keepGrokRuntime && strings.EqualFold(strings.TrimSpace(value.role), "system") && isGrokRuntimeSystemPrompt(value.text) {
+			continue
+		}
 		value.text = cleanRuntimeAuditPromptSegment(value)
 		if value.text != "" {
 			cleaned = append(cleaned, value)

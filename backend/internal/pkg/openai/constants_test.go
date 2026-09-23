@@ -23,6 +23,12 @@ func TestDefaultModelsIncludeGPT6Astra(t *testing.T) {
 	require.Equal(t, "GPT-6 Astra", displayName)
 }
 
+func TestDefaultModelsIncludeGPT6SolAndLuna(t *testing.T) {
+	ids := DefaultModelIDs()
+	require.Contains(t, ids, "gpt-6-sol")
+	require.Contains(t, ids, "gpt-6-luna")
+}
+
 func TestDefaultModelsPreferConcreteGPT6AstraForAccountTests(t *testing.T) {
 	require.NotEmpty(t, DefaultModels)
 	require.Equal(t, "gpt-6-astra", DefaultModels[0].ID)
