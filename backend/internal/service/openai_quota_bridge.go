@@ -288,9 +288,23 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 	if err != nil {
 		return nil, err
 	}
+	importedAccountID := strings.TrimSpace(imported.IDToken.ChatGPTAccountID)
+	if importedAccountID == "" {
+		// Pi credentials may not contain an ID token. CPA still records the
+		// account binding in the downloaded metadata, and its own refresh path
+		// will obtain a fresh ID token on the first refresh.
+		if metadata, metadataErr := cpaAuthMetadata(ctx, config, authName); metadataErr == nil {
+			importedAccountID = strings.TrimSpace(openAICPACredentialString(metadata, "account_id"))
+			if importedAccountID == "" {
+				if token, ok := metadata["token"].(map[string]any); ok {
+					importedAccountID = strings.TrimSpace(openAICPACredentialString(token, "account_id"))
+				}
+			}
+		}
+	}
 	expectedDisabled, _ := payload["disabled"].(bool)
 	if imported.Disabled != expectedDisabled || (!expectedDisabled && (imported.Unavailable || !strings.EqualFold(imported.Status, "active"))) || !strings.EqualFold(strings.TrimSpace(imported.Email), email) ||
-		strings.TrimSpace(imported.IDToken.ChatGPTAccountID) != accountID {
+		importedAccountID != accountID {
 		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CPA_IMPORT_VERIFY_FAILED", "CPA imported OAuth identity did not pass verification")
 	}
 
