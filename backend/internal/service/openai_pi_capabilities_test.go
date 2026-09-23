@@ -20,6 +20,7 @@ func TestPiSchedulerHonorsNativeCapabilities(t *testing.T) {
 	a.Extra = map[string]any{"openai_compact_mode": "force_on"}
 	require.False(t, a.AllowsOpenAICompact())
 	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
+	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponsesText))
 	for _, endpoint := range []OpenAIEndpointCapability{OpenAIEndpointCapabilityLive, OpenAIEndpointCapabilityAlphaSearch, OpenAIEndpointCapabilityEmbeddings, OpenAIEndpointCapabilityChatCompletions} {
 		require.False(t, a.SupportsOpenAIEndpointCapability(endpoint), string(endpoint))
 	}

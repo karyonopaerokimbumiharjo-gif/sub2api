@@ -110,9 +110,11 @@ const (
 
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
-	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
-	OpenAIEndpointCapabilityAlphaSearch     OpenAIEndpointCapability = "alpha_search"
-	OpenAIEndpointCapabilityLive            OpenAIEndpointCapability = "live"
+	// ResponsesText allows native Responses or the existing text-only Chat bridge.
+	OpenAIEndpointCapabilityResponsesText OpenAIEndpointCapability = "responses_text"
+	OpenAIEndpointCapabilityEmbeddings    OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityAlphaSearch   OpenAIEndpointCapability = "alpha_search"
+	OpenAIEndpointCapabilityLive          OpenAIEndpointCapability = "live"
 	// OpenAIEndpointCapabilityGrokMediaGeneration keeps image/video generation
 	// away from Grok accounts that are explicitly disabled or whose billing
 	// entitlement probe was forbidden. Video status lookups intentionally do not
@@ -1882,10 +1884,13 @@ func (a *Account) GetOpenAISessionID() string {
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
 	if a.UsesNativePiRuntime() {
-		return capability == "" || capability == OpenAIEndpointCapabilityResponses
+		return capability == "" || capability == OpenAIEndpointCapabilityResponses || capability == OpenAIEndpointCapabilityResponsesText
 	}
 	if a == nil {
 		return false
+	}
+	if capability == OpenAIEndpointCapabilityResponsesText {
+		capability = OpenAIEndpointCapabilityChatCompletions
 	}
 	if capability == OpenAIEndpointCapabilitySeedance {
 		configured, _ := a.openAIEndpointCapabilitySet()

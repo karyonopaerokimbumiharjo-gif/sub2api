@@ -160,9 +160,9 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 			want:        service.OpenAIEndpointCapabilityChatCompletions,
 		},
 		{
-			name:     "non-image intent keeps chat capability",
+			name:     "text Responses supports native and bridged backends",
 			platform: service.PlatformOpenAI,
-			want:     service.OpenAIEndpointCapabilityChatCompletions,
+			want:     service.OpenAIEndpointCapabilityResponsesText,
 		},
 	}
 

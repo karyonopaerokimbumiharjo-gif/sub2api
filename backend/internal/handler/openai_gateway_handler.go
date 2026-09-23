@@ -282,8 +282,11 @@ func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey
 }
 
 func openAIResponsesRequiredCapability(imageIntent bool, platform string) service.OpenAIEndpointCapability {
-	if imageIntent && platform == service.PlatformOpenAI {
-		return service.OpenAIEndpointCapabilityResponses
+	if platform == service.PlatformOpenAI {
+		if imageIntent {
+			return service.OpenAIEndpointCapabilityResponses
+		}
+		return service.OpenAIEndpointCapabilityResponsesText
 	}
 	return service.OpenAIEndpointCapabilityChatCompletions
 }
