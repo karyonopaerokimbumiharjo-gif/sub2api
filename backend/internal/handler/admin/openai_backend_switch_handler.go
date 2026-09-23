@@ -98,7 +98,7 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	}
 	accountID := strings.TrimSpace(valueString(oauth["chatgpt_account_id"]))
 	accessToken := strings.TrimSpace(valueString(oauth["access_token"]))
-	credentials := cloneCredentialMap(oauth)
+	credentials := piCredentialsFromCPA(oauth)
 	runtimeOwnerID := ownerID
 	var sharedRuntime *service.Account
 	// groupID=0 means all groups. AccountListGroupUngrouped (-1) would
@@ -146,9 +146,9 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 		credentials["pi_owner_user_id"] = strconv.FormatInt(runtimeOwnerID, 10)
 		// The alias deliberately carries no rotating OAuth secret. Requests and
 		// refreshes resolve the existing Pi owner row under one cache/lock.
-		credentials["access_token"] = nil
-		credentials["refresh_token"] = nil
-		credentials["id_token"] = nil
+		delete(credentials, "access_token")
+		delete(credentials, "refresh_token")
+		delete(credentials, "id_token")
 	} else {
 		credentials["harness_kind"] = service.PiNativeHarnessKind
 		credentials["pi_owner_user_id"] = strconv.FormatInt(ownerID, 10)
@@ -169,6 +169,24 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 		return nil, err
 	}
 	return updated, nil
+}
+
+// piCredentialsFromCPA keeps only OAuth identity material. CPA management
+// downloads also contain pool controls (proxy_url, retry, weight, and so on)
+// which are transport settings for CPA, not Pi credentials; copying them into
+// an account leaks implementation details and can make Pi inherit a CPA proxy.
+func piCredentialsFromCPA(source map[string]any) map[string]any {
+	result := make(map[string]any)
+	for _, key := range []string{
+		"access_token", "refresh_token", "id_token", "expires_at", "expired",
+		"email", "chatgpt_account_id", "account_id", "chatgpt_user_id",
+		"organization_id", "plan_type", "auth_kind", "type", "source", "client_id",
+	} {
+		if value, ok := source[key]; ok && value != nil {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *service.Account) (*service.Account, error) {
