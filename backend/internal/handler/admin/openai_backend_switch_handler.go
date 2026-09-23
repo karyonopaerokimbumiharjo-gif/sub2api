@@ -20,6 +20,12 @@ type switchOpenAIBackendRequest struct {
 	PiOwnerUserID int64  `json:"pi_owner_user_id"`
 }
 
+const (
+	cpaSavedAutoResetEnabledKey     = "cpa_saved_auto_reset_credit_enabled"
+	cpaSavedAutoReset5hThresholdKey = "cpa_saved_auto_reset_credit_5h_threshold"
+	cpaSavedAutoReset7dThresholdKey = "cpa_saved_auto_reset_credit_7d_threshold"
+)
+
 // SwitchExecutionBackend changes only the transport harness of one OpenAI
 // business account. The OAuth material is reused and verified in place; no new
 // authorization flow is started and group bindings are never changed.
@@ -115,8 +121,10 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	credentials["cpa_bridge_base_url"] = account.GetCredential("base_url")
 	credentials["api_key"] = nil
 	delete(credentials, "base_url")
+	extra := cloneAnyMap(account.Extra)
+	restoreAutoResetExtra(extra)
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), account.ID, &service.UpdateAccountInput{
-		Type: service.AccountTypeOAuth, Credentials: credentials,
+		Type: service.AccountTypeOAuth, Credentials: credentials, Extra: extra,
 	})
 	if err != nil {
 		return nil, err
@@ -173,6 +181,19 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 	extra[service.OpenAIQuotaBridgeAuthNameExtraKey] = imported.AuthName
 	extra[service.OpenAIQuotaBridgeAuthEmailExtraKey] = imported.Email
 	extra[service.OpenAIQuotaViaCompatibleUpstreamExtraKey] = true
+	// Credit-reset controls are valid only on OAuth parent accounts. They are
+	// intentionally removed while the account runs through CPA; the operator
+	// can configure them again when switching back to Pi.
+	for _, key := range []string{
+		service.OpenAIAutoResetCreditEnabledExtraKey,
+		service.OpenAIAutoResetCredit5hThresholdExtraKey,
+		service.OpenAIAutoResetCredit7dThresholdExtraKey,
+	} {
+		if value, exists := extra[key]; exists {
+			extra[autoResetSavedKey(key)] = value
+		}
+		delete(extra, key)
+	}
 	newCredentials := map[string]any{"api_key": apiKey, "base_url": baseURL}
 	for _, key := range []string{"access_token", "refresh_token", "id_token", "cpa_bridge_api_key", "cpa_bridge_base_url"} {
 		newCredentials[key] = nil
@@ -184,6 +205,35 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 		return nil, err
 	}
 	return updated, nil
+}
+
+func autoResetSavedKey(key string) string {
+	switch key {
+	case service.OpenAIAutoResetCreditEnabledExtraKey:
+		return cpaSavedAutoResetEnabledKey
+	case service.OpenAIAutoResetCredit5hThresholdExtraKey:
+		return cpaSavedAutoReset5hThresholdKey
+	case service.OpenAIAutoResetCredit7dThresholdExtraKey:
+		return cpaSavedAutoReset7dThresholdKey
+	default:
+		return ""
+	}
+}
+
+func restoreAutoResetExtra(extra map[string]any) {
+	for _, key := range []string{
+		service.OpenAIAutoResetCreditEnabledExtraKey,
+		service.OpenAIAutoResetCredit5hThresholdExtraKey,
+		service.OpenAIAutoResetCredit7dThresholdExtraKey,
+	} {
+		saved := autoResetSavedKey(key)
+		if _, exists := extra[key]; !exists {
+			if value, savedExists := extra[saved]; savedExists {
+				extra[key] = value
+			}
+		}
+		delete(extra, saved)
+	}
 }
 
 func cloneCredentialMap(in map[string]any) map[string]any {
