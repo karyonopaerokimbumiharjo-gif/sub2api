@@ -336,7 +336,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 				)
 				return &OAuthRefreshResult{Account: currentAccount}, nil
 			}
-			durableAccount, readErr := api.loadGrokDurableAccountAfterPersist(ctx, cacheKey, freshAccount.ID)
+			durableAccount, readErr := api.loadDurableAccountAfterRefresh(ctx, cacheKey, freshAccount.ID)
 			if readErr != nil || durableAccount == nil {
 				if readErr == nil {
 					readErr = fmt.Errorf("account not found after Grok OAuth success CAS")
@@ -384,7 +384,7 @@ func (api *OAuthRefreshAPI) releaseRefreshLock(parent context.Context, cacheKey 
 	}
 }
 
-func (api *OAuthRefreshAPI) loadGrokDurableAccountAfterPersist(parent context.Context, cacheKey string, accountID int64) (*Account, error) {
+func (api *OAuthRefreshAPI) loadDurableAccountAfterRefresh(parent context.Context, cacheKey string, accountID int64) (*Account, error) {
 	cleanupParent := context.Background()
 	if parent != nil {
 		cleanupParent = context.WithoutCancel(parent)

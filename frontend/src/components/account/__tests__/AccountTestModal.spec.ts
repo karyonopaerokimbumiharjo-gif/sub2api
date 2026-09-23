@@ -144,6 +144,27 @@ describe('AccountTestModal', () => {
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
   })
 
+  it('uses an available conversational model and omits unsupported Pi compact tests', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gpt-reserve', display_name: 'Reserve' },
+      { id: 'gpt-5.6-sol', display_name: 'Sol' }
+    ])
+    const account = buildAccount()
+    account.credentials = { harness_kind: 'pi' }
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+    await flushPromises()
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-sol')
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.testMode')
+    ;(wrapper.vm as any).testMode = 'compact'
+    await (wrapper.vm as any).startTest()
+    const [, options] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(options.body).mode).toBe('default')
+    wrapper.unmount()
+  })
+
   it('posts compact mode for OpenAI compact probe', async () => {
     const wrapper = mount(AccountTestModal, {
       props: {

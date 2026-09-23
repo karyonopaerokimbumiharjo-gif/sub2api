@@ -123,3 +123,19 @@ which later passed background review. Its configured timeout is now 30 seconds;
 a real synthetic endpoint probe passed in 4.2 seconds. Blocking policy, other
 endpoint switches, and hard rules were preserved. This is availability evidence,
 not proof of classifier accuracy.
+
+Live acceptance after pi.11: a public Responses request to gpt-5.6-sol returned
+that exact model and completed. A forced function call and its subsequent tool
+output round completed on the same account. Two separate API keys used the same
+client session string concurrently; cancelling one stream left the other able
+to complete. The production UI account-test button also returned the real Sol
+reply and reported completion. These checks do not establish two-user load or
+10 simultaneous upstream calls.
+
+Pi capability corrections: the scheduler excludes native Pi from unsupported
+compact, image, realtime, standalone search and Chat Completions routes. The test
+modal defaults to an available conversational model, and hides unsupported compact
+testing. Manual Pi refresh now uses the automatic refresh lock and durable write;
+a duplicate request holding the old credential snapshot reuses the rotated result.
+The full frontend run found one stale reauthorization assertion (2253 other tests
+passed); the corrected assertion and affected test-modal tests pass (9 tests).

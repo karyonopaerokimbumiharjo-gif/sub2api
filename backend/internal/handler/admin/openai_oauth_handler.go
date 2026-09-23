@@ -359,6 +359,16 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 		return
 	}
 
+	if account.UsesNativePiRuntime() {
+		updated, err := h.openaiOAuthService.RefreshPiAccount(c.Request.Context(), account)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, dto.AccountFromService(updated))
+		return
+	}
+
 	// Use OpenAI OAuth service to refresh token
 	tokenInfo, err := h.openaiOAuthService.RefreshAccountToken(c.Request.Context(), account)
 	if err != nil {

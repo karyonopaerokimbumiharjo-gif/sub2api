@@ -1392,6 +1392,11 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			"cannot refresh spark shadow account; its credentials are managed by the parent account")
 	}
 
+	if account.UsesNativePiRuntime() {
+		updated, err := h.openaiOAuthService.RefreshPiAccount(ctx, account)
+		return updated, "", err
+	}
+
 	var newCredentials map[string]any
 
 	if account.IsOpenAI() {

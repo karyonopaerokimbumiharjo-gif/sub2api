@@ -958,6 +958,9 @@ func (a *Account) GetOpenAICompactMode() string {
 // OpenAICompactSupportKnown reports whether compact capability is known for this
 // account and, when known, whether it is supported.
 func (a *Account) OpenAICompactSupportKnown() (supported bool, known bool) {
+	if a.UsesNativePiRuntime() {
+		return false, true
+	}
 	if a == nil || !a.IsOpenAI() {
 		return false, false
 	}
@@ -1878,6 +1881,9 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
+	if a.UsesNativePiRuntime() {
+		return capability == "" || capability == OpenAIEndpointCapabilityResponses
+	}
 	if a == nil {
 		return false
 	}
@@ -2066,6 +2072,9 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if a.UsesNativePiRuntime() && capability != "" {
+		return false
+	}
 	if capability == "" {
 		return true
 	}

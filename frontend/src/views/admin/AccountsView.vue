@@ -1746,6 +1746,7 @@ function accountHomepageUrl(row: Account): string {
 type OpenAICompactBadgeState = 'active' | 'blocked' | 'auto'
 
 function getOpenAICompactState(row: any): OpenAICompactBadgeState | null {
+  if (getOpenAIExecutionBackend(row) === 'pi') return 'blocked'
   if (row.platform !== 'openai' || (row.type !== 'oauth' && row.type !== 'apikey')) return null
   const extra = row.extra as Record<string, unknown> | undefined
   const mode = typeof extra?.openai_compact_mode === 'string' ? extra.openai_compact_mode : 'auto'

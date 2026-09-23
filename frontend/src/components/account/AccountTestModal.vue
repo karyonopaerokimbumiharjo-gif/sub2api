@@ -60,7 +60,7 @@
         />
       </div>
 
-      <div v-if="isOpenAIAccount" class="space-y-1.5">
+      <div v-if="isOpenAIAccount && !isNativePi" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.openai.testMode') }}
         </label>
@@ -294,6 +294,7 @@ let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const testMode = ref<'default' | 'compact'>('default')
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
+const isNativePi = computed(() => isOpenAIAccount.value && props.account?.credentials?.harness_kind === 'pi')
 const openAITestModeOptions = computed(() => [
   { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
   { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
@@ -347,7 +348,7 @@ const loadAvailableModels = async () => {
     // Default selection by platform
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'openai') {
-        selectedModelId.value = availableModels.value.find((m) => m.id === 'gpt-6-astra')?.id || availableModels.value[0].id
+        selectedModelId.value = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'].find(id => availableModels.value.some(m => m.id === id)) || availableModels.value[0].id
       } else if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
@@ -427,7 +428,7 @@ const startTest = async () => {
       body: JSON.stringify({
         model_id: selectedModelId.value,
         prompt: supportsImageTest.value ? testPrompt.value.trim() : '',
-        mode: isOpenAIAccount.value ? testMode.value : 'default'
+        mode: isOpenAIAccount.value && !isNativePi.value ? testMode.value : 'default'
       }),
       signal: abortController.signal
     })
