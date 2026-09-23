@@ -640,6 +640,17 @@ func (s *OpenAIQuotaService) prepareOpenAIQuotaBridge(ctx context.Context, accou
 		authIndex:        strings.TrimSpace(auth.AuthIndex),
 		chatGPTAccountID: strings.TrimSpace(auth.IDToken.ChatGPTAccountID),
 	}
+	// CPA may list an imported Pi OAuth file before it has refreshed an ID
+	// token. The management download still contains the bound account_id in
+	// that case, so use it for the same strict identity binding instead of
+	// forcing the operator to authorize the account again.
+	if identity.chatGPTAccountID == "" {
+		metadata, metadataErr := cpaAuthMetadata(ctx, config, authName)
+		if metadataErr != nil {
+			return zeroConfig, zeroIdentity, metadataErr
+		}
+		identity.chatGPTAccountID = cpaMetadataAccountID(metadata)
+	}
 	if identity.authIndex == "" || identity.chatGPTAccountID == "" {
 		return zeroConfig, zeroIdentity, infraerrors.New(http.StatusBadGateway, "OPENAI_QUOTA_BRIDGE_AUTH_INCOMPLETE", "the bound CPA auth is missing auth_index or chatgpt_account_id")
 	}
