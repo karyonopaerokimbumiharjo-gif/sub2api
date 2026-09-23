@@ -3137,6 +3137,18 @@ func testStringPtr(v string) *string {
 
 func TestOpenAIForwardErrorAlreadyCommunicated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Run("Pi rejection remains one JSON error even for a streaming request", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, strings.NewReader(`{"stream":true}`))
+		before := c.Writer.Size()
+		err := &service.ForwardResponseWrittenError{Err: errors.New("Pi upstream unavailable")}
+		require.False(t, openAIForwardErrorAlreadyCommunicated(c, before, err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "pi_request_error", "message": err.Error()}})
+		require.True(t, openAIForwardErrorAlreadyCommunicated(c, before, err))
+		require.True(t, json.Valid(w.Body.Bytes()))
+		require.NotContains(t, w.Body.String(), "event:")
+	})
 
 	t.Run("upstream response failed after write", func(t *testing.T) {
 		w := httptest.NewRecorder()

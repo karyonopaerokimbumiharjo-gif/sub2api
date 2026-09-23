@@ -9,6 +9,7 @@ Create a manifest outside the repository (absolute executable and workspace path
 
 ```json
 {
+  "device_id": "my-authorized-device",
   "workspace": "/absolute/authorized/workspace",
   "servers": {
     "files": {"command": "/absolute/node", "args": ["/absolute/trusted-mcp-server.mjs"], "env": []}
@@ -29,7 +30,7 @@ state directory across users. MCP processes are closed after each invocation.
 Set `SUB2API_BASE_URL` and `SUB2API_API_KEY` in your local environment, then run:
 
 ```sh
-node cli.mjs /absolute/manifest.json unique-session-id
+node cli.mjs /absolute/manifest.json unique-session-id unique-task-id
 ```
 
 Enable J on this Key in the gateway's “API 密钥 → 使用” dialog first. The bridge
@@ -40,12 +41,22 @@ For the matching `POST /v1/responses`, send:
 - `X-Sub2API-Tool-Grant`: the printed grant ID.
 - `session_id`: the same session value in the supported request header.
 - `tools`: exactly the function schemas in the manifest, without server/command fields.
-- `Idempotency-Key`: a unique value for this HTTP turn; reuse only to retrieve its result.
+- `Idempotency-Key`: exactly the task ID supplied to the bridge; reuse only to retrieve its result.
+
+A grant is bound to one user, key, device, session and HTTP task. A subsequent HTTP
+turn needs a new grant. Another task or device cannot reuse an old authorization.
 
 R0/R1 tools use the explicit manifest authorization. R2/R3 calls require an
 interactive terminal approval for that exact call and arguments. R4 is rejected.
 No shell command is synthesized from model output. No gateway API key is passed
 to the MCP process. Only explicitly selected environment variables are forwarded.
+
+An R2 manifest must also list the relative files it may change in
+`rollback_files`. Before execution the bridge stores a private snapshot outside
+the workspace, records hashes and modes, and refuses restore when an operator or
+another process changed a file afterward. `node rollback.mjs SNAPSHOT_DIRECTORY`
+is an explicit operator action; a failed or uncertain tool call is recorded as
+unknown and is never automatically replayed or reverted.
 
 Grants expire after 15 minutes. Revocation, request cancellation, loss of the
 lease check, timeout or output overflow terminates the call. An uncertain side

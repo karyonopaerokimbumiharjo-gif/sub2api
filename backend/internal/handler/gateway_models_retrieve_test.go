@@ -52,6 +52,11 @@ func TestRetrieveModelMatchesVisibleCatalogue(t *testing.T) {
 					Data []json.RawMessage `json:"data"`
 				}
 				require.NoError(t, json.Unmarshal(list.Body.Bytes(), &catalog))
+				if platform == service.PlatformOpenAI && !mapped {
+					require.Empty(t, catalog.Data, "No authoritative OpenAI catalogue means no invented defaults")
+					require.Equal(t, http.StatusNotFound, requestModelForTest(h, group, "gpt-6-astra", "").Code)
+					return
+				}
 				require.NotEmpty(t, catalog.Data)
 				var model struct {
 					ID string `json:"id"`

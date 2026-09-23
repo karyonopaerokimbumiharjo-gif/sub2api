@@ -1631,6 +1631,15 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		return nil, infraerrors.Newf(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_CREDENTIALS_FAILED", "resolve credential account: %v", err)
 	}
 
+	if credAccount.UsesNativePiRuntime() {
+		body, err := s.fetchNativePiModelsManifest(ctx, credAccount)
+		if err != nil {
+			return nil, err
+		}
+		etag := codexModelsManifestBodyETag(body)
+		return &OpenAIModelsResponse{Body: body, ETag: etag, NotModified: CodexModelsManifestETagMatches(ifNoneMatch, etag)}, nil
+	}
+
 	clientVersion = strings.TrimSpace(clientVersion)
 	if clientVersion == "" {
 		clientVersion = CodexCanonicalClientVersion()

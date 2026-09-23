@@ -68,6 +68,7 @@ func (h *OpenAIGatewayHandler) JBridge(c *gin.Context) {
 	}
 	var input struct {
 		Session string          `json:"session_id"`
+		Device  string          `json:"device_id"`
 		Tools   []jruntime.Tool `json:"tools"`
 		TTL     int             `json:"ttl_seconds"`
 		Grant   string          `json:"grant_id"`
@@ -87,7 +88,7 @@ func (h *OpenAIGatewayHandler) JBridge(c *gin.Context) {
 		if input.TTL == 0 {
 			input.TTL = 900
 		}
-		grant, err := h.jStore.Grant(ctx, key.UserID, key.ID, input.Session, input.Tools, time.Duration(input.TTL)*time.Second)
+		grant, err := h.jStore.Grant(ctx, key.UserID, key.ID, input.Session, input.Task, input.Device, input.Tools, time.Duration(input.TTL)*time.Second)
 		if err != nil {
 			response.Error(c, 403, "J must be enabled and the local tool grant must be valid")
 			return

@@ -14,14 +14,23 @@ func TestBridgeGrantIsolationAndExactlyOnceDelivery(t *testing.T) {
 	defer cancel()
 	b := fixtureBinding("gpt-5.6-sol")
 	require.NoError(t, s.SetEnabled(ctx, b.UserID, b.KeyID, true))
-	g, err := s.Grant(ctx, b.UserID, b.KeyID, b.SessionID, []Tool{fixtureTool}, time.Minute)
+	g, err := s.Grant(ctx, b.UserID, b.KeyID, b.SessionID, b.TaskID, "fixture-device", []Tool{fixtureTool}, time.Minute)
 	require.NoError(t, err)
+	require.Equal(t, b.TaskID, g.TaskID)
+	require.Equal(t, "fixture-device", g.DeviceID)
+	_, err = s.Grant(ctx, b.UserID, b.KeyID, b.SessionID, b.TaskID, "", []Tool{fixtureTool}, time.Minute)
+	require.ErrorIs(t, err, ErrTool)
 	r := &BridgeRunner{Store: s, GrantID: g.ID}
 	call := Call{ID: "call-one", Name: fixtureTool.Name, Arguments: `{"job":"job-a"}`}
 	require.NoError(t, r.Authorize(ctx, b, fixtureTool, call))
 	other := b
 	other.UserID = 2
 	require.ErrorIs(t, r.Authorize(ctx, other, fixtureTool, call), ErrTool)
+	other = b
+	other.TaskID = "another-task"
+	require.ErrorIs(t, r.Authorize(ctx, other, fixtureTool, call), ErrTool)
+	_, err = r.Run(ctx, other, call)
+	require.ErrorIs(t, err, ErrTool)
 	other = b
 	other.SessionID = "another-session"
 	require.ErrorIs(t, r.Authorize(ctx, other, fixtureTool, call), ErrTool)
@@ -61,7 +70,7 @@ func TestBridgeCancelledDispatchCannotBeReplayed(t *testing.T) {
 	ctx := context.Background()
 	b := fixtureBinding("gpt-5.6-sol")
 	require.NoError(t, s.SetEnabled(ctx, b.UserID, b.KeyID, true))
-	g, err := s.Grant(ctx, b.UserID, b.KeyID, b.SessionID, []Tool{fixtureTool}, time.Minute)
+	g, err := s.Grant(ctx, b.UserID, b.KeyID, b.SessionID, b.TaskID, "fixture-device", []Tool{fixtureTool}, time.Minute)
 	require.NoError(t, err)
 	_, err = s.Begin(ctx, b, fixtureBody())
 	require.NoError(t, err)

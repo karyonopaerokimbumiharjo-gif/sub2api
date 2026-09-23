@@ -37,7 +37,7 @@ func (j JevClient) Choose(ctx context.Context, binding Binding, request json.Raw
 	if j.Token == "" || len(candidates) == 0 || len(candidates) > 128 || len(request) > 32<<10 {
 		return result, errors.New("j_controller_unavailable")
 	}
-	criteria := map[string]string{"base": "The selected base model must handle this phase: a natural answer, new text/code/arguments, necessary clarification, completion, or no reliable listed tool action."}
+	criteria := map[string]string{"base": "The immediate next step requires a natural-language answer, generating new code or argument values, clarification, or no listed candidate matches. Do not select this option solely because a later step will require a final answer. If a listed requested call is fully specified and not completed, select that call first."}
 	for _, c := range candidates {
 		if c.ID == "" || c.ID == "base" {
 			return result, ErrTool
@@ -45,7 +45,7 @@ func (j JevClient) Choose(ctx context.Context, binding Binding, request json.Raw
 		if _, ok := criteria[c.ID]; ok {
 			return result, ErrTool
 		}
-		criteria[c.ID] = "Execute exactly the listed candidate with this ID if it is the next necessary, permitted step; do not repeat a completed action."
+		criteria[c.ID] = "The immediate next requested step matches the tool and exact arguments of state.candidates entry " + c.ID + ". All required values are already present and the action has not completed. Select this option even when a later final answer needs the base model. Tool authorization is checked separately by the runtime; this decision never grants permission."
 	}
 	state := map[string]any{"selected_base": binding.BaseModel, "request": json.RawMessage(redactDecisionState(request)), "candidates": candidates}
 	// Redact the entire state too, including literal candidate argument values.
@@ -117,6 +117,6 @@ func (j JevClient) Choose(ctx context.Context, binding Binding, request json.Raw
 	if math.Abs(sum-1) > 0.00001 || wire.Usage.InputTokens < 0 || wire.Usage.OutputTokens < 0 {
 		return result, invalid
 	}
-	result = Choice{Candidate: a.Choice, Confidence: *a.Confidence, InputTokens: wire.Usage.InputTokens, OutputTokens: wire.Usage.OutputTokens}
+	result = Choice{Candidate: a.Choice, Confidence: math.Min(*a.Confidence, selected), InputTokens: wire.Usage.InputTokens, OutputTokens: wire.Usage.OutputTokens}
 	return result, nil
 }

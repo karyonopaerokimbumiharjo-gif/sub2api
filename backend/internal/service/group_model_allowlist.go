@@ -39,7 +39,7 @@ func supplementUnmappedOpenAIModels(accounts []Account, models []string) []strin
 		account := &accounts[i]
 		// CPA supplies its own authoritative catalog. Supplementing an unmapped
 		// bridge with static defaults would advertise models absent upstream.
-		if ValidateCPAAccount(account) == nil {
+		if ValidateCPAAccount(account) == nil || account.UsesNativePiRuntime() {
 			continue
 		}
 		if account.Platform == PlatformOpenAI && len(account.GetModelMapping()) == 0 {

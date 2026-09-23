@@ -3750,12 +3750,19 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 		service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {
 		return false
 	}
+	if c.Writer.Size() <= writerSizeBeforeForward {
+		return false
+	}
 
 	// cyber_policy 命中时上游原始错误体已透传给客户端（非流式 c.Data 写出 400 body，
 	// 流式写出 response.failed 事件），不能再让 ensureForwardErrorResponse 追加
 	// fallback —— 否则在已写出的完整响应尾部追加 SSE（responses 端点尾随
 	// response.failed、chat 端点尾随 event:error），污染响应体。Size 已变化证明响应确已写出。
 	if service.GetOpsCyberPolicy(c) != nil {
+		return true
+	}
+	var written *service.ForwardResponseWrittenError
+	if errors.As(err, &written) {
 		return true
 	}
 

@@ -25,6 +25,16 @@ export async function validateCodexAccess(options) {
  await fetchCodexModels(options);return options.accountId;
 }
 
+// Preserve a useful failure class without returning or logging provider text,
+// which may contain the request or authentication details.
+export function nativeFailure(status,result) {
+ if(status===401||status===403)return {status,code:'pi_upstream_authorization_rejected'};
+ if(status===429)return {status,code:'pi_upstream_rate_limited'};
+ const message=String(result?.errorMessage||'');
+ if(status===503||/servers are currently overloaded|server is overloaded/i.test(message))return {status:503,code:'pi_upstream_busy'};
+ return {status:502,code:'pi_upstream_failed'};
+}
+
 export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
@@ -120,10 +130,12 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
        }
       },
       async onBytes(bytes){headers();if(!res.write(bytes))await once(res,'drain',{signal:abort.signal})}});
+     const failure=result.evidence.terminal_status==='completed'?null:nativeFailure(upstreamStatus,result.result);
      console.log(JSON.stringify({event:'pi_upstream_audit',owner_id:body.owner_id,credential_id:body.credential_id,
       transport:result.transport,outbound:result.outbound,observation:result.evidence,continuation:result.continuation,
+      upstream_status:upstreamStatus,failure_code:failure?.code,
       turn_state_present:!!responseHeaders['x-codex-turn-state'],turn_state_length:responseHeaders['x-codex-turn-state']?.length||0}));
-     if(!res.headersSent&&result.evidence.terminal_status!=='completed'){json(res,502,{error:'pi_upstream_failed'});return}
+     if(!res.headersSent&&failure){json(res,failure.status,{error:failure.code});return}
      headers();res.end();
     }finally{clearTimeout(timeout)}
     return;

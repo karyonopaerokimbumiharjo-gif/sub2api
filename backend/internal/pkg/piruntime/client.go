@@ -67,7 +67,7 @@ func JSON(ctx context.Context, path string, payload, target any) error {
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&failure)
 		// Only expose stable codes we own, never a provider body or OAuth payload.
 		switch failure.Error {
-		case "oauth_session_mismatch", "oauth_callback_mismatch", "oauth_account_mismatch", "oauth_start_failed", "oauth_exchange_failed", "oauth_exchange_timeout", "oauth_login_in_progress", "oauth_access_rejected", "oauth_access_invalid_response":
+		case "oauth_session_mismatch", "oauth_callback_mismatch", "oauth_account_mismatch", "oauth_start_failed", "oauth_exchange_failed", "oauth_exchange_timeout", "oauth_login_in_progress", "oauth_access_rejected", "oauth_access_invalid_response", "pi_upstream_busy", "pi_upstream_rate_limited", "pi_upstream_authorization_rejected", "pi_upstream_failed":
 			return &Error{Code: failure.Error}
 		default:
 			return &Error{Code: "pi_runtime_unavailable"}

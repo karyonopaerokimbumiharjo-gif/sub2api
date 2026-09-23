@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { executeDelivery, validateManifest, mcpCall, apiClient } from './bridge.mjs'
 
 const parameters = { type: 'object', properties: { file: { type: 'string', enum: ['note.txt'] } }, required: ['file'], additionalProperties: false }
-const manifest = { workspace: tmpdir(), servers: { fixture: { command: process.execPath, args: [fileURLToPath(new URL('./fixtures/server.mjs', import.meta.url))] } }, tools: [{ name: 'read_fixture', server: 'fixture', risk: 'R1', parameters }] }
+const manifest = { device_id:'fixture-device', workspace: tmpdir(), servers: { fixture: { command: process.execPath, args: [fileURLToPath(new URL('./fixtures/server.mjs', import.meta.url))] } }, tools: [{ name: 'read_fixture', server: 'fixture', risk: 'R1', parameters }] }
 const delivery = () => ({ task_id: 'task-a', call: { call_id: 'call-a', name: 'read_fixture', arguments: '{"file":"note.txt"}' }, lease: 'fixture-lease', expires_at: new Date(Date.now()+60000).toISOString() })
 
 test('real local MCP discovery and authorized file read', async () => {
@@ -23,11 +23,13 @@ test('real local MCP discovery and authorized file read', async () => {
 
 test('schema, permissions and lease checked before effects', async () => {
   let calls = 0
-  const options = { api: async () => ({active:true}), grant:{id:'grant',secret:'private'}, delivery:delivery(), tools:validateManifest(manifest), manifest, signal:new AbortController().signal, execute:async()=>{calls++; return {ok:true}} }
+  const options = { api: async () => ({active:true}), grant:{id:'grant',secret:'private',task_id:'task-a',device_id:'fixture-device'}, delivery:delivery(), tools:validateManifest(manifest), manifest, signal:new AbortController().signal, execute:async()=>{calls++; return {ok:true}} }
   const changed=delivery(); changed.call.arguments='{"file":"../../private","extra":true}'
   await assert.rejects(executeDelivery({...options,delivery:changed}),/tool_arguments_rejected/)
   await assert.rejects(executeDelivery({...options,api:async()=>({active:false})}),/tool_lease_inactive/)
   await assert.rejects(executeDelivery({...options,tools:[{...options.tools[0],risk:'R3'}]}),/operator_approval_required/)
+  await assert.rejects(executeDelivery({...options,delivery:{...delivery(),task_id:'other-task'}}),/tool_binding_mismatch/)
+  await assert.rejects(executeDelivery({...options,grant:{...options.grant,device_id:'other-device'}}),/tool_binding_mismatch/)
   assert.equal(calls,0)
   await executeDelivery(options)
   assert.equal(calls,1)
@@ -36,7 +38,7 @@ test('schema, permissions and lease checked before effects', async () => {
 test('revoked running lease aborts child and never submits result', async () => {
   let active = true, completed = 0
   const api = async action => { if(action==='complete') completed++; return {active} }
-  const run = executeDelivery({api,grant:{id:'g',secret:'s'},delivery:delivery(),tools:validateManifest(manifest),manifest,signal:new AbortController().signal,
+  const run = executeDelivery({api,grant:{id:'g',secret:'s',task_id:'task-a',device_id:'fixture-device'},delivery:delivery(),tools:validateManifest(manifest),manifest,signal:new AbortController().signal,
     execute:async(_m,_t,_a,signal)=>new Promise((resolve,reject)=>{ active=false; signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}) }) })
   await assert.rejects(run,/cancelled/)
   assert.equal(completed,0)

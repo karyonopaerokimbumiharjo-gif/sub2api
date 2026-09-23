@@ -82,7 +82,7 @@ func scopedNativePiSession(c *gin.Context, session string) (string, error) {
 func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
 		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
-		return nil, errors.New(message)
+		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
 	}
 	if err := ValidateExecutionAccount(account); err != nil {
 		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
@@ -154,12 +154,33 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	resp, err := piruntime.Do(ctx, "/responses", map[string]any{"request": request, "access_token": token, "account_id": account.GetCredential("chatgpt_account_id"),
 		"owner_id": owner, "credential_id": account.ID, "session_id": session, "transport": transport})
 	if err != nil {
+		var runtimeErr *piruntime.Error
+		if errors.As(err, &runtimeErr) {
+			switch runtimeErr.Code {
+			case "pi_upstream_busy":
+				return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
+			case "pi_upstream_rate_limited":
+				return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+			case "pi_upstream_authorization_rejected":
+				return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
+			case "pi_upstream_failed":
+				return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
+			}
+		}
 		return fail(http.StatusBadGateway, "Pi runtime unavailable")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == 400 || resp.StatusCode == 409 {
 			return fail(resp.StatusCode, "Invalid or concurrent Pi request")
+		}
+		switch resp.StatusCode {
+		case http.StatusTooManyRequests:
+			return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+		case http.StatusServiceUnavailable:
+			return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
 	}

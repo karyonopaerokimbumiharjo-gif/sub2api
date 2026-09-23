@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import Ajv from 'ajv'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { snapshotFiles, validateRollbackFiles } from './snapshot.mjs'
 
 const maxPayload = 2 * 1024 * 1024
 const ajv = new Ajv({ strict: true, allErrors: false, validateFormats: false })
@@ -14,6 +15,7 @@ export function validateManifest(manifest) {
     const server = manifest.servers?.[tool.server]
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(tool.name) || seen.has(tool.name) || !server || !isAbsolute(server.command || '') || !Array.isArray(server.args) || server.args.some(v => typeof v !== 'string') || !['R0', 'R1', 'R2', 'R3'].includes(tool.risk)) throw Error('invalid_tool_permission')
     if ((server.env || []).some(name => !/^[A-Z_][A-Z_0-9]*$/.test(name) || name === 'SUB2API_API_KEY')) throw Error('invalid_environment')
+    if (tool.risk === 'R2') validateRollbackFiles(tool.rollback_files)
     seen.add(tool.name)
     return { ...tool, validate: ajv.compile(tool.parameters) }
   })
@@ -69,6 +71,7 @@ function canonical(value) {
 }
 
 export async function executeDelivery({ api, grant, delivery, tools, manifest, signal, approve = async () => false, execute = mcpCall }) {
+  if (delivery.task_id !== grant.task_id || grant.device_id !== manifest.device_id) throw Error('tool_binding_mismatch')
   const tool = tools.find(t => t.name === delivery.call.name)
   if (!tool || Buffer.byteLength(delivery.call.arguments) > maxPayload) throw Error('tool_not_authorized')
   const args = JSON.parse(delivery.call.arguments)
@@ -83,23 +86,33 @@ export async function executeDelivery({ api, grant, delivery, tools, manifest, s
     checking = true
     try { if (!(await api('check', lease)).active) controller.abort() } catch { controller.abort() } finally { checking = false }
   }, 500)
+  let snapshot, outcome = 'unknown'
   try {
     if (['R2', 'R3'].includes(tool.risk) && !(await approve({ tool: tool.name, arguments: args, callID: delivery.call.call_id, signal: combined }))) throw Error('operator_approval_required')
     combined.throwIfAborted()
     // Recheck after an operator may have spent time reviewing the call.
     if (!(await api('check', lease)).active) throw Error('tool_lease_inactive')
+    if (tool.risk === 'R2') snapshot = await snapshotFiles({ workspace: manifest.workspace, files: tool.rollback_files, binding: { device:manifest.device_id, task:delivery.task_id, call:delivery.call.call_id }, stateRoot:manifest.snapshot_directory })
     const output = await execute(manifest, tool, args, combined)
     combined.throwIfAborted()
     await api('complete', { ...lease, output })
-  } finally { clearInterval(timer); controller.abort() }
+    outcome = 'completed'
+  } finally {
+    clearInterval(timer); controller.abort()
+    if (snapshot) {
+      await snapshot.finish(outcome)
+      process.stderr.write(JSON.stringify({event:'local_snapshot',directory:snapshot.directory,outcome})+'\n')
+    }
+  }
 }
 
-export async function runBridge({ manifest, session, api, signal, approve, ready = () => {}, execute }) {
+export async function runBridge({ manifest, session, task, api, signal, approve, ready = () => {}, execute }) {
+  if (typeof task !== 'string' || !task || task.length > 128 || typeof manifest.device_id !== 'string' || !manifest.device_id || manifest.device_id.length > 128) throw Error('task_and_device_required')
   const tools = validateManifest(manifest)
-  const grant = await api('register', { session_id: session, ttl_seconds: 900, tools: tools.map(({ name, parameters, description }) => ({ type: 'function', name, parameters, description })) })
+  const grant = await api('register', { session_id: session, task_id: task, device_id: manifest.device_id, ttl_seconds: 900, tools: tools.map(({ name, parameters, description }) => ({ type: 'function', name, parameters, description })) })
   const seen = new Set()
   try {
-    ready({ grant_id: grant.id, session_id: session, expires_at: grant.expires_at })
+    ready({ grant_id: grant.id, session_id: session, task_id: task, device_id: manifest.device_id, expires_at: grant.expires_at })
     while (!signal.aborted && Date.now() < Date.parse(grant.expires_at)) {
       const delivery = await api('poll', { grant_id: grant.id, secret: grant.secret })
       if (!delivery) { await delay(250, null, { signal }); continue }

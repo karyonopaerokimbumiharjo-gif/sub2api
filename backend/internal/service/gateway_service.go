@@ -21,6 +21,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/cespare/xxhash/v2"
@@ -1418,6 +1419,45 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 
 	for _, acc := range accounts {
 		mapping := acc.GetModelMapping()
+		if acc.UsesNativePiRuntime() {
+			// Native Pi supplies an authoritative account-bound catalogue. Never
+			// supplement failed/empty discovery with static platform defaults.
+			hasCatalog = true
+			if ValidateExecutionAccount(&acc) != nil {
+				continue
+			}
+			fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			owner, _ := strconv.ParseInt(acc.GetCredential("pi_owner_user_id"), 10, 64)
+			var manifest struct {
+				Models []struct {
+					Slug string `json:"slug"`
+				} `json:"models"`
+			}
+			fetchErr := piruntime.JSON(fetchCtx, "/models", map[string]any{"owner_id": owner, "account_id": acc.GetCredential("chatgpt_account_id"), "access_token": acc.GetCredential("access_token")}, &manifest)
+			cancel()
+			if fetchErr != nil {
+				slog.Warn("gateway_pi_catalog_unavailable", "account_id", acc.ID)
+				continue
+			}
+			supported := map[string]bool{}
+			for _, model := range manifest.Models {
+				if model.Slug != "" {
+					supported[model.Slug] = true
+				}
+			}
+			if len(mapping) == 0 {
+				for model := range supported {
+					modelSet[model] = struct{}{}
+				}
+			} else {
+				for alias, target := range mapping {
+					if supported[target] && !strings.Contains(alias, "*") {
+						modelSet[alias] = struct{}{}
+					}
+				}
+			}
+			continue
+		}
 		if ValidateCPAAccount(&acc) == nil &&
 			(len(mapping) == 0 || acc.IsOpenAIPassthroughEnabled()) && s.httpUpstream != nil {
 			// Use CPA's live catalog for unrestricted bridge accounts.

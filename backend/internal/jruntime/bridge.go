@@ -18,6 +18,8 @@ const MaxToolPayload = 2 << 20
 // never receives the grant secret and cannot add commands or alter schemas.
 type Grant struct {
 	ID        string    `json:"id"`
+	TaskID    string    `json:"task_id"`
+	DeviceID  string    `json:"device_id"`
 	Secret    string    `json:"secret,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -31,12 +33,12 @@ func grantBinding(user, key int64, id string) Binding {
 	return Binding{UserID: user, KeyID: key, TaskID: "grant:" + id}
 }
 
-func (s *Store) Grant(ctx context.Context, user, key int64, session string, tools []Tool, ttl time.Duration) (*Grant, error) {
+func (s *Store) Grant(ctx context.Context, user, key int64, session, task, device string, tools []Tool, ttl time.Duration) (*Grant, error) {
 	enabled, err := s.Allowed(ctx, user, key)
 	if err != nil {
 		return nil, err
 	}
-	if !enabled || session == "" || len(session) > 256 || ttl <= 0 || ttl > time.Hour || len(tools) == 0 || len(tools) > 64 {
+	if !enabled || session == "" || len(session) > 256 || task == "" || len(task) > 128 || device == "" || len(device) > 128 || ttl <= 0 || ttl > time.Hour || len(tools) == 0 || len(tools) > 64 {
 		return nil, ErrTool
 	}
 	seen := map[string]bool{}
@@ -50,7 +52,7 @@ func (s *Store) Grant(ctx context.Context, user, key int64, session string, tool
 	if err != nil || len(raw) > 256<<10 {
 		return nil, ErrTool
 	}
-	g := &Grant{ID: uuid.NewString(), ExpiresAt: time.Now().Add(ttl)}
+	g := &Grant{ID: uuid.NewString(), TaskID: task, DeviceID: device, ExpiresAt: time.Now().Add(ttl)}
 	g.Secret, err = nonce()
 	if err != nil {
 		return nil, err
@@ -59,7 +61,7 @@ func (s *Store) Grant(ctx context.Context, user, key int64, session string, tool
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.DB.ExecContext(ctx, `INSERT INTO j_tool_grants(id,user_id,api_key_id,session_hash,tools,secret_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, g.ID, user, key, digest([]byte(session)), sealed, digest([]byte(g.Secret)), g.ExpiresAt)
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO j_tool_grants(id,user_id,api_key_id,session_hash,tools,secret_hash,expires_at,task_id,device_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, g.ID, user, key, digest([]byte(session)), sealed, digest([]byte(g.Secret)), g.ExpiresAt, task, device)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +88,7 @@ func (r *BridgeRunner) Authorize(ctx context.Context, b Binding, tool Tool, call
 	}
 	var raw []byte
 	err := r.Store.DB.QueryRowContext(ctx, `SELECT g.tools FROM j_tool_grants g JOIN j_key_settings k ON k.api_key_id=g.api_key_id AND k.enabled
- WHERE g.id=$1 AND g.user_id=$2 AND g.api_key_id=$3 AND g.session_hash=$4 AND g.revoked_at IS NULL AND g.expires_at>NOW()`, r.GrantID, b.UserID, b.KeyID, digest([]byte(b.SessionID))).Scan(&raw)
+ WHERE g.id=$1 AND g.user_id=$2 AND g.api_key_id=$3 AND g.session_hash=$4 AND g.task_id=$5 AND g.device_id<>'' AND g.revoked_at IS NULL AND g.expires_at>NOW()`, r.GrantID, b.UserID, b.KeyID, digest([]byte(b.SessionID)), b.TaskID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrTool
 	}
@@ -139,7 +141,7 @@ func (r *BridgeRunner) Run(ctx context.Context, b Binding, call Call) (json.RawM
 	// revoke/dispatch gap. Conflict is never treated as permission to re-run.
 	res, err := r.Store.DB.ExecContext(ctx, `INSERT INTO j_tool_calls(api_key_id,task_id,call_id,grant_id,payload,status,expires_at)
  SELECT $1,$2,$3,g.id,$4,'queued',$5 FROM j_tool_grants g JOIN j_key_settings k ON k.api_key_id=g.api_key_id AND k.enabled
- WHERE g.id=$6 AND g.user_id=$7 AND g.api_key_id=$1 AND g.session_hash=$8 AND g.revoked_at IS NULL AND g.expires_at>NOW()`, b.KeyID, b.TaskID, call.ID, sealed, deadline, r.GrantID, b.UserID, digest([]byte(b.SessionID)))
+ WHERE g.id=$6 AND g.user_id=$7 AND g.api_key_id=$1 AND g.session_hash=$8 AND g.task_id=$2 AND g.device_id<>'' AND g.revoked_at IS NULL AND g.expires_at>NOW()`, b.KeyID, b.TaskID, call.ID, sealed, deadline, r.GrantID, b.UserID, digest([]byte(b.SessionID)))
 	if err != nil {
 		return nil, ErrUnknownOutcome
 	}
@@ -192,7 +194,7 @@ func (s *Store) CheckTool(ctx context.Context, user, key int64, grant, secret, t
  JOIN j_tool_grants g ON g.id=c.grant_id JOIN j_tasks t ON t.api_key_id=c.api_key_id AND t.task_id=c.task_id
  JOIN j_key_settings j ON j.api_key_id=c.api_key_id JOIN api_keys k ON k.id=c.api_key_id
  WHERE c.api_key_id=$1 AND c.task_id=$2 AND c.call_id=$3 AND g.id=$4 AND g.user_id=$5
- AND g.secret_hash=$6 AND c.lease_hash=$7 AND c.status='dispatched' AND t.status='running'
+ AND g.task_id=c.task_id AND g.device_id<>'' AND g.secret_hash=$6 AND c.lease_hash=$7 AND c.status='dispatched' AND t.status='running'
  AND g.revoked_at IS NULL AND g.expires_at>NOW() AND c.expires_at>NOW() AND t.expires_at>NOW()
  AND j.enabled AND k.deleted_at IS NULL AND k.status='active' AND (k.expires_at IS NULL OR k.expires_at>NOW()))`, key, task, call, grant, user, digest([]byte(secret)), digest([]byte(lease))).Scan(&active)
 	return active, err
@@ -201,6 +203,10 @@ func (s *Store) CheckTool(ctx context.Context, user, key int64, grant, secret, t
 // Poll delivers at most once. A crashed runner leaves an unknown outcome; it is
 // never leased again to a different process or replayed on another backend.
 func (s *Store) Poll(ctx context.Context, user, key int64, id, secret string) (*Delivery, error) {
+	active, err := s.Allowed(ctx, user, key)
+	if err != nil || !active {
+		return nil, ErrTool
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -221,7 +227,7 @@ func (s *Store) Poll(ctx context.Context, user, key int64, id, secret string) (*
 	var payload []byte
 	var callID string
 	err = tx.QueryRowContext(ctx, `SELECT c.task_id,c.call_id,c.payload,c.expires_at FROM j_tool_calls c JOIN j_tasks t ON t.api_key_id=c.api_key_id AND t.task_id=c.task_id
- WHERE c.grant_id=$1 AND c.api_key_id=$2 AND c.status='queued' AND c.expires_at>NOW() AND t.status='running'
+ WHERE c.grant_id=$1 AND c.api_key_id=$2 AND c.task_id=(SELECT task_id FROM j_tool_grants WHERE id=$1) AND c.status='queued' AND c.expires_at>NOW() AND t.status='running'
  ORDER BY c.updated_at LIMIT 1 FOR UPDATE OF c SKIP LOCKED`, id, key).Scan(&d.TaskID, &callID, &payload, &d.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -262,7 +268,7 @@ func (s *Store) CompleteTool(ctx context.Context, user, key int64, grant, secret
  FROM j_tool_grants g,j_tasks t,j_key_settings k WHERE c.grant_id=g.id AND c.api_key_id=k.api_key_id AND k.enabled
  AND t.api_key_id=c.api_key_id AND t.task_id=c.task_id AND t.status='running'
  AND c.api_key_id=$1 AND c.task_id=$2 AND c.call_id=$3 AND c.grant_id=$4 AND c.lease_hash=$5 AND c.status='dispatched' AND c.expires_at>NOW()
- AND g.user_id=$6 AND g.secret_hash=$7 AND g.revoked_at IS NULL AND g.expires_at>NOW()`, key, task, call, grant, digest([]byte(lease)), user, digest([]byte(secret)), sealed)
+ AND g.task_id=c.task_id AND g.device_id<>'' AND g.user_id=$6 AND g.secret_hash=$7 AND g.revoked_at IS NULL AND g.expires_at>NOW()`, key, task, call, grant, digest([]byte(lease)), user, digest([]byte(secret)), sealed)
 	if err != nil {
 		return err
 	}

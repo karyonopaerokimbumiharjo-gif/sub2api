@@ -35,7 +35,7 @@
           <p v-if="event.tool">工具：{{ event.tool }}</p>
           <p v-if="event.call_id" class="break-all">调用标识：{{ event.call_id }}</p>
           <p v-if="event.response_id" class="break-all">响应 ID：{{ event.response_id }}</p>
-          <p v-if="event.reason">结果代码：{{ event.reason }}</p>
+          <p v-if="event.reason">结果：{{ outcomes[event.reason] || event.reason }}</p>
           <p v-if="event.duration_ms">耗时 {{ event.duration_ms }} ms</p>
           <p v-if="event.status">HTTP {{ event.status }}</p>
         </li>
@@ -88,11 +88,14 @@ const labels: Record<string, string> = {
   execution_end: 'J 任务终态',
   client_tool_result: '收到客户端工具结果',
   guard_result: '独立安全审计结论',
+  action_guard: '工具动作安全审核',
+  result_guard: '工具结果安全审核',
   gpt_handoff: '交由 GPT 上游处理',
   gpt_response: 'GPT 上游返回',
   request_failed: '请求失败',
   request_end: '本次 HTTP 请求结束',
 }
+const outcomes: Record<string, string> = { selected: 'Jev 选择下一动作', base_handoff: '交给所选基础模型', base_fallback: '判断未达门槛，交给所选基础模型', completed: '已完成', failed: '失败', cancelled: '已取消', allowed: '已通过', blocked: '已阻止' }
 const groups = computed(() => {
   const map = new Map<string, { id: string; time: number; events: TraceEvent[] }>()
   for (const event of events.value) {

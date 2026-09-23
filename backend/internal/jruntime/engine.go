@@ -219,6 +219,8 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 			outcome := "selected"
 			if chooseErr != nil || math.IsNaN(choice.Confidence) || choice.Confidence < 0.75 || choice.Confidence > 1 {
 				outcome = "base_fallback"
+			} else if choice.Candidate == "base" {
+				outcome = "base_handoff"
 			}
 			if err = record(Event{Stage: "decision", Actor: "jev", Outcome: outcome, InputTokens: choice.InputTokens, OutputTokens: choice.OutputTokens}); err != nil {
 				return result, err
@@ -383,6 +385,16 @@ func (e *Engine) Run(ctx context.Context, binding Binding, body []byte) (result 
 				return result, err
 			}
 			input = append(input, outputItem(call.ID, output))
+			// A named tool choice requires the initial call. Once the local
+			// bridge fulfilled it, release that constraint for the next phase
+			// so the base can answer instead of being forced to repeat effects.
+			var named struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(request["tool_choice"], &named) == nil && named.Type == "function" && named.Name == call.Name {
+				request["tool_choice"] = json.RawMessage(`"auto"`)
+			}
 		}
 		// Deliberately keep the current actor after tool results. A base-owned
 		// tool phase does not run Jev again unless the base explicitly hands off.

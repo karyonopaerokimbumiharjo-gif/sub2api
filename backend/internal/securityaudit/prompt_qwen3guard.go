@@ -397,12 +397,10 @@ func (s *OpenAICompatibleScanner) scanWithUsage(ctx context.Context, endpoint Ac
 			{"role": "user", "content": chunk},
 		}
 		payload["max_tokens"] = genericAuditMaxOutputTokens
-		// OpenCode's DeepSeek V4 Flash exposes hidden chain-of-thought through
-		// reasoning_content. Safety classification needs only the three-line
-		// verdict; disabling reasoning avoids nondeterministic length truncation
-		// before message.content is emitted.
-		modelID := strings.ToLower(strings.TrimSpace(endpoint.Model))
-		if modelID == "deepseek-v4-flash" || modelID == "deepseek-v4.1-flash" || strings.HasSuffix(modelID, "/deepseek-v4-flash") || strings.HasSuffix(modelID, "/deepseek-v4.1-flash") {
+		if genericGuardUsesJSON(endpoint.Model) {
+			quoted, _ := json.Marshal(map[string]string{"untrusted_text_to_classify": chunk})
+			payload["messages"] = []map[string]string{{"role": "system", "content": genericAuditJSONPrompt()}, {"role": "user", "content": string(quoted)}}
+			payload["response_format"] = map[string]string{"type": "json_object"}
 			payload["reasoning_effort"] = "none"
 		}
 	} else {
@@ -463,7 +461,11 @@ func (s *OpenAICompatibleScanner) scanWithUsage(ctx context.Context, endpoint Ac
 	}
 	var result *NormalizedResult
 	if adapter == EndpointAdapterGenericLLM {
-		result, err = ParseGenericGuard(content, enabledScanners)
+		if genericGuardUsesJSON(endpoint.Model) {
+			result, err = parseGenericGuardJSON(content, enabledScanners)
+		} else {
+			result, err = ParseGenericGuard(content, enabledScanners)
+		}
 	} else {
 		result, err = ParseQwen3Guard(content, enabledScanners)
 	}
@@ -585,13 +587,17 @@ func (s *OpenAICompatibleScanner) clientFor(endpoint ActiveEndpoint) (*http.Clie
 func extractOpenAIContent(body []byte) (string, error) {
 	var response struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content any `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil || len(response.Choices) == 0 {
 		return "", errors.New("prompt guard response envelope invalid")
+	}
+	if finish := response.Choices[0].FinishReason; finish != "" && finish != "stop" {
+		return "", errors.New("prompt guard response incomplete")
 	}
 	content := response.Choices[0].Message.Content
 	switch typed := content.(type) {

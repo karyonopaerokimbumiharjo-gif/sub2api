@@ -13,6 +13,6 @@ func BaseModel(model string) (string, bool) {
 	return model, false
 }
 func EligibleModel(model string) bool {
-	return !strings.HasSuffix(model, "-j") && !strings.Contains(model, "image") && !strings.Contains(model, "audio") && (strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "codex-")) && model != "gpt-6j"
+	return !strings.HasSuffix(model, "-j") && !strings.Contains(model, "image") && !strings.Contains(model, "audio") && !strings.Contains(model, "realtime") && !strings.Contains(model, "tts") && !strings.Contains(model, "transcrib") && (strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "codex-")) && model != "gpt-6j"
 }
 func Alias(model string) string { return model + "-j" }

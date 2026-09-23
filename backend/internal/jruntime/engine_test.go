@@ -278,3 +278,27 @@ func TestJResultGuardPreventsUnsafeToolResultConsumption(t *testing.T) {
 	require.Equal(t, 1, base)
 	require.Empty(t, result.Response)
 }
+
+func TestLocalNamedToolChoiceIsFulfilledOnceBeforeFinalAnswer(t *testing.T) {
+	decisions := 0
+	e := Engine{Record: fixtureRecord, Tools: &fixtureRunner{}, Choose: func(_ context.Context, _ Binding, _ json.RawMessage, candidates []Candidate) (Choice, error) {
+		decisions++
+		if decisions == 1 {
+			return Choice{Candidate: candidates[0].ID, Confidence: 1}, nil
+		}
+		return Choice{Candidate: "base", Confidence: 1}, nil
+	}, Base: func(_ context.Context, b Binding, body json.RawMessage) (BaseResult, error) {
+		var request map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(body, &request))
+		require.JSONEq(t, `"auto"`, string(request["tool_choice"]))
+		return fixtureResponse(b.BaseModel), nil
+	}}
+	var request map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(fixtureBody(), &request))
+	request["tool_choice"] = json.RawMessage(`{"type":"function","name":"check_job"}`)
+	body, _ := json.Marshal(request)
+	result, err := e.Run(context.Background(), fixtureBinding("gpt-5.6-sol"), body)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ToolCalls)
+	require.Equal(t, 1, result.BaseCalls)
+}

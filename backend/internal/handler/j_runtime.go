@@ -21,7 +21,7 @@ import (
 func (h *OpenAIGatewayHandler) forwardJ(c *gin.Context, key *service.APIKey, account *service.Account, body []byte, mode gpt6JRequestMode) (*service.OpenAIForwardResult, error) {
 	fail := func(code int, message string) (*service.OpenAIForwardResult, error) {
 		h.errorResponse(c, code, "j_execution_error", message)
-		return nil, errors.New(message)
+		return nil, &service.ForwardResponseWrittenError{Err: errors.New(message)}
 	}
 	if h.jStore == nil {
 		return fail(503, "J execution storage is unavailable")

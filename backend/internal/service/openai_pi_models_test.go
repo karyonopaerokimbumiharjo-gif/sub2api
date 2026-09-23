@@ -48,3 +48,45 @@ func TestNativePiModelsUseBoundRuntimeCatalogWithoutStaticImages(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, models, "empty upstream catalogs must remain empty")
 }
+
+func TestNativePiPublicCatalogueNeverAddsDefaults(t *testing.T) {
+	account := nativePiAccount()
+	group := int64(9)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol"}]}`))
+	}))
+	defer endpoint.Close()
+	secret := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(secret, []byte(strings.Repeat("s", 40)), 0600))
+	t.Setenv("PI_RUNTIME_URL", endpoint.URL)
+	t.Setenv("PI_RUNTIME_SECRET_FILE", secret)
+	svc := &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{group: {*account}}}}
+	require.Equal(t, []string{"gpt-5.6-sol"}, svc.GetAvailableModels(context.Background(), &group, PlatformOpenAI))
+	endpoint.Close()
+	require.Empty(t, svc.GetAvailableModels(context.Background(), &group, PlatformOpenAI))
+}
+
+func TestPiPinnedCodexManifestUsesPrivateRuntimeAndETag(t *testing.T) {
+	account := nativePiAccount()
+	account.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
+	calls := 0
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.Equal(t, "/models", r.URL.Path)
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol"}]}`))
+	}))
+	defer endpoint.Close()
+	secret := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(secret, []byte(strings.Repeat("s", 40)), 0600))
+	t.Setenv("PI_RUNTIME_URL", endpoint.URL)
+	t.Setenv("PI_RUNTIME_SECRET_FILE", secret)
+	gateway := &OpenAIGatewayService{openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
+	first, err := gateway.FetchCodexModelsManifest(context.Background(), account, "untrusted-client-version", "")
+	require.NoError(t, err)
+	require.Contains(t, string(first.Body), "gpt-5.6-sol")
+	require.False(t, first.NotModified)
+	second, err := gateway.FetchCodexModelsManifest(context.Background(), account, "", first.ETag)
+	require.NoError(t, err)
+	require.True(t, second.NotModified)
+	require.Equal(t, 2, calls)
+}

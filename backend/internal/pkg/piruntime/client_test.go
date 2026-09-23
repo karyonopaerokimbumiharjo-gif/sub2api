@@ -20,6 +20,8 @@ func TestRuntimeErrorsExposeOnlyKnownCodes(t *testing.T) {
 	for _, tc := range []struct{ body, code string }{
 		{`{"error":"oauth_session_mismatch"}`, "oauth_session_mismatch"},
 		{`{"error":"oauth_exchange_timeout"}`, "oauth_exchange_timeout"},
+		{`{"error":"pi_upstream_busy"}`, "pi_upstream_busy"},
+		{`{"error":"pi_upstream_rate_limited"}`, "pi_upstream_rate_limited"},
 		{`{"error":"token=secret-provider-body"}`, "pi_runtime_unavailable"},
 		{`<html>secret-provider-body</html>`, "pi_runtime_unavailable"},
 	} {

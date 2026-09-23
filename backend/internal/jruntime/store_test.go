@@ -188,5 +188,7 @@ func TestJournalMigrationMatchesRuntimeSchema(t *testing.T) {
 	require.NoError(t, err)
 	migration, err := os.ReadFile("../../migrations/245_j_execution_journal.sql")
 	require.NoError(t, err)
-	require.Equal(t, string(schema), string(migration))
+	scope, err := os.ReadFile("../../migrations/247_j_tool_grant_scope.sql")
+	require.NoError(t, err)
+	require.Equal(t, string(schema), string(migration)+"\n"+string(scope))
 }

@@ -77,8 +77,11 @@ func TestOpenAICompatibleGenericClassifierContract(t *testing.T) {
 		system, ok := messages[0].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "system", system["role"])
-		require.Contains(t, system["content"], "exactly four non-empty lines")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Safety: Controversial\nIntent-Categories: politically_sensitive_topics\nContent-Categories: None"}}]}`))
+		require.Contains(t, system["content"], "one JSON object")
+		require.Equal(t, map[string]any{"type": "json_object"}, payload["response_format"])
+		user := messages[1].(map[string]any)
+		require.JSONEq(t, `{"untrusted_text_to_classify":"discuss politics"}`, user["content"].(string))
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": `{"safety":"Controversial","intent_categories":["politically_sensitive_topics"],"content_categories":[],"bio_tier":"B0"}`}}}})
 	}))
 	defer server.Close()
 

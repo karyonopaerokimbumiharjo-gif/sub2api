@@ -8,11 +8,28 @@ import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {runNative,nativeBody,scopedSession,closeSessions} from './native.mjs';
-import {createRuntime} from './server.mjs';
+import {createRuntime,nativeFailure} from './server.mjs';
 import {checkRuntimeHealth} from './healthcheck.mjs';
 const token=account=>`test.${Buffer.from(JSON.stringify({'https://api.openai.com/auth':{chatgpt_account_id:account}})).toString('base64url')}.test`;
 const request={model:'gpt-6-astra',input:[{role:'user',content:[{type:'input_text',text:'fixture'}]}]};
 const base={request,accessToken:token('account-a'),accountId:'account-a',ownerId:1,credentialId:5,sessionId:'s1',sessionSecret:'test-secret',onBytes:()=>{}};
+test('runtime returns one classified failure without leaking provider details',async()=>{
+ assert.deepEqual(nativeFailure(200,{errorMessage:'Codex error: Our servers are currently overloaded. Please try again later.'}),{status:503,code:'pi_upstream_busy'});
+ assert.deepEqual(nativeFailure(200,{errorMessage:'private payload and credential'}),{status:502,code:'pi_upstream_failed'});
+ for(const status of [401,403,429,503,502]){
+  const secret='a'.repeat(40);
+  const server=createRuntime({secret,native:async options=>{
+   options.onHeaders(status,new Headers());
+   return {evidence:{terminal_status:'failed'},result:{errorMessage:'private provider payload'}};
+  }});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+   const response=await fetch(`http://127.0.0.1:${server.address().port}/responses`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({request})});
+   assert.equal(response.status,status);
+   assert.deepEqual(await response.json(),{error:nativeFailure(status,{}).code});
+  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
+ }
+});
 function completed(id){return JSON.stringify({type:'response.completed',response:{id,status:'completed',model:'gpt-6-astra',output:[],usage:{input_tokens:1,output_tokens:0,total_tokens:1}}})}
 test('native SDK produces its own headers, preserves Responses input, and streams exact bytes',async()=>{
  let outbound;const bytes=Buffer.from(`data: ${completed('resp_one')}\n\n`);const output=[];

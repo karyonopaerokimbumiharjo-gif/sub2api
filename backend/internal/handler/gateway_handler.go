@@ -1173,7 +1173,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 
 	// Fallback to default models
 	if platform == service.PlatformOpenAI {
-		writeModelsListResponse(c, openai.DefaultModels)
+		writeOpenAIModelsList(c, []string{})
 		return
 	}
 
@@ -1261,7 +1261,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	if group.ModelAllowlistEnabled() {
 		return group.ModelAllowlist.FilterForListing(modelListingSource(platform, availableModels, fallbackModels))
 	}
-	if len(availableModels) > 0 {
+	if platform == service.PlatformOpenAI || len(availableModels) > 0 {
 		return availableModels
 	}
 	return fallbackModels
@@ -1415,6 +1415,9 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 // 与平台默认列表（fallbackModels）。账号映射为空时回落默认列表；Anthropic
 // 平台两者取并集，其余平台以账号映射键为准。
 func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
+	if platform == service.PlatformOpenAI {
+		return availableModels
+	}
 	if len(availableModels) == 0 {
 		return fallbackModels
 	}

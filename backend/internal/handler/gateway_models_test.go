@@ -265,9 +265,9 @@ func TestGatewayModels_UnmappedOpenAIAccountsSupplementMappedModels(t *testing.T
 			want:     append(openai.DefaultModelIDs(), alias),
 		},
 		{
-			name:     "unmapped accounts alone retain default response shape",
+			name:     "unmapped accounts alone do not invent a catalogue",
 			accounts: accounts[:1],
-			want:     openai.DefaultModelIDs(),
+			want:     []string{},
 		},
 		{
 			name:     "custom list can select defaults and aliases",
@@ -313,7 +313,11 @@ func TestGatewayModels_UnmappedOpenAIAccountsSupplementMappedModels(t *testing.T
 				for _, model := range got.Data {
 					require.Equal(t, "model", model.Object, model.ID)
 					require.Positive(t, model.Created, model.ID)
-					require.Equal(t, "openai", model.OwnedBy, model.ID)
+					if model.ID == "gpt-6j" {
+						require.Equal(t, "pegasusailabs", model.OwnedBy)
+					} else {
+						require.Equal(t, "openai", model.OwnedBy, model.ID)
+					}
 					require.Empty(t, model.CreatedAt, model.ID)
 				}
 				if tt.config.Enabled {
@@ -1230,7 +1234,7 @@ func TestGatewayModels_CustomModelsListCanReturnEmptyWhenSelectionsUnavailable(t
 	require.Empty(t, modelIDsForTest(got.Data))
 }
 
-func TestGatewayModels_CustomModelsListFiltersDefaultFallbackModels(t *testing.T) {
+func TestGatewayModels_CustomModelsListFiltersAuthoritativeMappedModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	groupID := int64(25)
@@ -1238,7 +1242,7 @@ func TestGatewayModels_CustomModelsListFiltersDefaultFallbackModels(t *testing.T
 		&gatewayModelsAccountRepoStub{
 			byGroup: map[int64][]service.Account{
 				groupID: {
-					{ID: 1, Platform: service.PlatformOpenAI},
+					{ID: 1, Platform: service.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5", "gpt-5.4": "gpt-5.4"}}},
 				},
 			},
 		},
@@ -1267,7 +1271,7 @@ func TestGatewayModels_CustomModelsListFiltersDefaultFallbackModels(t *testing.T
 	require.Equal(t, []string{"gpt-5.5", "gpt-5.4"}, modelIDsForTest(got.Data))
 }
 
-func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForDefaultFallback(t *testing.T) {
+func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForMappedModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	groupID := int64(27)
@@ -1275,7 +1279,7 @@ func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForDefaultF
 		&gatewayModelsAccountRepoStub{
 			byGroup: map[int64][]service.Account{
 				groupID: {
-					{ID: 1, Platform: service.PlatformOpenAI},
+					{ID: 1, Platform: service.PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5", "gpt-5.4": "gpt-5.4"}}},
 				},
 			},
 		},

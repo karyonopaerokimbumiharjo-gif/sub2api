@@ -11,30 +11,34 @@ This is an implementation ledger, not a declaration of production completion.
 
 ## Current checkpoint (2026-09-23)
 
-Production is `0.2.7-pi.13-account-controls`. The pi.12 candidate briefly exposed
+Production is `0.2.7-j.15.1-validation` on Acer; the previous `0.2.7-pi.13-account-controls` image is retained in the application-only rollback backup. The pi.12 candidate briefly exposed
 an endpoint-capability mismatch and was rolled back; pi.13 separates text Responses
 from Chat eligibility. After deployment and manual credential refresh, a public
 Sol request returned the expected model and terminal answer. Fresh OAuth and the
 rotated credential were preserved throughout. No database restore was used.
 
-The next J candidate implements a selected-base runtime, finite Jev decisions,
+The deployed J implementation provides a selected-base runtime, finite Jev decisions,
 base-owned phases and explicit return handoff, bounded tools, encrypted durable
 task replay, per-key settings, derived model catalogues, HTTP continuation and
-administrator execution history. It is **not yet deployed or live-accepted**.
+administrator execution history. It is running in the public Acer service after
+canary validation; application-only rollback preserves the database, bills and
+current credentials.
 The local bridge uses MCP discovery with pinned schemas, local resource grants,
 R2/R3 interactive approval and cancellation checks. Unknown effects are not retried.
 J WebSocket transport is not implemented; HTTP Responses is the integration path.
 Native base-model WebSocket and compaction remain outside J orchestration.
 
-Validation at this checkpoint: 2,257 frontend tests across 304 files, frontend
-production build, backend build, targeted J/Pi/stream race tests, actual PostgreSQL
-ownership/replay/expiry checks, and four bridge tests including a real local MCP
-file read. The formerly failing local ping fixture now tests the reader loop
+Validation at this checkpoint: frontend production build, backend build, targeted
+J/Pi/stream race tests, actual PostgreSQL ownership/replay/expiry checks, and six
+bridge tests including a real local MCP file read and R2 snapshot/rollback checks. The formerly failing local ping fixture now tests the reader loop
 directly without bypassing the production CPA routing guard.
 
-Still outstanding: real gateway J loops through two base models and both supported
-backends, two distinct live users, integrated deployment/rollback, comprehensive
-backend legacy-fixture reconciliation, performance comparison, and the Safety
+Completed in this release: real gateway loops through Sol and Terra, CPA/Pi model
+catalogues, Pi and CPA forwarding, local MCP bridge reads, two-user cancellation
+isolation, cross-user continuation rejection, integrated deployment/rollback, and
+ordinary function-call continuation. Remaining follow-up is comprehensive backend
+legacy-fixture reconciliation and a controlled efficiency comparison; transient
+provider overload remains observable and is not hidden by an automatic replay. The Safety
 catalog/B0-B4/output gate/research-profile work listed below. Jev token usage is
 recorded separately; no unconfigured Jev dollar price is invented.
 
@@ -97,7 +101,7 @@ HTTP 200, imports or container health as end-to-end acceptance.
   moderation fixture attempts an external endpoint forbidden by deployment policy.
   These baseline incompatibilities remain visible; do not weaken production
   account validation merely to make legacy direct-backend fixtures pass.
-- The audit/Pi changes through commit `7c17d5854` were deployed as `0.2.7-pi.10-oauth-recovery`. Generic J collaboration and Tool Bridge remain outside that release.
+- The audit/Pi changes and the J/Tool Bridge changes are included in the Acer `0.2.7-j.15.1-validation` release. The old application image remains available for application-only rollback.
 
 ## Pi shared-account correction
 
@@ -169,7 +173,7 @@ a duplicate request holding the old credential snapshot reuses the rotated resul
 The full frontend run found one stale reauthorization assertion (2253 other tests
 passed); the corrected assertion and affected test-modal tests pass (9 tests).
 
-## Safety candidate checkpoint (2026-09-23, not deployed)
+## Safety and audit checkpoint (2026-09-23)
 
 - Structured B0–B4 biology decisions distinguish limited assistance, review and
   confirmed block candidates. Review-required results retain their own event status,
@@ -188,6 +192,12 @@ passed); the corrected assertion and affected test-modal tests pass (9 tests).
   Platform API routes. CPA/Pi Codex OAuth paths do not support that public field;
   client-supplied identifiers are stripped, and support is not claimed there.
 - The J checkbox now preserves the actual saved state after save failure.
+- Pi failures now preserve one JSON response and classify stable upstream rate-limit,
+  busy, and authorization classes without returning provider text. The candidate
+  uses an explicit private Docker-network address for its runtime.
+- R2 local bridge tools require an explicit file list and keep a private,
+  conflict-checked snapshot outside the workspace. Restore is an operator action;
+  unknown effects are never automatically undone or retried.
 - Validation: full securityaudit and jruntime suites with race detection and real
   PostgreSQL pass; 48 audit/UI tests pass; backend and frontend builds pass.
   Whole handler/service test runs still contain 79 failing top-level tests and a
