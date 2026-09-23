@@ -98,20 +98,6 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	}
 	accountID := strings.TrimSpace(valueString(oauth["chatgpt_account_id"]))
 	accessToken := strings.TrimSpace(valueString(oauth["access_token"]))
-	var verified struct {
-		ChatGPTAccountID string `json:"chatgpt_account_id"`
-		HarnessKind      string `json:"harness_kind"`
-		PiOwnerUserID    string `json:"pi_owner_user_id"`
-	}
-	if err := piruntime.JSON(c.Request.Context(), "/oauth/validate", map[string]any{
-		"owner_id": ownerID, "account_id": accountID, "access_token": accessToken,
-	}, &verified); err != nil {
-		return nil, infraerrors.New(http.StatusBadRequest, "PI_AUTH_VERIFY_FAILED", "Pi 无法验证 CPA 当前授权，请先在 CPA 中恢复该授权状态")
-	}
-	if verified.HarnessKind != "pi" || verified.ChatGPTAccountID != accountID || verified.PiOwnerUserID != strconv.FormatInt(ownerID, 10) {
-		return nil, infraerrors.New(http.StatusBadRequest, "PI_AUTH_BINDING_INVALID", "Pi 返回的授权绑定无效")
-	}
-
 	credentials := cloneCredentialMap(oauth)
 	runtimeOwnerID := ownerID
 	var sharedRuntime *service.Account
@@ -129,6 +115,26 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 				runtimeOwnerID = parsed
 			}
 			break
+		}
+	}
+	// An existing native Pi row is already the verified owner of this exact
+	// ChatGPT identity. Reusing it is the normal CPA -> Pi path and must not
+	// perform a second read-only validation against a CPA access token that may
+	// use a different token envelope or have been rotated by CPA. If there is
+	// no native owner yet, validate the CPA token before creating one.
+	if sharedRuntime == nil {
+		var verified struct {
+			ChatGPTAccountID string `json:"chatgpt_account_id"`
+			HarnessKind      string `json:"harness_kind"`
+			PiOwnerUserID    string `json:"pi_owner_user_id"`
+		}
+		if err := piruntime.JSON(c.Request.Context(), "/oauth/validate", map[string]any{
+			"owner_id": ownerID, "account_id": accountID, "access_token": accessToken,
+		}, &verified); err != nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "PI_AUTH_VERIFY_FAILED", "Pi 无法验证 CPA 当前授权，请先在 CPA 中恢复该授权状态")
+		}
+		if verified.HarnessKind != "pi" || verified.ChatGPTAccountID != accountID || verified.PiOwnerUserID != strconv.FormatInt(ownerID, 10) {
+			return nil, infraerrors.New(http.StatusBadRequest, "PI_AUTH_BINDING_INVALID", "Pi 返回的授权绑定无效")
 		}
 	}
 	if sharedRuntime != nil && ownerID != runtimeOwnerID {
