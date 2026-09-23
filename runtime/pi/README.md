@@ -1,8 +1,8 @@
 # Native Pi runtime for Sub2API
 
-This is the private execution component of the existing Sub2API product. The account UI's **Native Pi** OAuth option uses the pinned official `@earendil-works/pi-ai@0.85.1` package for login, refresh, and `openai-codex-responses`. Standard accounts retain their existing route.
+This is the private execution component of the existing Sub2API product. The account UI's **Native Pi** OAuth option uses the pinned official `@earendil-works/pi-ai@0.87.1` package for login, refresh, and `openai-codex-responses`. Standard accounts retain their existing route.
 
-The admin starts authorization with a Sub2API owner user ID. The runtime owns PKCE and state; the completed credentials carry `harness_kind=pi` and `pi_owner_user_id`. The credential owner controls refresh. Authorized users share the account through the same existing OpenAI business groups used by CPA. New Pi imports are active and schedulable with concurrency 10. User and API-key session namespaces remain separate. Per-account proxies and compact requests are currently rejected on this route.
+The admin starts authorization with a Sub2API owner user ID. The runtime owns PKCE and state; the completed credentials carry `harness_kind=pi` and `pi_owner_user_id`. The credential owner controls refresh. Authorized users share the account through the same existing OpenAI business groups used by CPA. New Pi imports are active and schedulable with concurrency 10. User and API-key session namespaces remain separate. Per-account proxies remain unsupported; standalone `/responses/compact` is forwarded through the bound Codex OAuth credential and is verified independently by the account probe.
 
 Requests enter the same `/v1/responses` endpoint. Sub2API obtains the account's token under its existing refresh/cache lock and calls the private runtime. Pi constructs its native headers, including `originator=pi`. Incoming Codex turn metadata and non-null caller-supplied `previous_response_id` are rejected. This route does not relabel an arbitrary Codex request. It accepts Responses input plus function tools, reasoning and output options; it forces `stream=true` and `store=false` upstream. The gateway returns an ordinary JSON Responses object with a JSON content type when the downstream request is nonstreaming.
 
@@ -19,7 +19,7 @@ Use Node 24 or newer. Install with `npm ci --prefix runtime/pi`. Create a privat
 For Docker, build from the repository root:
 
 ```sh
-docker build -f runtime/pi/Dockerfile -t local/sub2api-pi-runtime:0.85.1 .
+docker build -f runtime/pi/Dockerfile -t local/sub2api-pi-runtime:0.87.1 .
 ```
 
 Merge `deploy/docker-compose.pi.yml` with the existing Compose deployment. The secret file must be mode 0600 and readable by UID 1000 in both containers. The runtime needs outbound HTTPS/WSS but has no published host port. Browser OAuth runs through the existing admin form; paste the localhost callback URL back into that form. OAuth login sessions expire after ten minutes; only one pending browser login is supported by the SDK's fixed callback listener.
@@ -53,6 +53,6 @@ Using an existing local OAuth access token, the native Pi SSE path completed two
 
 The same two-turn exercise passed on the cached-WebSocket path with the observed `gpt-6-astra` model. The second turn reused the connection and sent delta input with `previous_response_id` (`connectionsReused=1`, `deltaRequests=1`). This is evidence for this token and execution path, not a fresh browser OAuth login or long-duration refresh test. The runtime snapshots caller input so later array mutations cannot corrupt Pi's cached request baseline.
 
-`@earendil-works/pi-ai` 0.87.0 has the same public Codex adapter/provider type declarations as the pinned 0.85.1, but its implementation changed. The pin remains 0.85.1 until local fixtures and real OAuth refresh, SSE, cached WebSocket continuation, tool results, and requested-versus-returned model checks pass against the candidate version.
+`@earendil-works/pi-ai` is pinned to 0.87.1. Local fixtures, SSE, cached WebSocket continuation, tool results, and requested-versus-returned model checks pass against this candidate. A live standalone Compact request still requires an account-level probe; the gateway reports the account's actual Compact capability rather than assuming support from the OAuth badge.
 
 Pi's SSE parser deliberately cancels its reader after the first terminal event. If EOF was not observed, the passive audit records `stream_interrupted=true` even when `terminal_status=completed`; this must not be rewritten as a fully observed transport. The native live runner checks semantic completion/tool behavior separately from this transport flag. The standard gateway runner continues to require a non-interrupted stream.

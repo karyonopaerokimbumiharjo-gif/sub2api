@@ -11,7 +11,7 @@ services:
       pi-runtime:
         condition: service_healthy
   pi-runtime:
-    image: local/sub2api-pi-runtime:0.85.1
+    image: local/sub2api-pi-runtime:0.87.1-j16
     restart: unless-stopped
     environment:
       HTTP_PROXY: ""

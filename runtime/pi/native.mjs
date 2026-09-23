@@ -79,7 +79,8 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
  let result;
  try {
   await active.run(state,async()=>{
-   const response=stream(model,{systemPrompt:request.instructions||'You are a helpful assistant.',messages:[]},
+   const contextMessages=[{role:'system',content:request.instructions||'You are a helpful assistant.',timestamp:0}];
+   const response=stream(model,{messages:contextMessages},
     {apiKey:accessToken,sessionId:scoped,transport,signal,maxRetries:0,timeoutMs:90000,websocketConnectTimeoutMs:15000,
      onPayload:defaults=>nativeBody(request,defaults),
      fetch:async(url,init)=>{

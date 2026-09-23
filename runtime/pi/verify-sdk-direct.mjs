@@ -44,7 +44,7 @@ try {
  const acceptance=modelAcceptance(new Set(observation.observedModels),model);
  const text=result.content.filter(item=>item.type==='text').map(item=>item.text).join('').trim();
  const protocolPassed=httpStatus===200&&observation.terminal_status==='completed'&&result.stopReason==='stop'&&text==='PI_DIRECT_OK';
- console.log(JSON.stringify({baseline:'unwrapped-pi-sdk',version:'0.85.1',timestamp:new Date().toISOString(),
+ console.log(JSON.stringify({baseline:'unwrapped-pi-sdk',version:'0.87.1',timestamp:new Date().toISOString(),
   requestedModel:model,transport:'sse',httpStatus,requestEvidence,observation,protocolPassed,modelAcceptance:acceptance}));
  process.exitCode=protocolPassed&&acceptance.passed?0:1;
 }catch{

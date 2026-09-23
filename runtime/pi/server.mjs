@@ -35,7 +35,7 @@ export function nativeFailure(status,result) {
  return {status:502,code:'pi_upstream_failed'};
 }
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels}) {
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))};
@@ -45,7 +45,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
   const supplied=Buffer.from(req.headers.authorization||'');const expected=Buffer.from(`Bearer ${secret}`);
   if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){json(res,401,{error:'unauthorized'});return}
   try {
-   if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@0.85.1'});return}
+   if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@0.87.1'});return}
    if(req.method!=='POST'){json(res,404,{error:'not_found'});return}
    const chunks=[];let size=0;
    for await(const chunk of req){size+=chunk.length;if(size>8*1024*1024)throw Error('request_too_large');chunks.push(chunk)}
@@ -119,7 +119,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     const abort=new AbortController();const timeout=setTimeout(()=>abort.abort(),120000);
     res.on('close',()=>{if(!res.writableFinished)abort.abort()});
     let upstreamStatus=200;const responseHeaders={};
-    const headers=()=>{if(!res.headersSent)res.writeHead(upstreamStatus,{...responseHeaders,'content-type':'text/event-stream','cache-control':'no-cache','x-sub2api-runtime':'pi-0.85.1'})};
+    const headers=()=>{if(!res.headersSent)res.writeHead(upstreamStatus,{...responseHeaders,'content-type':'text/event-stream','cache-control':'no-cache','x-sub2api-runtime':'pi-0.87.1'})};
     try {
      const result=await native({request:body.request,accessToken:body.access_token,accountId:body.account_id,
       ownerId:body.owner_id,credentialId:body.credential_id,sessionId:body.session_id,sessionSecret,
@@ -139,6 +139,20 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
      headers();res.end();
     }finally{clearTimeout(timeout)}
     return;
+   }
+   if(req.url==='/compact') {
+    if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1||typeof body.access_token!=='string'||typeof body.account_id!=='string')throw Error('invalid_compact_binding');
+    if(credentialAccount(body.access_token)!==body.account_id)throw Error('oauth_account_mismatch');
+    const request=body.request;
+    if(!request||typeof request!=='object'||Array.isArray(request)||typeof request.model!=='string'||!request.model)throw Error('invalid_compact_request');
+    const upstream=await compactFetch('https://chatgpt.com/backend-api/codex/responses/compact',{
+     method:'POST',redirect:'error',signal:AbortSignal.timeout(120000),
+     headers:{authorization:`Bearer ${body.access_token}`,'chatgpt-account-id':body.account_id,accept:'application/json','content-type':'application/json',originator:'codex_cli_rs','user-agent':'codex_cli_rs/0.144.0',version:'0.144.0'},
+     body:JSON.stringify({...request,store:false,stream:false})
+    });
+    res.writeHead(upstream.status,{ 'content-type':upstream.headers.get('content-type')||'application/json', 'x-request-id':upstream.headers.get('x-request-id')||'' });
+    for await(const chunk of upstream.body||[]){res.write(chunk)}
+    res.end();return;
    }
    json(res,404,{error:'not_found'});
   }catch(error){

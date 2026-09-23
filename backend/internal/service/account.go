@@ -960,13 +960,18 @@ func (a *Account) GetOpenAICompactMode() string {
 // OpenAICompactSupportKnown reports whether compact capability is known for this
 // account and, when known, whether it is supported.
 func (a *Account) OpenAICompactSupportKnown() (supported bool, known bool) {
-	if a.UsesNativePiRuntime() {
-		return false, true
-	}
 	if a == nil || !a.IsOpenAI() {
 		return false, false
 	}
-
+	if a.UsesNativePiRuntime() {
+		// Pi uses the same Codex Responses account, but its compact capability
+		// is discovered by the real account probe.  Do not present a red
+		// "unsupported" label merely because the old Pi adapter did not expose
+		// the standalone compact route.
+		if a.Extra == nil {
+			return false, false
+		}
+	}
 	switch a.GetOpenAICompactMode() {
 	case OpenAICompactModeForceOn:
 		return true, true

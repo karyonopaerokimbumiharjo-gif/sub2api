@@ -30,6 +30,22 @@ test('runtime returns one classified failure without leaking provider details',a
   }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
  }
 });
+test('standalone compact is forwarded through the bound OAuth identity',async()=>{
+ const secret='a'.repeat(40);let outbound;
+ const server=createRuntime({secret,compactFetch:async(url,init)=>{
+  outbound={url,init,body:JSON.parse(init.body)};
+  return new Response(JSON.stringify({id:'cmp_fixture',object:'response.compaction',output:[]}),{status:200,headers:{'content-type':'application/json','x-request-id':'compact-fixture'}});
+ }});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try {
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/compact`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({owner_id:1,account_id:'account-a',access_token:token('account-a'),request:{model:'gpt-6-astra',input:[{role:'user',content:'fixture'}]}})});
+  assert.equal(response.status,200);assert.equal((await response.json()).id,'cmp_fixture');
+  assert.equal(outbound.url,'https://chatgpt.com/backend-api/codex/responses/compact');
+  assert.equal(outbound.init.headers['chatgpt-account-id'],'account-a');
+  assert.equal(outbound.init.headers.originator,'codex_cli_rs');
+  assert.equal(outbound.body.store,false);assert.equal(outbound.body.stream,false);
+ } finally {server.closeAllConnections();await new Promise(r=>server.close(r))}
+});
 function completed(id){return JSON.stringify({type:'response.completed',response:{id,status:'completed',model:'gpt-6-astra',output:[],usage:{input_tokens:1,output_tokens:0,total_tokens:1}}})}
 test('native SDK produces its own headers, preserves Responses input, and streams exact bytes',async()=>{
  let outbound;const bytes=Buffer.from(`data: ${completed('resp_one')}\n\n`);const output=[];

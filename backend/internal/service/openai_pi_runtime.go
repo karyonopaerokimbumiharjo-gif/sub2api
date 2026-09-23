@@ -95,7 +95,7 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 		return fail(http.StatusBadRequest, "Pi runtime uses its configured network route; per-account proxy is not supported")
 	}
 	if isOpenAIResponsesCompactPath(c) {
-		return fail(http.StatusBadRequest, "Pi native compact is not supported")
+		return s.forwardNativePiCompact(ctx, c, account, body)
 	}
 	var request map[string]any
 	if json.Unmarshal(body, &request) != nil {
@@ -215,6 +215,77 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	result.BillingModel = model
 	result.RequestID = resp.Header.Get("x-request-id")
 	result.Duration = time.Since(started)
+	return result, nil
+}
+
+// forwardNativePiCompact uses the account's Codex OAuth credential directly
+// for the stateless /responses/compact contract.  Pi's agent loop does not
+// own this endpoint; routing it through the private runtime keeps refresh,
+// account binding and credential redaction identical to normal Pi Responses.
+func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	fail := func(status int, message string) (*OpenAIForwardResult, error) {
+		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
+		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
+	}
+	owner, err := piRequestOwner(c, account)
+	if err != nil {
+		return fail(http.StatusForbidden, err.Error())
+	}
+	var request map[string]any
+	if json.Unmarshal(body, &request) != nil {
+		return fail(http.StatusBadRequest, "Invalid compact request")
+	}
+	model, _ := request["model"].(string)
+	if strings.TrimSpace(model) == "" {
+		return fail(http.StatusBadRequest, "Model is required")
+	}
+	if mapped := account.GetCompactModelMapping(); len(mapped) > 0 {
+		if compactModel, ok := account.ResolveCompactMappedModel(model); ok {
+			model = compactModel
+			request["model"] = compactModel
+		}
+	}
+	if s.openAITokenProvider == nil {
+		return fail(http.StatusServiceUnavailable, "Pi token provider unavailable")
+	}
+	token, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
+	}
+	started := time.Now()
+	resp, err := piruntime.Do(ctx, "/compact", map[string]any{
+		"request": request, "access_token": token,
+		"account_id": account.GetCredential("chatgpt_account_id"),
+		"owner_id": owner, "credential_id": account.ID,
+	})
+	if err != nil {
+		return fail(http.StatusBadGateway, "Pi runtime unavailable")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
+		}
+		return fail(http.StatusBadGateway, "Pi compact upstream rejected the request")
+	}
+	if err := guardGPT6JHTTPResponse(c, resp); err != nil {
+		return fail(http.StatusBadGateway, err.Error())
+	}
+	result := &OpenAIForwardResult{Model: model, UpstreamModel: model, Stream: false, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses/compact", BillingModel: model, RequestID: resp.Header.Get("x-request-id"), Duration: time.Since(started)}
+	nonstream, err := s.handleNonStreamingResponse(ctx, resp, c, account, model, model)
+	if err != nil {
+		return nil, err
+	}
+	if nonstream.usage != nil {
+		result.Usage = *nonstream.usage
+	}
+	result.ResponseID = nonstream.responseID
+	result.UpstreamResponseModel = observedUpstreamResponseModel(c)
+	result.UpstreamResponseModelConflict = observedUpstreamResponseModelConflict(c)
+	result.UpstreamResponseServiceTier = observedUpstreamResponseServiceTier(c)
 	return result, nil
 }
 

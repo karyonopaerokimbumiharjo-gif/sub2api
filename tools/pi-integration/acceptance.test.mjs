@@ -44,6 +44,7 @@ test('pinned Pi native adapter generates no turn metadata and preserves supplied
   for (const supplied of [undefined, '{"turn_id":"fixture-turn"}']) {
     let captured;
     const response = streamCodex(model, {systemPrompt: 'Fixture instructions', messages: [
+      {role: 'system', content: 'Fixture instructions', timestamp: 0},
       {role: 'user', content: 'Fixture input', timestamp: 0},
     ]}, {apiKey: token, transport: 'sse', sessionId: 'fixture-session', maxRetries: 0,
       headers: supplied ? {'x-codex-turn-metadata': supplied} : undefined,

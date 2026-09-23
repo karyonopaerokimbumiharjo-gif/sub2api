@@ -58,5 +58,5 @@ context.messages.push(first,{role:'toolResult',toolCallId:calls[0].id,toolName:c
 const second=await run({toolChoice:'none'});
 assert.equal(second.content.filter(x=>x.type==='text').map(x=>x.text).join('').trim(),'PI_SUB2API_OK');
 const modelPassed=modelChecks.every(check=>check.passed);
-console.log(JSON.stringify({result:modelPassed?'PASS':'FAIL',protocolPassed:true,modelPassed,adapter:'@earendil-works/pi-ai@0.85.1',verified:['SSE completion','tool call arguments','tool result continuation','final text'],requests}));
+console.log(JSON.stringify({result:modelPassed?'PASS':'FAIL',protocolPassed:true,modelPassed,adapter:'@earendil-works/pi-ai@0.87.1',verified:['SSE completion','tool call arguments','tool result continuation','final text'],requests}));
 if(!modelPassed) process.exitCode=1;

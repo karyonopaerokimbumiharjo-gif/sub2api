@@ -6,7 +6,7 @@ This integration belongs to the existing Sub2API account/group/key gateway. The 
 
 - Existing source baseline: `49a39b6dc1abed30fd227611e8af1108bc427610` in the user's `sub2api-0.2.6` repository. This is a source snapshot, not an official 0.2.6 release tag.
 - Official 0.2.7 comparison: `aea725f2ea644d5592d0bbb1d63b607efa7e200a`. It has not been merged into this worktree. Byte comparisons confirmed `account_codex_import.go`, `openai_oauth_service.go`, and `openai_token_provider.go` match this worktree.
-- Pi: `earendil-works/pi` v0.85.1, commit `d981de1229ef899957bbe968bc8dcda02a21f477`; the integration runner uses the published `@earendil-works/pi-ai` package pinned to 0.85.1 with a package lock.
+- Pi: `earendil-works/pi` v0.87.1, commit `upstream-v0.87.1`; the integration runner uses the published `@earendil-works/pi-ai` package pinned to 0.87.1 with a package lock.
 
 Relevant upstream paths:
 
@@ -28,8 +28,8 @@ Local verification on 2026-09-20:
 
 - Native import updated the matching existing account: 1 updated, 0 created, 0 failed; original groups retained.
 - Database booleans confirmed both access and refresh credentials present (no token values exported).
-- Pi SDK 0.85.1 returned HTTP 200 twice: first `toolUse`, second `stop`; exact tool-result continuation passed.
-- Pi CLI 0.85.1 with the configured provider returned exactly `PI_CLI_OK`.
+- Pi SDK 0.87.1 returned HTTP 200 twice: first `toolUse`, second `stop`; exact tool-result continuation passed.
+- Pi CLI 0.87.1 with the configured provider returned exactly `PI_CLI_OK`.
 - Frontend key-dialog and locale tests: 25 passed; TypeScript and production Vite build passed.
 
 Scope: this verifies the existing HTTP Responses path, not Pi WebSocket continuation, all model entitlements, long-duration refresh behavior, or complete feature parity with every proposal in the source discussion. Frontend compilation is separate from updating the running server binary.
@@ -60,7 +60,7 @@ The real Codex CLI run on 2026-09-20 completed with HTTP 200, `response.complete
 
 The updated Pi runner was also exercised on 2026-09-20: two HTTP 200 responses, valid tool arguments, successful tool-result continuation, exact final text, and `response.completed` for each request. Neither request contained `originator` or turn metadata at gateway ingress. Both requested `gpt-6-astra` and both responses declared `gpt-5.6-luna`; the runner correctly exited with failure while reporting protocol success separately.
 
-### What Pi 0.85.1 actually does
+### What Pi 0.87.1 actually does
 
 - The native OAuth authorization flow in `dist/auth/oauth/openai-codex.js` adds `originator=pi` to the authorization URL (along with PKCE/state parameters).
 - The native `openai-codex-responses` adapter sets Bearer authorization, `chatgpt-account-id`, `originator=pi`, and the Pi User-Agent. SSE sets `session-id` and `x-client-request-id` when a session is supplied; WebSocket requests also carry correlation IDs.
