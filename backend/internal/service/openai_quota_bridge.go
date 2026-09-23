@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -162,6 +163,23 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 		}
 		if accountID == "" && claims.OpenAIAuth != nil {
 			accountID = strings.TrimSpace(claims.OpenAIAuth.ChatGPTAccountID)
+		}
+	}
+	if email == "" {
+		// Access tokens put the email under the OpenAI profile namespace,
+		// whereas ID tokens expose it as a top-level claim.
+		parts := strings.Split(accessToken, ".")
+		if len(parts) == 3 {
+			if raw, decodeErr := base64.RawURLEncoding.DecodeString(parts[1]); decodeErr == nil {
+				var claims struct {
+					Profile struct {
+						Email string `json:"email"`
+					} `json:"https://api.openai.com/profile"`
+				}
+				if json.Unmarshal(raw, &claims) == nil {
+					email = strings.TrimSpace(claims.Profile.Email)
+				}
+			}
 		}
 	}
 	if accessToken == "" || refreshToken == "" || email == "" || accountID == "" {
