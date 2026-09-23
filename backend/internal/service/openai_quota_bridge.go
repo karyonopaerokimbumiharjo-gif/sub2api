@@ -106,6 +106,11 @@ type OpenAICPAImportResult struct {
 	ReplacedBoundAuth bool   `json:"replaced_bound_auth"`
 }
 
+// cpaReuseAuthNameKey is an internal hand-off from the backend-switch
+// handler. It is never persisted in account credentials; the named file is
+// reused only after its OAuth account ID and email match the incoming token.
+const cpaReuseAuthNameKey = "_sub2api_cpa_reuse_auth_name"
+
 type openAICPAUploadResponse struct {
 	Status string `json:"status"`
 }
@@ -227,6 +232,26 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 		replacedBoundAuth = strings.TrimSpace(bound.IDToken.ChatGPTAccountID) == accountID
 		if replacedBoundAuth {
 			authName = boundName
+		}
+	}
+	if preferredName := strings.TrimSpace(openAICPACredentialString(credentials, cpaReuseAuthNameKey)); preferredName != "" {
+		if files, listErr := cpaAuthList(ctx, config); listErr == nil {
+			for _, file := range files {
+				if file.Name != preferredName && file.ID != preferredName {
+					continue
+				}
+				candidateID := strings.TrimSpace(file.IDToken.ChatGPTAccountID)
+				if candidateID == "" {
+					if metadata, metadataErr := cpaAuthMetadata(ctx, config, file.Name); metadataErr == nil {
+						candidateID = cpaMetadataAccountID(metadata)
+					}
+				}
+				if candidateID == accountID && strings.EqualFold(strings.TrimSpace(file.Email), email) {
+					authName = file.Name
+					replacedBoundAuth = true
+				}
+				break
+			}
 		}
 	}
 

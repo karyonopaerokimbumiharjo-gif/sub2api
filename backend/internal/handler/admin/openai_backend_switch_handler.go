@@ -143,6 +143,11 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 		return nil, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_CPA_SWITCH_UNAVAILABLE", "CPA 执行服务不可用")
 	}
 	credentials := cloneCredentialMap(account.Credentials)
+	if authName := strings.TrimSpace(account.GetExtraString(service.OpenAIQuotaBridgeAuthNameExtraKey)); authName != "" {
+		// Consumed only by the server-side importer to make a switch
+		// round-trip idempotent; it is never stored as a token.
+		credentials["_sub2api_cpa_reuse_auth_name"] = authName
+	}
 	// Import/verify the same OAuth identity in CPA before changing the durable
 	// account type. A failed import leaves the working Pi account untouched.
 	imported, err := h.cpaRuntimeService.ImportOAuthCredentialsToCPA(c.Request.Context(), credentials)
