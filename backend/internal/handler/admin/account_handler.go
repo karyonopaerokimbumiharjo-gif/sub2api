@@ -1399,8 +1399,9 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			if parseErr != nil || runtimeID <= 0 {
 				return nil, "", infraerrors.BadRequest("PI_RUNTIME_OWNER_INVALID", "Pi shared account runtime binding is invalid")
 			}
-			refreshAccount, err = h.adminService.GetAccount(ctx, runtimeID)
-			if err != nil || refreshAccount == nil {
+			var resolveErr error
+			refreshAccount, resolveErr = h.adminService.GetAccount(ctx, runtimeID)
+			if resolveErr != nil || refreshAccount == nil {
 				return nil, "", infraerrors.BadRequest("PI_RUNTIME_OWNER_INVALID", "Pi shared account runtime owner is unavailable")
 			}
 		}
