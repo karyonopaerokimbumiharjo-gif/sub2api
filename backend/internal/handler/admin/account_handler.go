@@ -1393,7 +1393,21 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	}
 
 	if account.UsesNativePiRuntime() {
-		updated, err := h.openaiOAuthService.RefreshPiAccount(ctx, account)
+		refreshAccount := account
+		if account.GetCredential("harness_kind") == service.PiSharedHarnessKind {
+			runtimeID, parseErr := strconv.ParseInt(account.GetCredential(service.PiRuntimeAccountIDCredential), 10, 64)
+			if parseErr != nil || runtimeID <= 0 {
+				return nil, "", infraerrors.BadRequest("PI_RUNTIME_OWNER_INVALID", "Pi shared account runtime binding is invalid")
+			}
+			refreshAccount, err = h.adminService.GetAccount(ctx, runtimeID)
+			if err != nil || refreshAccount == nil {
+				return nil, "", infraerrors.BadRequest("PI_RUNTIME_OWNER_INVALID", "Pi shared account runtime owner is unavailable")
+			}
+		}
+		updated, err := h.openaiOAuthService.RefreshPiAccount(ctx, refreshAccount)
+		if err == nil && refreshAccount != account {
+			updated, err = h.adminService.GetAccount(ctx, account.ID)
+		}
 		return updated, "", err
 	}
 

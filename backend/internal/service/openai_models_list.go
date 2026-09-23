@@ -414,18 +414,25 @@ func (s *OpenAIGatewayService) fetchScheduledOpenAIModels(ctx context.Context, g
 // Use Pi's own client identity for every catalogue surface, including pinned
 // Codex discovery; gateway client metadata never selects another transport.
 func (s *OpenAIGatewayService) fetchNativePiModelsManifest(ctx context.Context, account *Account) (json.RawMessage, error) {
+	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
 	if err := ValidateExecutionAccount(account); err != nil {
+		return nil, err
+	}
+	if err := ValidateExecutionAccount(runtimeAccount); err != nil {
 		return nil, err
 	}
 	if s.openAITokenProvider == nil {
 		return nil, fmt.Errorf("Pi token provider unavailable")
 	}
-	token, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
 		return nil, fmt.Errorf("Pi credential unavailable")
 	}
-	owner, _ := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
+	owner, _ := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 	var manifest json.RawMessage
-	err = piruntime.JSON(ctx, "/models", map[string]any{"owner_id": owner, "account_id": account.GetCredential("chatgpt_account_id"), "access_token": token}, &manifest)
+	err = piruntime.JSON(ctx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": token}, &manifest)
 	return manifest, err
 }

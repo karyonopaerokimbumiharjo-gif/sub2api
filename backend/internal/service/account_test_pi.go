@@ -19,7 +19,8 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("X-Accel-Buffering", "no")
-	if err := ValidateExecutionAccount(account); err != nil {
+	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(c.Request.Context(), s.accountRepo, account)
+	if err := ValidateExecutionAccount(account); err != nil || resolveErr != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 		return s.sendErrorAndEnd(c, "Invalid Pi account binding")
 	}
 	if isOpenAIImageModel(model) {
@@ -30,9 +31,9 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 	}
 	if model == "" { model = openai.DefaultTestModel }
 	model = account.GetMappedModel(model)
-	token, err := s.openaiGatewayService.openAITokenProvider.GetAccessToken(c.Request.Context(), account)
+	token, err := s.openaiGatewayService.openAITokenProvider.GetAccessToken(c.Request.Context(), runtimeAccount)
 	if err != nil { return s.sendErrorAndEnd(c, "Pi credential unavailable; reauthorize this account") }
-	owner, _ := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
+	owner, _ := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 	if mode == AccountTestModeCompact {
 		return s.testNativePiCompactAccount(c, account, model, token, owner)
 	}
@@ -40,7 +41,7 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 	if transport == "" { transport = "sse" }
 	resp, err := piruntime.Do(c.Request.Context(), "/responses", map[string]any{
 		"request": createOpenAITestPayload(model, true, prompt), "access_token": token,
-		"owner_id": owner, "credential_id": account.ID, "account_id": account.GetCredential("chatgpt_account_id"),
+		"owner_id": owner, "credential_id": runtimeAccount.ID, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
 		"session_id": "admin-test-" + uuid.NewString(), "transport": transport,
 	})
 	if err != nil { return s.sendErrorAndEnd(c, "Pi runtime unavailable") }
@@ -51,13 +52,17 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 }
 
 func (s *AccountTestService) testNativePiCompactAccount(c *gin.Context, account *Account, model, token string, owner int64) error {
+	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(c.Request.Context(), s.accountRepo, account)
+	if resolveErr != nil {
+		return s.sendErrorAndEnd(c, "Invalid Pi account binding")
+	}
 	request := createOpenAITestPayload(model, true, "compact probe")
 	delete(request, "stream")
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: model})
 	resp, err := piruntime.Do(c.Request.Context(), "/compact", map[string]any{
 		"request": request, "access_token": token,
-		"owner_id": owner, "credential_id": account.ID,
-		"account_id": account.GetCredential("chatgpt_account_id"),
+		"owner_id": owner, "credential_id": runtimeAccount.ID,
+		"account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
 	})
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Pi compact runtime unavailable")

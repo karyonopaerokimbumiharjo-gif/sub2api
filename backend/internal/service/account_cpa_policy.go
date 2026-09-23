@@ -35,10 +35,16 @@ func ValidateExecutionAccount(a *Account) error {
 	if a != nil && a.UsesNativePiRuntime() {
 		owner, err := strconv.ParseInt(a.GetCredential("pi_owner_user_id"), 10, 64)
 		if err != nil || owner <= 0 || a.ParentAccountID != nil || a.ProxyID != nil ||
-			strings.TrimSpace(a.GetCredential("access_token")) == "" ||
-			strings.TrimSpace(a.GetCredential("refresh_token")) == "" ||
 			strings.TrimSpace(a.GetCredential("chatgpt_account_id")) == "" ||
 			strings.TrimSpace(a.GetCredential("base_url")) != "" {
+			return infraerrors.BadRequest("PI_ACCOUNT_INVALID", "Pi 账号缺少独立凭据绑定或混入 CPA 配置")
+		}
+		if a.GetCredential("harness_kind") == PiSharedHarnessKind {
+			runtimeID, runtimeErr := strconv.ParseInt(a.GetCredential(PiRuntimeAccountIDCredential), 10, 64)
+			if runtimeErr != nil || runtimeID <= 0 || runtimeID == a.ID {
+				return infraerrors.BadRequest("PI_ACCOUNT_INVALID", "Pi 共享账号缺少有效的运行时授权绑定")
+			}
+		} else if strings.TrimSpace(a.GetCredential("access_token")) == "" || strings.TrimSpace(a.GetCredential("refresh_token")) == "" {
 			return infraerrors.BadRequest("PI_ACCOUNT_INVALID", "Pi 账号缺少独立凭据绑定或混入 CPA 配置")
 		}
 		switch a.GetCredential("pi_transport") {

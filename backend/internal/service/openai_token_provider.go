@@ -139,6 +139,13 @@ func (p *OpenAITokenProvider) GetAccessToken(ctx context.Context, account *Accou
 	if account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
 		return "", errors.New("not an openai oauth account")
 	}
+	if account.GetCredential("harness_kind") == PiSharedHarnessKind {
+		resolved, err := ResolveNativePiRuntimeAccount(ctx, p.accountRepo, account)
+		if err != nil {
+			return "", err
+		}
+		account = resolved
+	}
 
 	cacheKey := OpenAITokenCacheKey(account)
 

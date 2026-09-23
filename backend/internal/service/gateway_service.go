@@ -1423,17 +1423,18 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 			// Native Pi supplies an authoritative account-bound catalogue. Never
 			// supplement failed/empty discovery with static platform defaults.
 			hasCatalog = true
-			if ValidateExecutionAccount(&acc) != nil {
+			runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, &acc)
+			if ValidateExecutionAccount(&acc) != nil || resolveErr != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 				continue
 			}
 			fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			owner, _ := strconv.ParseInt(acc.GetCredential("pi_owner_user_id"), 10, 64)
+			owner, _ := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 			var manifest struct {
 				Models []struct {
 					Slug string `json:"slug"`
 				} `json:"models"`
 			}
-			fetchErr := piruntime.JSON(fetchCtx, "/models", map[string]any{"owner_id": owner, "account_id": acc.GetCredential("chatgpt_account_id"), "access_token": acc.GetCredential("access_token")}, &manifest)
+			fetchErr := piruntime.JSON(fetchCtx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": runtimeAccount.GetCredential("access_token")}, &manifest)
 			cancel()
 			if fetchErr != nil {
 				slog.Warn("gateway_pi_catalog_unavailable", "account_id", acc.ID)

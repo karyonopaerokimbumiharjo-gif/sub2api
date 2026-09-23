@@ -15,7 +15,11 @@ import (
 )
 
 func (a *Account) UsesNativePiRuntime() bool {
-	return a != nil && a.Platform == PlatformOpenAI && a.Type == AccountTypeOAuth && a.GetCredential("harness_kind") == "pi"
+	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth {
+		return false
+	}
+	kind := a.GetCredential("harness_kind")
+	return kind == PiNativeHarnessKind || kind == PiSharedHarnessKind
 }
 func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 	value, ok := c.Get("api_key")
@@ -84,7 +88,11 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
 		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
 	}
-	if err := ValidateExecutionAccount(account); err != nil {
+	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+	if resolveErr != nil {
+		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+	}
+	if err := ValidateExecutionAccount(account); err != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
 	}
 	owner, err := piRequestOwner(c, account)
@@ -128,7 +136,7 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if s.openAITokenProvider == nil {
 		return fail(http.StatusServiceUnavailable, "Pi token provider unavailable")
 	}
-	token, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
 		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
 	}
@@ -138,13 +146,13 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	}
 	request["model"] = upstreamModel
 	SetOpsUpstreamModel(c, upstreamModel)
-	transport := account.GetCredential("pi_transport")
+	transport := runtimeAccount.GetCredential("pi_transport")
 	if transport == "" {
 		transport = "sse"
 	}
 	started := time.Now()
-	resp, err := piruntime.Do(ctx, "/responses", map[string]any{"request": request, "access_token": token, "account_id": account.GetCredential("chatgpt_account_id"),
-		"owner_id": owner, "credential_id": account.ID, "session_id": session, "transport": transport})
+	resp, err := piruntime.Do(ctx, "/responses", map[string]any{"request": request, "access_token": token, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
+		"owner_id": owner, "credential_id": runtimeAccount.ID, "session_id": session, "transport": transport})
 	if err != nil {
 		var runtimeErr *piruntime.Error
 		if errors.As(err, &runtimeErr) {
@@ -223,6 +231,10 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	if err != nil {
 		return fail(http.StatusForbidden, err.Error())
 	}
+	runtimeAccount, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+	if err != nil || ValidateExecutionAccount(runtimeAccount) != nil {
+		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+	}
 	var request map[string]any
 	if json.Unmarshal(body, &request) != nil {
 		return fail(http.StatusBadRequest, "Invalid compact request")
@@ -240,15 +252,15 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	if s.openAITokenProvider == nil {
 		return fail(http.StatusServiceUnavailable, "Pi token provider unavailable")
 	}
-	token, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
 		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
 	}
 	started := time.Now()
 	resp, err := piruntime.Do(ctx, "/compact", map[string]any{
 		"request": request, "access_token": token,
-		"account_id": account.GetCredential("chatgpt_account_id"),
-		"owner_id": owner, "credential_id": account.ID,
+		"account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
+		"owner_id": owner, "credential_id": runtimeAccount.ID,
 	})
 	if err != nil {
 		return fail(http.StatusBadGateway, "Pi runtime unavailable")
@@ -283,6 +295,9 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 
 // Native Pi credentials stay on the Pi SDK refresh path, under Sub2API's existing refresh lock.
 func refreshNativePiToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
+	if account.GetCredential("harness_kind") == PiSharedHarnessKind {
+		return nil, errors.New("shared Pi aliases must refresh through their runtime owner")
+	}
 	owner, err := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
 	if err != nil || owner <= 0 || account.ProxyID != nil || account.GetOpenAIRefreshToken() == "" {
 		return nil, errors.New("invalid Pi credential binding")

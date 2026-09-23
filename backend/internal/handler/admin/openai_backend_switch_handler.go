@@ -113,8 +113,37 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	}
 
 	credentials := cloneCredentialMap(oauth)
-	credentials["harness_kind"] = "pi"
-	credentials["pi_owner_user_id"] = strconv.FormatInt(ownerID, 10)
+	runtimeOwnerID := ownerID
+	var sharedRuntime *service.Account
+	if candidates, listErr := h.adminService.ListAccounts(c.Request.Context(), 1, 1000, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", -1, "", "id", "asc"); listErr == nil {
+		for i := range candidates {
+			candidate := &candidates[i]
+			if candidate.ID == account.ID || candidate.GetCredential("harness_kind") != service.PiNativeHarnessKind || candidate.GetCredential("chatgpt_account_id") != accountID {
+				continue
+			}
+			sharedRuntime = candidate
+			if parsed, parseErr := strconv.ParseInt(candidate.GetCredential("pi_owner_user_id"), 10, 64); parseErr == nil && parsed > 0 {
+				runtimeOwnerID = parsed
+			}
+			break
+		}
+	}
+	if sharedRuntime != nil && ownerID != runtimeOwnerID {
+		return nil, infraerrors.New(http.StatusConflict, "PI_OWNER_CONFLICT", "该 ChatGPT 授权已经绑定到另一个 Pi 归属用户")
+	}
+	if sharedRuntime != nil {
+		credentials["harness_kind"] = service.PiSharedHarnessKind
+		credentials[service.PiRuntimeAccountIDCredential] = strconv.FormatInt(sharedRuntime.ID, 10)
+		credentials["pi_owner_user_id"] = strconv.FormatInt(runtimeOwnerID, 10)
+		// The alias deliberately carries no rotating OAuth secret. Requests and
+		// refreshes resolve the existing Pi owner row under one cache/lock.
+		credentials["access_token"] = nil
+		credentials["refresh_token"] = nil
+		credentials["id_token"] = nil
+	} else {
+		credentials["harness_kind"] = service.PiNativeHarnessKind
+		credentials["pi_owner_user_id"] = strconv.FormatInt(ownerID, 10)
+	}
 	// Keep the CPA route internally so switching back can restore the exact
 	// bridge without another upload or authorization. These keys are redacted.
 	credentials["cpa_bridge_api_key"] = account.GetOpenAIApiKey()
@@ -123,8 +152,9 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	delete(credentials, "base_url")
 	extra := cloneAnyMap(account.Extra)
 	restoreAutoResetExtra(extra)
+	zeroProxy := int64(0)
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), account.ID, &service.UpdateAccountInput{
-		Type: service.AccountTypeOAuth, Credentials: credentials, Extra: extra,
+		Type: service.AccountTypeOAuth, Credentials: credentials, Extra: extra, ProxyID: &zeroProxy,
 	})
 	if err != nil {
 		return nil, err
@@ -142,7 +172,27 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 	if h.cpaRuntimeService == nil {
 		return nil, infraerrors.New(http.StatusServiceUnavailable, "OPENAI_CPA_SWITCH_UNAVAILABLE", "CPA 执行服务不可用")
 	}
-	credentials := cloneCredentialMap(account.Credentials)
+	runtimeAccount := account
+	if account.GetCredential("harness_kind") == service.PiSharedHarnessKind {
+		runtimeID, parseErr := strconv.ParseInt(account.GetCredential(service.PiRuntimeAccountIDCredential), 10, 64)
+		if parseErr != nil || runtimeID <= 0 {
+			return nil, infraerrors.New(http.StatusConflict, "PI_RUNTIME_OWNER_UNAVAILABLE", "当前 Pi 共享账号的运行时授权已不可用")
+		}
+		var resolveErr error
+		runtimeAccount, resolveErr = h.adminService.GetAccount(c.Request.Context(), runtimeID)
+		if resolveErr != nil || runtimeAccount == nil || runtimeAccount.GetCredential("harness_kind") != service.PiNativeHarnessKind {
+			return nil, infraerrors.New(http.StatusConflict, "PI_RUNTIME_OWNER_UNAVAILABLE", "当前 Pi 共享账号的运行时授权已不可用")
+		}
+	}
+	credentials := cloneCredentialMap(runtimeAccount.Credentials)
+	// The business row owns the CPA bridge metadata, including the exact auth
+	// file to reuse. Keep it when the runtime credentials come from a shared Pi
+	// owner row.
+	for _, key := range []string{"cpa_bridge_api_key", "cpa_bridge_base_url"} {
+		if value, ok := account.Credentials[key]; ok {
+			credentials[key] = value
+		}
+	}
 	if authName := strings.TrimSpace(account.GetExtraString(service.OpenAIQuotaBridgeAuthNameExtraKey)); authName != "" {
 		// Consumed only by the server-side importer to make a switch
 		// round-trip idempotent; it is never stored as a token.
@@ -211,6 +261,7 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 	}
 	return updated, nil
 }
+
 
 func autoResetSavedKey(key string) string {
 	switch key {

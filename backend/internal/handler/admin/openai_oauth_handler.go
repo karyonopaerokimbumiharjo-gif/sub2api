@@ -360,10 +360,30 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 	}
 
 	if account.UsesNativePiRuntime() {
-		updated, err := h.openaiOAuthService.RefreshPiAccount(c.Request.Context(), account)
+		refreshAccount := account
+		if account.GetCredential("harness_kind") == service.PiSharedHarnessKind {
+			runtimeID, parseErr := strconv.ParseInt(account.GetCredential(service.PiRuntimeAccountIDCredential), 10, 64)
+			if parseErr != nil || runtimeID <= 0 {
+				response.BadRequest(c, "Pi 共享账号的运行时授权无效")
+				return
+			}
+			refreshAccount, err = h.adminService.GetAccount(c.Request.Context(), runtimeID)
+			if err != nil || refreshAccount == nil {
+				response.BadRequest(c, "Pi 共享账号的运行时授权不可用")
+				return
+			}
+		}
+		updated, err := h.openaiOAuthService.RefreshPiAccount(c.Request.Context(), refreshAccount)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
+		}
+		if refreshAccount != account {
+			updated, err = h.adminService.GetAccount(c.Request.Context(), account.ID)
+			if err != nil {
+				response.ErrorFrom(c, err)
+				return
+			}
 		}
 		response.Success(c, dto.AccountFromService(updated))
 		return
