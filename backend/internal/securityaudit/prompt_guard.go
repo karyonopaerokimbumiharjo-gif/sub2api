@@ -88,6 +88,13 @@ func (g *GuardEvaluator) evaluate(ctx context.Context, cfg ActiveConfig, snapsho
 			}))
 			return g.finishEvaluation(ctx, cfg, snapshot, result, persistEvent, start, baseFields)
 		}
+		if result := MatchBenignRuntimeSnapshotPolicy(snapshot, cfg.Scanners); result != nil {
+			result.LatencyMS = int(g.clock.Now().Sub(start).Milliseconds())
+			LogInfo(EventEvaluationStarted, mergeLogFields(baseFields, map[string]any{
+				"chunk_total": 1, "status": "started", "scanner_backend": result.ScannerBackend,
+			}))
+			return g.finishEvaluation(ctx, cfg, snapshot, result, persistEvent, start, baseFields)
+		}
 	}
 	if len(endpoints) == 0 {
 		if g.metrics != nil {
