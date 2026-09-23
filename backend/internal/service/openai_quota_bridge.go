@@ -16,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/cpapolicy"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 const (
@@ -152,7 +153,18 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 	idToken := openAICPACredentialString(credentials, "id_token")
 	email := strings.TrimSpace(openAICPACredentialString(credentials, "email"))
 	accountID := strings.TrimSpace(openAICPACredentialString(credentials, "chatgpt_account_id"))
-	if accessToken == "" || refreshToken == "" || idToken == "" || email == "" || accountID == "" {
+	// Native Pi intentionally keeps only the access/refresh pair and the
+	// account binding. Recover the non-secret identity claims from the access
+	// token so a Pi account can move into CPA without another browser login.
+	if claims, decodeErr := openai.DecodeIDToken(accessToken); decodeErr == nil {
+		if email == "" {
+			email = strings.TrimSpace(claims.Email)
+		}
+		if accountID == "" && claims.OpenAIAuth != nil {
+			accountID = strings.TrimSpace(claims.OpenAIAuth.ChatGPTAccountID)
+		}
+	}
+	if accessToken == "" || refreshToken == "" || email == "" || accountID == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CPA_IMPORT_INCOMPLETE", "OpenAI OAuth credentials are incomplete")
 	}
 	expired, err := normalizeOpenAICPAExpiration(credentials["expires_at"])
@@ -208,11 +220,13 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 		"account_id":    accountID,
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
-		"id_token":      idToken,
 		"expired":       expired,
 		"last_refresh":  time.Now().UTC().Format(time.RFC3339),
 		"disabled":      false,
 		"weight":        1,
+	}
+	if idToken != "" {
+		payload["id_token"] = idToken
 	}
 	if planType := openAICPACredentialString(credentials, "plan_type"); planType != "" {
 		payload["plan_type"] = planType

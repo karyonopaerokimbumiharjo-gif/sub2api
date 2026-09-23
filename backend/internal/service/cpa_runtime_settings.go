@@ -106,7 +106,7 @@ func (s *OpenAIQuotaService) LoadCPAOAuthCredentials(ctx context.Context, accoun
 			credentials["expires_at"] = expiry
 		}
 	}
-	for _, key := range []string{"access_token", "refresh_token", "id_token", "chatgpt_account_id", "email", "expires_at"} {
+	for _, key := range []string{"access_token", "refresh_token", "chatgpt_account_id", "email", "expires_at"} {
 		if strings.TrimSpace(openAICPACredentialString(credentials, key)) == "" {
 			return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CPA_AUTH_INCOMPLETE", "CPA 授权文件缺少可切换所需的 OAuth 凭据，请先在 CPA 中重新验证")
 		}
