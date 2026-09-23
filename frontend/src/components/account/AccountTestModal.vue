@@ -255,6 +255,7 @@ import TextArea from '@/components/common/TextArea.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildApiUrl } from '@/api/client'
+import { isPiHarnessKind } from '@/utils/openaiExecutionBackend'
 import { adminAPI } from '@/api/admin'
 import type { Account, ClaudeModel } from '@/types'
 
@@ -294,7 +295,7 @@ let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const testMode = ref<'default' | 'compact'>('default')
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
-const isNativePi = computed(() => isOpenAIAccount.value && props.account?.credentials?.harness_kind === 'pi')
+const isNativePi = computed(() => isOpenAIAccount.value && isPiHarnessKind(props.account?.credentials?.harness_kind))
 const openAITestModeOptions = computed(() => [
   { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
   { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }

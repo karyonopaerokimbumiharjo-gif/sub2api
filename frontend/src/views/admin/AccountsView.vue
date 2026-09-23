@@ -516,6 +516,7 @@ import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { isPiHarnessKind } from '@/utils/openaiExecutionBackend'
 import { adminAPI } from '@/api/admin'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
@@ -1696,7 +1697,7 @@ function getOpenAIAuthMode(row: any): string | undefined {
 
 function getOpenAIExecutionBackend(row: AccountListItem): 'pi' | 'cpa' | null {
   if (row.platform !== 'openai') return null
-  if (row.type === 'oauth' && row.credentials?.harness_kind === 'pi') return 'pi'
+  if (row.type === 'oauth' && isPiHarnessKind(row.credentials?.harness_kind)) return 'pi'
   if (row.type === 'oauth') return 'cpa'
   if (row.type === 'apikey' && (row.extra?.cpa_auth_id || row.extra?.cpa_identity)) return 'cpa'
   return null
@@ -2378,6 +2379,10 @@ const handleSwitchBackend = async (payload: { account: Account; backend: 'cpa' |
     )
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
+    // The switch response is intentionally redacted for credentials. Reload the
+    // canonical list so shared Pi aliases (`pi_shared`) and derived badges are
+    // visible immediately instead of leaving the old CPA row on screen.
+    await reload()
     appStore.showSuccess(backend === 'pi' ? t('admin.accounts.switchToPiSuccess') : t('admin.accounts.switchToCpaSuccess'))
   } catch (error: any) {
     console.error('Failed to switch OpenAI execution backend:', error)

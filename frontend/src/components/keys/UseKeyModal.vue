@@ -686,9 +686,15 @@ const codexCatalogModelSlugs = computed(() =>
   parseCodexCatalogModels(codexModelManifestContent.value).map((model) => model.slug)
 )
 
-const jBaseModels = computed(() => codexCatalogModelSlugs.value.filter(model =>
-  /^(gpt-|codex-)/.test(model) && model !== 'gpt-6j' && !model.endsWith('-j') && !/(image|audio|realtime|tts|transcribe)/.test(model)
-))
+const jBaseModels = computed(() => {
+  const discovered = codexCatalogModelSlugs.value.filter(model =>
+    /^(gpt-|codex-)/.test(model) && model !== 'gpt-6j' && !model.endsWith('-j') && !/(image|audio|realtime|tts|transcribe)/.test(model)
+  )
+  // Keep the J switch usable while the upstream catalogue is unavailable or
+  // still loading. The gateway validates the selected base model again; this
+  // fallback only keeps the control visible and does not grant extra access.
+  return discovered.length > 0 ? discovered : ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+})
 
 function selectCodexCatalogModel(preferredModel: string): string {
   if (codexCatalogModelSlugs.value.includes(preferredModel)) return preferredModel

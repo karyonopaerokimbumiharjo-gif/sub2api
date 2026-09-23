@@ -77,6 +77,7 @@ import { useResizeObserver, useWindowSize } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@/components/icons'
 import type { Account } from '@/types'
+import { isPiHarnessKind } from '@/utils/openaiExecutionBackend'
 
 const props = defineProps<{ show: boolean; account: Account | null; anchorRect: DOMRect | null }>()
 const emit = defineEmits(['close', 'test', 'stats', 'schedule', 'duplicate', 'reauth', 'refresh-token', 'recover-state', 'reset-quota', 'set-privacy', 'create-spark-shadow', 'switch-backend'])
@@ -149,7 +150,7 @@ const isOpenAIOAuth = computed(() => props.account?.platform === 'openai' && pro
 const openAIBackendSwitchTarget = computed<'cpa' | 'pi' | null>(() => {
   const account = props.account
   if (!account || account.platform !== 'openai' || account.parent_account_id != null) return null
-  if (account.type === 'oauth') return account.credentials?.harness_kind === 'pi' ? 'cpa' : 'pi'
+  if (account.type === 'oauth') return isPiHarnessKind(account.credentials?.harness_kind) ? 'cpa' : 'pi'
   if (account.type === 'apikey' && (account.extra?.cpa_identity || account.extra?.openai_quota_via_compatible_upstream === true)) return 'pi'
   return null
 })

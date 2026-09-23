@@ -200,6 +200,7 @@ import {
   type AuthInputMethod
 } from '@/composables/useAccountOAuth'
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { isPiHarnessKind } from '@/utils/openaiExecutionBackend'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useGrokOAuth } from '@/composables/useGrokOAuth'
@@ -328,7 +329,7 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal && props.account) {
-      openaiOAuth.harnessKind.value = props.account.credentials?.harness_kind === 'pi' ? 'pi' : ''
+      openaiOAuth.harnessKind.value = isPiHarnessKind(props.account.credentials?.harness_kind) ? 'pi' : ''
       openaiOAuth.piOwnerUserId.value = openaiOAuth.harnessKind.value === 'pi' ? Number(props.account.credentials?.pi_owner_user_id) : undefined
       // Initialize addMethod based on current account type (Claude only)
       if (

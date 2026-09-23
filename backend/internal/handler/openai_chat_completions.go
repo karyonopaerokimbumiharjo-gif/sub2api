@@ -82,8 +82,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	if gpt6jMode.Enabled {
-		defer beginGPT6JTrace(c, body)()
-		c.Header("X-Sub2API-Model-Mode", gpt6JModeValue)
+		// J is a full-input Responses workflow. Letting a Chat Completions
+		// request continue into the ordinary scheduler selects no Pi account
+		// (Pi intentionally advertises Responses only) and ends as a misleading
+		// 503 capability_mismatch. Fail at the protocol boundary with an
+		// actionable contract instead.
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "J models require POST /v1/responses; use the Responses API endpoint for J cooperation")
+		return
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
