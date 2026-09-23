@@ -352,6 +352,36 @@ func cpaBridgeCandidate(file openAIQuotaBridgeAuthFile) CPABridgeCandidate {
 	return c
 }
 
+func cpaMetadataAccountID(metadata map[string]any) string {
+	if id := strings.TrimSpace(openAICPACredentialString(metadata, "account_id")); id != "" {
+		return id
+	}
+	if token, ok := metadata["token"].(map[string]any); ok {
+		return strings.TrimSpace(openAICPACredentialString(token, "account_id"))
+	}
+	if token, ok := metadata["tokens"].(map[string]any); ok {
+		return strings.TrimSpace(openAICPACredentialString(token, "account_id"))
+	}
+	return ""
+}
+
+// CPA's list response only exposes identity claims parsed from id_token. Pi
+// credentials deliberately omit that token, so consult the private download
+// metadata before declaring an otherwise active file unusable.
+func cpaBridgeCandidateWithMetadata(ctx context.Context, config openAIQuotaBridgeConfig, file openAIQuotaBridgeAuthFile) CPABridgeCandidate {
+	candidate := cpaBridgeCandidate(file)
+	if candidate.CanBridge || candidate.Reason != "授权身份信息不完整，请重新导入" {
+		return candidate
+	}
+	metadata, err := cpaAuthMetadata(ctx, config, file.Name)
+	if err != nil || cpaMetadataAccountID(metadata) == "" {
+		return candidate
+	}
+	candidate.CanBridge = true
+	candidate.Reason = ""
+	return candidate
+}
+
 func (s *OpenAIQuotaService) ListCPABridgeCandidates(ctx context.Context) ([]CPABridgeCandidate, error) {
 	config, err := loadOpenAIQuotaBridgeConfig()
 	if err != nil {
@@ -363,7 +393,7 @@ func (s *OpenAIQuotaService) ListCPABridgeCandidates(ctx context.Context) ([]CPA
 	}
 	result := make([]CPABridgeCandidate, 0, len(files))
 	for _, file := range files {
-		result = append(result, cpaBridgeCandidate(file))
+		result = append(result, cpaBridgeCandidateWithMetadata(ctx, config, file))
 	}
 	return result, nil
 }
@@ -385,7 +415,7 @@ func (s *OpenAIQuotaService) PrepareCPABridgeProvisioning(ctx context.Context, a
 	if err != nil {
 		return nil, err
 	}
-	candidate := cpaBridgeCandidate(file)
+	candidate := cpaBridgeCandidateWithMetadata(ctx, config, file)
 	if !candidate.CanBridge {
 		return nil, infraerrors.New(http.StatusConflict, "CPA_AUTH_NOT_READY", candidate.Reason)
 	}
