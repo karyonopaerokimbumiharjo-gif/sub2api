@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -183,7 +184,7 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 		}
 		var result service.OpenAIAuthURLResult
 		if err := piruntime.JSON(c.Request.Context(), "/oauth/start", map[string]any{"owner_id": req.PiOwnerUserID}, &result); err != nil {
-			response.BadRequest(c, "Pi runtime authorization is unavailable")
+			response.BadRequest(c, piruntime.PublicMessage(err))
 			return
 		}
 		response.Success(c, result)
@@ -235,7 +236,7 @@ func (h *OpenAIOAuthHandler) ExchangeCode(c *gin.Context) {
 		callback := "http://localhost:1455/auth/callback?" + url.Values{"code": {req.Code}, "state": {req.State}}.Encode()
 		var tokenInfo service.OpenAITokenInfo
 		if err := piruntime.JSON(c.Request.Context(), "/oauth/complete", map[string]any{"owner_id": req.PiOwnerUserID, "session_id": req.SessionID, "callback_url": callback}, &tokenInfo); err != nil {
-			response.BadRequest(c, "Pi authorization failed; check the owner and callback")
+			response.BadRequest(c, piruntime.PublicMessage(err))
 			return
 		}
 		response.Success(c, tokenInfo)
@@ -793,7 +794,7 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 	callback := "http://localhost:1455/auth/callback?" + url.Values{"code": {req.Code}, "state": {req.State}}.Encode()
 	var token service.OpenAITokenInfo
 	if err := piruntime.JSON(c.Request.Context(), "/oauth/complete", map[string]any{"owner_id": req.Owner, "session_id": req.SessionID, "callback_url": callback}, &token); err != nil {
-		response.BadRequest(c, "Pi authorization failed")
+		response.BadRequest(c, piruntime.PublicMessage(err))
 		return
 	}
 	token.HarnessKind = "pi"
@@ -819,8 +820,17 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 	}
 	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 1, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true, InitiallyDisabled: true, InitiallyUnschedulable: true})
 	if err != nil {
+		if infraerrors.Code(err) >= 500 {
+			err = infraerrors.New(http.StatusInternalServerError, "PI_ACCOUNT_SAVE_FAILED", "Pi 授权已完成，但保存账号失败。请保留当前页面并在本次授权开始后 10 分钟内重试导入；超时后需重新授权").WithCause(err)
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
+	// Persistence has succeeded. Best-effort acknowledgement removes the short-lived
+	// runtime copy. Failure to acknowledge must not turn a saved account into a
+	// failed import; the runtime also expires the session after ten minutes.
+	ackCtx, cancelAck := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
+	defer cancelAck()
+	_ = piruntime.JSON(ackCtx, "/oauth/ack", map[string]any{"owner_id": req.Owner, "session_id": req.SessionID}, &struct{}{})
 	response.Success(c, dto.AccountFromService(account))
 }

@@ -81,3 +81,22 @@ HTTP 200, imports or container health as end-to-end acceptance.
   simultaneous cached-WebSocket sessions using one synthetic credential against
   a local test upstream: cancelling A preserves B and no output crosses callers.
   This is protocol/isolation coverage, not proof of fresh production OAuth.
+
+## Pi OAuth persistence repair (2026-09-23)
+
+Production OAuth completed but the database still enforced migration 234's
+CPA-only CHECK. Migration 244 permits only a fully bound Pi OAuth account or
+the existing CPA route and makes a live Pi OAuth identity unique. PostgreSQL
+regressions reproduce the old failure, apply the new migration twice, and
+check malformed bindings, external routes, duplicate identities and proxies.
+OAuth completion now retains its owner/state-bound result until persistence
+acknowledgement (maximum ten minutes), buffers early callbacks, and exposes
+only credential-free recovery errors. Runtime tests include retry after a
+successful exchange, acknowledgement ownership, and delayed SDK prompts.
+The import UI describes credential ownership separately from shared group use.
+
+Validation: 13 Pi runtime tests, 13 account-import frontend tests, targeted Go
+race tests and PostgreSQL migration checks pass; frontend production build
+and Linux embedded backend build pass. A fresh production OAuth import still
+requires a new authorization, since the old runtime discarded the failed
+import's exchanged credential. Deployment and acceptance results follow below.

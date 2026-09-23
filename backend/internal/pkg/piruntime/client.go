@@ -61,11 +61,48 @@ func JSON(ctx context.Context, path string, payload, target any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("Pi runtime request failed")
+		var failure struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&failure)
+		// Only expose stable codes we own, never a provider body or OAuth payload.
+		switch failure.Error {
+		case "oauth_session_mismatch", "oauth_callback_mismatch", "oauth_account_mismatch", "oauth_start_failed", "oauth_exchange_failed", "oauth_exchange_timeout", "oauth_login_in_progress", "oauth_access_rejected", "oauth_access_invalid_response":
+			return &Error{Code: failure.Error}
+		default:
+			return &Error{Code: "pi_runtime_unavailable"}
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024+1))
 	if err != nil || len(data) > 1024*1024 {
 		return errors.New("invalid Pi runtime response")
 	}
 	return json.Unmarshal(data, target)
+}
+
+// Error carries a credential-free error code from the private runtime.
+type Error struct{ Code string }
+
+func (e *Error) Error() string { return e.Code }
+
+// PublicMessage describes an actionable recovery without exposing credentials.
+func PublicMessage(err error) string {
+	var failure *Error
+	if errors.As(err, &failure) {
+		switch failure.Code {
+		case "oauth_session_mismatch":
+			return "Pi 授权会话已过期或归属用户不匹配，请重新生成授权链接并登录"
+		case "oauth_callback_mismatch":
+			return "回调地址与本次 Pi 授权不匹配，请粘贴本次登录的完整回调地址"
+		case "oauth_exchange_failed":
+			return "Pi 授权码交换失败，请重新生成授权链接；若仍失败，请检查 Pi 节点到授权服务的连接"
+		case "oauth_exchange_timeout":
+			return "Pi 授权服务连接超时，请检查节点网络后重新授权"
+		case "oauth_login_in_progress":
+			return "已有 Pi 授权正在进行，请先完成该次授权或等待其过期"
+		case "oauth_account_mismatch":
+			return "Pi 返回的账号身份与当前账号不一致，请使用同一账号重新授权"
+		}
+	}
+	return "Pi 授权服务不可用，请检查 Pi 节点状态和网络后重试"
 }

@@ -19,7 +19,7 @@
           <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
             {{ text('Pi 归属用户 ID', 'Pi owner user ID') }}
             <input v-model.number="oauth.piOwnerUserId.value" type="number" min="1" step="1" class="input mt-2 w-full" data-testid="pi-owner-user-id" :disabled="busy || oauth.loading.value || !!oauth.authUrl.value" />
-            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('必须填写实际调用者的用户 ID，Pi 凭据固定绑定该用户。', 'Required: the user ID that will call this credential.') }}</span>
+            <span class="mt-1 block text-xs font-normal text-gray-500">{{ text('填写凭据归属用户 ID；获此专属分组授权的用户可以共享账号，彼此会话独立。', 'Credential owner ID. Authorized users in this exclusive group may share the account with isolated sessions.') }}</span>
           </label>
           <label v-if="oauth.harnessKind.value === 'pi'" class="mt-3 block text-sm font-medium">
             {{ text('Pi 业务分组', 'Pi business group') }}
@@ -160,6 +160,7 @@ async function generateAuthUrl() {
     return
   }
   error.value = ''
+  callback.value = ''
   await oauth.generateAuthUrl(oauth.harnessKind.value === 'pi' ? null : runtime.value.proxy_id)
 }
 async function readFiles(event: Event) {

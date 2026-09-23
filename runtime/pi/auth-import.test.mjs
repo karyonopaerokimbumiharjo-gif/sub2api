@@ -49,3 +49,23 @@ test('Pi auth import validation never refreshes or returns a token',async()=>{
   assert.equal(verifications,1);
  }finally{runtime.closeAllConnections();await new Promise(resolve=>runtime.close(resolve))}
 });
+
+// A remote browser may paste its callback before an asynchronous SDK prompt is
+// installed. Queue that callback instead of silently dropping it.
+test('early callback survives delayed SDK prompt and failed exchanges never expose provider errors',{timeout:3000},async()=>{
+ const secret='s'.repeat(40);let release;
+ const delayed=new Promise(resolve=>release=resolve);
+ let exchanges=0;
+ const oauth={async login(i){i.notify({type:'auth_url',url:'https://auth.openai.com/oauth/authorize?state=fixture'});await delayed;
+  await i.prompt({type:'manual_code',signal:i.signal});exchanges++;throw Error('token=do-not-expose&code=secret');}};
+ const runtime=createRuntime({secret,oauth});runtime.listen(0,'127.0.0.1');await once(runtime,'listening');
+ const post=(path,body)=>fetch(`http://127.0.0.1:${runtime.address().port}`+path,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify(body)});
+ try {
+  const start=await(await post('/oauth/start',{owner_id:1})).json();
+  const completing=post('/oauth/complete',{owner_id:1,session_id:start.session_id,callback_url:'http://localhost:1455/auth/callback?state=fixture&code=fixture'});
+  // Wait for the HTTP body to be dispatched while the SDK is still waiting.
+  await new Promise(resolve=>setTimeout(resolve,20));release();
+  const result=await completing;
+  assert.equal(result.status,400);assert.deepEqual(await result.json(),{error:'oauth_exchange_failed'});assert.equal(exchanges,1);
+ }finally{release();runtime.closeAllConnections();await new Promise(resolve=>runtime.close(resolve))}
+});

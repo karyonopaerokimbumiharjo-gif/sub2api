@@ -1,6 +1,6 @@
 import {createServer} from 'node:http';
 import {readFileSync,statSync} from 'node:fs';
-import {randomUUID,timingSafeEqual} from 'node:crypto';
+import {createHash,randomUUID,timingSafeEqual} from 'node:crypto';
 import {once} from 'node:events';
 import {pathToFileURL} from 'node:url';
 import {openaiCodexProvider} from '@earendil-works/pi-ai/providers/openai-codex';
@@ -42,20 +42,21 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     if(loginActive){json(res,409,{error:'oauth_login_in_progress'});return}
     loginActive=true;
     const id=randomUUID(),controller=new AbortController();
-    let authorize,manual;
+    let authorize,deliverCallback;
+    const callbackInput=new Promise(resolve=>deliverCallback=resolve);
     const ready=new Promise(resolve=>authorize=resolve);
     const record={owner:body.owner_id,controller,created:Date.now()};
     record.timeout=setTimeout(()=>{controller.abort();sessions.delete(id)},10*60*1000);record.timeout.unref();
     sessions.set(id,record);
     record.promise=oauth.login({signal:controller.signal,notify(message){if(message.type==='auth_url'){record.url=message.url;authorize()}},
      prompt(info){if(info.type==='select')return Promise.resolve('browser');
-      if(info.type==='manual_code')return new Promise((resolve,reject)=>{manual=resolve;info.signal?.addEventListener('abort',()=>reject(Error('cancelled')),{once:true})});
+      if(info.type==='manual_code')return callbackInput;
       return Promise.reject(Error('unsupported_oauth_prompt'));
      }}).then(value=>{record.credentials=value}).catch(()=>{record.failed=true;authorize()}).finally(()=>{loginActive=false});
     let readyTimeout;
     await Promise.race([ready,new Promise(resolve=>{readyTimeout=setTimeout(resolve,5000)})]);
     clearTimeout(readyTimeout);
-    record.manual=value=>manual?.(value);
+    record.manual=deliverCallback;
     if(!record.url||record.failed){controller.abort();clearTimeout(record.timeout);sessions.delete(id);throw Error('oauth_start_failed')}
     json(res,200,{auth_url:record.url,session_id:id});return;
    }
@@ -64,10 +65,25 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     if(!record||record.owner!==body.owner_id)throw Error('oauth_session_mismatch');
     const url=new URL(body.callback_url);const auth=new URL(record.url);
     if(url.origin!=='http://localhost:1455'||url.pathname!=='/auth/callback'||!url.searchParams.get('code')||url.searchParams.get('state')!==auth.searchParams.get('state'))throw Error('oauth_callback_mismatch');
-    record.manual(url.href);await record.promise;
-    sessions.delete(body.session_id);clearTimeout(record.timeout);
+    const callbackHash=createHash('sha256').update(url.href).digest('hex');
+    if(record.callbackHash&&record.callbackHash!==callbackHash)throw Error('oauth_callback_mismatch');
+    record.callbackHash=callbackHash;
+    // A completed exchange remains bound to this session/owner until the gateway
+    // confirms persistence. Transient database failures must not lose credentials
+    // or attempt to redeem a one-use authorization code for a second time.
+    record.manual(url.href);
+    let exchangeTimeout;
+    try {
+     await Promise.race([record.promise,new Promise((_,reject)=>{exchangeTimeout=setTimeout(()=>{record.controller.abort();reject(Error('oauth_exchange_timeout'))},35000)})]);
+    }finally{clearTimeout(exchangeTimeout)}
     if(record.failed||!record.credentials)throw Error('oauth_exchange_failed');
     json(res,200,credentials(record.credentials,record.owner));return;
+   }
+   if(req.url==='/oauth/ack') {
+    const record=sessions.get(body.session_id);
+    if(!record||record.owner!==body.owner_id||!record.credentials)throw Error('oauth_session_mismatch');
+    clearTimeout(record.timeout);sessions.delete(body.session_id);
+    json(res,200,{status:'saved'});return;
    }
    if(req.url==='/oauth/refresh') {
     if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
@@ -107,7 +123,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    json(res,404,{error:'not_found'});
   }catch(error){
    // Deliberately do not echo provider exceptions, callbacks, tokens or payloads.
-   const safe=['owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','unsupported_pi_field:max_output_tokens'];
+   const safe=['oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','unsupported_pi_field:max_output_tokens'];
    const code=safe.includes(error.message)?error.message:'pi_runtime_error';
    if(res.headersSent)res.destroy();else json(res,error.message==='pi_session_busy'?409:400,{error:code});
   }

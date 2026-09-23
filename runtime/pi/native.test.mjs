@@ -95,6 +95,9 @@ test('private runtime requires its key and binds OAuth callbacks to the initiati
   assert.equal((await post('/oauth/complete',{session_id:start.session_id,owner_id:1,callback_url:callback.replace('fixture-state','bad-state')})).status,400);
   const completed=await(await post('/oauth/complete',{session_id:start.session_id,owner_id:1,callback_url:callback})).json();
   assert.equal(completed.harness_kind,'pi');assert.equal(completed.pi_owner_user_id,'1');assert.equal(exchangeInput,callback);
+  assert.deepEqual(await(await post('/oauth/complete',{session_id:start.session_id,owner_id:1,callback_url:callback})).json(),completed);
+  assert.equal((await post('/oauth/ack',{session_id:start.session_id,owner_id:2})).status,400);
+  assert.equal((await post('/oauth/ack',{session_id:start.session_id,owner_id:1})).status,200);
   assert.equal((await post('/oauth/complete',{session_id:start.session_id,owner_id:1,callback_url:callback})).status,400);
   assert.equal((await post('/oauth/refresh',{account_id:'account-a',owner_id:1,refresh_token:'fixture'})).status,400);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r))}

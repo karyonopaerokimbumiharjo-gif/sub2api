@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,7 @@ type piImportAdminStub struct {
 	accounts    []service.Account
 	created     *service.CreateAccountInput
 	listMembers []service.Account
+	createErr   error
 }
 
 func (s *piImportAdminStub) GetUser(context.Context, int64) (*service.User, error) {
@@ -40,6 +42,9 @@ func (s *piImportAdminStub) ListAccountsForSchedulerScoreFilter(_ context.Contex
 }
 func (s *piImportAdminStub) CreateAccount(_ context.Context, input *service.CreateAccountInput) (*service.Account, error) {
 	s.created = input
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
 	return &service.Account{ID: 81, Name: input.Name, Platform: input.Platform, Type: input.Type, Credentials: input.Credentials, Status: service.StatusDisabled, Schedulable: false}, nil
 }
 
@@ -163,8 +168,13 @@ func TestCreatePiAccountOAuthPathUsesSameDisabledExclusiveBoundary(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Setenv("PI_RUNTIME_SECRET_FILE", secretPath)
-	calls := 0
+	calls, acks := 0, 0
 	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/ack" {
+			acks++
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+			return
+		}
 		calls++
 		if r.URL.Path != "/oauth/complete" {
 			t.Errorf("unexpected runtime path %s", r.URL.Path)
@@ -194,7 +204,20 @@ func TestCreatePiAccountOAuthPathUsesSameDisabledExclusiveBoundary(t *testing.T)
 		t.Fatalf("public group accepted by OAuth path: %d", got.Code)
 	}
 	stub.group.IsExclusive = true
+	stub.createErr = errors.New("synthetic database failure")
+	failed := request()
+	if failed.Code != http.StatusInternalServerError || acks != 0 || !strings.Contains(failed.Body.String(), "PI_ACCOUNT_SAVE_FAILED") {
+		t.Fatalf("failed save must retain OAuth session and explain recovery: %d", failed.Code)
+	}
+	if strings.Contains(failed.Body.String(), "synthetic database failure") {
+		t.Fatal("internal error leaked")
+	}
+	stub.createErr = nil
+	calls = 0
 	got := request()
+	if acks != 1 {
+		t.Fatal("saved account must acknowledge runtime session")
+	}
 	if got.Code != http.StatusOK || calls != 1 || stub.created == nil || !stub.created.InitiallyDisabled || !stub.created.InitiallyUnschedulable {
 		t.Fatalf("OAuth Pi account was not created safely: status=%d calls=%d", got.Code, calls)
 	}
