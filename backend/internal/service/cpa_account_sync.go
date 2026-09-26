@@ -16,6 +16,7 @@ type CPAAccountSyncResult struct {
 	Created    int `json:"created"`
 	Updated    int `json:"updated"`
 	Identities int `json:"identities"`
+	AccountIDs []int64 `json:"account_ids"`
 }
 
 type cpaAccountSyncCandidate struct {
@@ -162,7 +163,7 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		}
 	}
 
-	result := &CPAAccountSyncResult{Identities: len(candidates)}
+	result := &CPAAccountSyncResult{Identities: len(candidates), AccountIDs: make([]int64, 0, len(candidates))}
 	for _, candidate := range candidates {
 		credential := candidate.credential
 		binding := map[string]any{
@@ -185,6 +186,7 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 				}
 			}
 			result.Updated++
+			result.AccountIDs = append(result.AccountIDs, candidate.existing.ID)
 			continue
 		}
 		name := strings.TrimSpace(credential.Email)
@@ -201,6 +203,7 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 			return nil, err
 		}
 		result.Created++
+		result.AccountIDs = append(result.AccountIDs, account.ID)
 	}
 	return result, nil
 }

@@ -1,6 +1,8 @@
 import { useI18n } from 'vue-i18n'
 
 const labels = {
+  basispointsLabel: ['Excel / Basis Points：覆盖原始模型后端', 'Excel / Basis Points: override model backend'],
+  basispointsHint: ['模型列表名称不变；勾选后仅使用本账号的 Excel 插件后端，不会回退到普通模型或其他账号。沿用 CPA OAuth 授权或重新授权后导入；账号须已具备 ChatGPT for Excel 权限，授权本身不会开通权限。插件暂为整段回放流式输出。', 'Model names stay unchanged. Uses only this account’s Excel backend, without fallback. Import or renew CPA OAuth first; existing ChatGPT for Excel access is required. OAuth does not grant entitlement. Streaming is currently buffered.'],
   title: ['CPA 凭证设置', 'CPA credential settings'],
   scope: ['此处管理该账号的实际授权和上游出口。分组、计费、并发及到期设置在同一账号行的“编辑”中管理。', 'Manage this account’s authorization and upstream egress here. Edit groups, billing, concurrency and expiry from the same account row.'],
   importScope: ['导入后会自动关联实际账号。分组、计费、并发和到期设置可在账号列表中编辑。', 'Imported credentials are linked to actual accounts. Edit groups, billing, concurrency and expiry in the account list.'],

@@ -2839,12 +2839,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 				response.Error(c, http.StatusBadGateway, "无法读取执行后端模型目录，请检查 CPA 连接后重新加载")
 				return
 			}
-			for _, id := range ids {
-				if id == "gpt-6-astra" {
-					ids = append(ids, "gpt-6j")
-					break
-				}
-			}
+
 			response.Success(c, openai.ModelsFromIDs(ids))
 			return
 		}

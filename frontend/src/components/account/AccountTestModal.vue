@@ -42,6 +42,7 @@
       </div>
 
       <p v-if="account && account.status !== 'active'" role="status" class="text-sm text-amber-700">账号已停用。可查看模型目录；正式调用前请在账号行启用账号。模型目录不代表授权已通过测试。</p>
+      <p v-if="account?.extra?.openai_basispoints_enabled === true" data-testid="basispoints-model-label-notice" class="text-sm text-emerald-700">Excel / Basis Points 标签仅供管理端识别；用户端列表和实际请求仍使用原始模型 ID，覆盖范围以上游账号授权为准。</p>
       <div v-if="modelLoadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
         {{ modelLoadError }}
         <button type="button" class="ml-2 underline" :disabled="loadingModels" @click="loadAvailableModels">重新加载模型</button>
@@ -345,6 +346,9 @@ const loadAvailableModels = async () => {
     availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
       ? sortTestModels(models)
       : models
+    if (props.account.platform === 'openai' && props.account.extra?.openai_basispoints_enabled === true) {
+      availableModels.value = availableModels.value.map((model) => ({...model, display_name: `${model.display_name || model.id} · Excel / Basis Points`}))
+    }
     if (!models.length) modelLoadError.value = '执行后端没有返回可用模型，请检查授权是否启用。'
     // Default selection by platform
     if (availableModels.value.length > 0) {

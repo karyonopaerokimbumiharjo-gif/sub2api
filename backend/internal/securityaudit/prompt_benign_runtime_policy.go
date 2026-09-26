@@ -18,7 +18,7 @@ const (
 	benignRuntimePolicyVersion = 1
 )
 
-var grokRuntimeSystemPromptPattern = regexp.MustCompile(`(?is)^\s*you\s+are\s+grok\s+released\s+by\s+xai\.\s+you\s+are\s+an\s+interactive\s+cli\s+tool\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks\.\s+your\s+main\s+goal\s+is\s+to\s+complete\s+the\s+user's\s+request,\s+denoted\s+within\s+the\s+<user_query>\s+tag\.\s*<work_policy>.*?</work_policy>\s*$`)
+var grokRuntimeSystemPromptPattern = regexp.MustCompile(`(?is)^\s*you\s+are\s+grok\s+released\s+by\s+xai\.\s+you\s+are\s+an\s+interactive\s+cli\s+tool\s+that\s+helps\s+users\s+with\s+software\s+engineering\s+tasks\.\s+your\s+main\s+goal\s+is\s+to\s+complete\s+the\s+user's\s+request,\s+denoted\s+within\s+the\s+<user_query>\s+tag\.\s*<work_policy>\s*-\s+Keep every explicit requirement of the request in view until it is completed\.\s*-\s+Match your response to the user's intent\.\s*</work_policy>\s*$`)
 
 func isGrokRuntimeSystemPrompt(text string) bool {
 	return grokRuntimeSystemPromptPattern.MatchString(strings.TrimSpace(text))

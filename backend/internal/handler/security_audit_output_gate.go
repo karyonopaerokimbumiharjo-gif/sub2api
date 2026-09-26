@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-
-	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/sseparse"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/gin-gonic/gin"
@@ -165,18 +163,3 @@ func completeStrictOutput(body []byte, stream bool) bool {
 }
 
 // A model-produced tool action must pass the same gate before local side effects.
-type gatedJTools struct {
-	jruntime.ToolRunner
-	gate *strictOutputWriter
-}
-
-func (g *gatedJTools) Authorize(ctx context.Context, b jruntime.Binding, t jruntime.Tool, c jruntime.Call) error {
-	if err := g.ToolRunner.Authorize(ctx, b, t, c); err != nil {
-		return err
-	}
-	body, _ := json.Marshal(map[string]any{"status": "completed", "output": []any{map[string]string{"type": "function_call", "name": c.Name, "arguments": c.Arguments}}})
-	if d := g.gate.coordinator.GateOutput(ctx, g.gate.request, body, false); !d.AllowNextStage {
-		return jruntime.ErrSafety
-	}
-	return nil
-}

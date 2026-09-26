@@ -8,7 +8,7 @@ func (s *PromptService) RequireJevSafety() bool {
 		return false
 	}
 	cfg, ok := s.config.Active()
-	return ok && cfg.Enabled && cfg.BlockingEnabled && cfg.JevSafetyEnabled
+	return ok && !cfg.NativeAuditEnabled && cfg.Enabled && cfg.BlockingEnabled && cfg.JevSafetyEnabled
 }
 
 func (s *PromptService) JevBlockingReady() bool {

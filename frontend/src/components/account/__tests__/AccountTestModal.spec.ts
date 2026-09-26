@@ -95,6 +95,25 @@ function buildAccount() {
 }
 
 describe('AccountTestModal', () => {
+  it('adds admin-only plugin labels while keeping every original model ID', async () => {
+    const models = [
+      {id:'gpt-6-astra',display_name:'GPT-6-Astra'},
+      {id:'gpt-6-sol',display_name:'GPT-6-Sol'},
+      {id:'gpt-6-luna',display_name:'GPT-6-Luna'},
+      {id:'gpt-5.6-terra',display_name:'GPT-5.6-Terra'}
+    ]
+    getAvailableModelsMock.mockResolvedValue(models)
+    const account=buildAccount()
+    account.extra={openai_basispoints_enabled:true,cpa_auth_id:'auth-1'}
+    const wrapper=mount(AccountTestModal,{props:{show:true,account},global:{stubs:{BaseDialog:BaseDialogStub,Select:SelectStub,TextArea:TextAreaStub}}})
+    await flushPromises()
+    const options=wrapper.find('select').findAll('option')
+    expect(options.map(option=>option.attributes('value'))).toEqual(models.map(model=>model.id))
+    expect(options.every(option=>option.text().includes('Excel / Basis Points'))).toBe(true)
+    expect(models.every(model=>!model.display_name.includes('Excel'))).toBe(true)
+    expect(wrapper.get('[data-testid="basispoints-model-label-notice"]').text()).toContain('原始模型 ID')
+    wrapper.unmount()
+  })
   const originalFetch = global.fetch
 
   beforeEach(() => {

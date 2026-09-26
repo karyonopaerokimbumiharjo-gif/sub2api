@@ -44577,6 +44577,8 @@ type UsageLogMutation struct {
 	addduration_ms               *int
 	first_token_ms               *int
 	addfirst_token_ms            *int
+	vps_latency_ms               *int
+	addvps_latency_ms            *int
 	prompt_audit_latency_ms      *int
 	addprompt_audit_latency_ms   *int
 	user_agent                   *string
@@ -46466,6 +46468,76 @@ func (m *UsageLogMutation) ResetFirstTokenMs() {
 	delete(m.clearedFields, usagelog.FieldFirstTokenMs)
 }
 
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (m *UsageLogMutation) SetVpsLatencyMs(i int) {
+	m.vps_latency_ms = &i
+	m.addvps_latency_ms = nil
+}
+
+// VpsLatencyMs returns the value of the "vps_latency_ms" field in the mutation.
+func (m *UsageLogMutation) VpsLatencyMs() (r int, exists bool) {
+	v := m.vps_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVpsLatencyMs returns the old "vps_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldVpsLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVpsLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVpsLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVpsLatencyMs: %w", err)
+	}
+	return oldValue.VpsLatencyMs, nil
+}
+
+// AddVpsLatencyMs adds i to the "vps_latency_ms" field.
+func (m *UsageLogMutation) AddVpsLatencyMs(i int) {
+	if m.addvps_latency_ms != nil {
+		*m.addvps_latency_ms += i
+	} else {
+		m.addvps_latency_ms = &i
+	}
+}
+
+// AddedVpsLatencyMs returns the value that was added to the "vps_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedVpsLatencyMs() (r int, exists bool) {
+	v := m.addvps_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (m *UsageLogMutation) ClearVpsLatencyMs() {
+	m.vps_latency_ms = nil
+	m.addvps_latency_ms = nil
+	m.clearedFields[usagelog.FieldVpsLatencyMs] = struct{}{}
+}
+
+// VpsLatencyMsCleared returns if the "vps_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) VpsLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldVpsLatencyMs]
+	return ok
+}
+
+// ResetVpsLatencyMs resets all changes to the "vps_latency_ms" field.
+func (m *UsageLogMutation) ResetVpsLatencyMs() {
+	m.vps_latency_ms = nil
+	m.addvps_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldVpsLatencyMs)
+}
+
 // SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
 func (m *UsageLogMutation) SetPromptAuditLatencyMs(i int) {
 	m.prompt_audit_latency_ms = &i
@@ -47351,7 +47423,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 48)
+	fields := make([]string, 0, 49)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47453,6 +47525,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.first_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.vps_latency_ms != nil {
+		fields = append(fields, usagelog.FieldVpsLatencyMs)
 	}
 	if m.prompt_audit_latency_ms != nil {
 		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
@@ -47572,6 +47647,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.DurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.FirstTokenMs()
+	case usagelog.FieldVpsLatencyMs:
+		return m.VpsLatencyMs()
 	case usagelog.FieldPromptAuditLatencyMs:
 		return m.PromptAuditLatencyMs()
 	case usagelog.FieldUserAgent:
@@ -47677,6 +47754,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldDurationMs(ctx)
 	case usagelog.FieldFirstTokenMs:
 		return m.OldFirstTokenMs(ctx)
+	case usagelog.FieldVpsLatencyMs:
+		return m.OldVpsLatencyMs(ctx)
 	case usagelog.FieldPromptAuditLatencyMs:
 		return m.OldPromptAuditLatencyMs(ctx)
 	case usagelog.FieldUserAgent:
@@ -47952,6 +48031,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFirstTokenMs(v)
 		return nil
+	case usagelog.FieldVpsLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVpsLatencyMs(v)
+		return nil
 	case usagelog.FieldPromptAuditLatencyMs:
 		v, ok := value.(int)
 		if !ok {
@@ -48112,6 +48198,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addfirst_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
 	}
+	if m.addvps_latency_ms != nil {
+		fields = append(fields, usagelog.FieldVpsLatencyMs)
+	}
 	if m.addprompt_audit_latency_ms != nil {
 		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
 	}
@@ -48168,6 +48257,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.AddedFirstTokenMs()
+	case usagelog.FieldVpsLatencyMs:
+		return m.AddedVpsLatencyMs()
 	case usagelog.FieldPromptAuditLatencyMs:
 		return m.AddedPromptAuditLatencyMs()
 	case usagelog.FieldImageCount:
@@ -48311,6 +48402,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddFirstTokenMs(v)
 		return nil
+	case usagelog.FieldVpsLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddVpsLatencyMs(v)
+		return nil
 	case usagelog.FieldPromptAuditLatencyMs:
 		v, ok := value.(int)
 		if !ok {
@@ -48385,6 +48483,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(usagelog.FieldFirstTokenMs) {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.FieldCleared(usagelog.FieldVpsLatencyMs) {
+		fields = append(fields, usagelog.FieldVpsLatencyMs)
 	}
 	if m.FieldCleared(usagelog.FieldPromptAuditLatencyMs) {
 		fields = append(fields, usagelog.FieldPromptAuditLatencyMs)
@@ -48468,6 +48569,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ClearFirstTokenMs()
+		return nil
+	case usagelog.FieldVpsLatencyMs:
+		m.ClearVpsLatencyMs()
 		return nil
 	case usagelog.FieldPromptAuditLatencyMs:
 		m.ClearPromptAuditLatencyMs()
@@ -48608,6 +48712,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ResetFirstTokenMs()
+		return nil
+	case usagelog.FieldVpsLatencyMs:
+		m.ResetVpsLatencyMs()
 		return nil
 	case usagelog.FieldPromptAuditLatencyMs:
 		m.ResetPromptAuditLatencyMs()

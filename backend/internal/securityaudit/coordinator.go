@@ -94,7 +94,7 @@ func (c *Coordinator) RecordLocalPolicyCacheBlock(ctx context.Context, snapshot 
 }
 
 func (c *Coordinator) ShouldAuditOutput(req Request, inputDecision DecisionKind) bool {
-	if c == nil || c.prompt == nil {
+	if c == nil || c.prompt == nil || c.nativeAuditSelected() {
 		return false
 	}
 	engine, ok := c.prompt.(OutputAuditEngine)
@@ -102,7 +102,7 @@ func (c *Coordinator) ShouldAuditOutput(req Request, inputDecision DecisionKind)
 }
 
 func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecision DecisionKind, responseBody []byte, streaming bool) {
-	if c == nil || c.prompt == nil {
+	if c == nil || c.prompt == nil || c.nativeAuditSelected() {
 		return
 	}
 	if engine, ok := c.prompt.(OutputAuditEngine); ok {
@@ -111,6 +111,11 @@ func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecis
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+	if c != nil && c.prompt != nil {
+		if engine, ok := c.prompt.(nativeAuditPolicyEngine); ok && engine.NativeAuditEnabled() {
+			return c.checkNative(ctx, req, engine)
+		}
+	}
 	if c != nil && c.prompt != nil {
 		if configured, ok := c.prompt.(interface{ RequireJevSafety() bool }); ok {
 			req.RequireJev = configured.RequireJevSafety()

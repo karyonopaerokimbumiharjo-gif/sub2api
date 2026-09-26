@@ -85,7 +85,11 @@ func TestCPAImportWithoutBridgeStillRejectsInvalidCredentials(t *testing.T) {
 			t.Setenv(openAIQuotaBridgeManagementPasswordFileKey, secret)
 			s := &OpenAIQuotaService{accountRepo: &stubQuotaAccountRepo{accounts: map[int64]*Account{}}}
 			_, err := s.ImportOAuthCredentialsToCPA(context.Background(), map[string]any{"email": "import@example.invalid", "access_token": "synthetic-access", "refresh_token": "synthetic-refresh", "id_token": "synthetic-id", "chatgpt_account_id": "synthetic-account", "expires_at": "2100-01-01T00:00:00Z"})
-			require.ErrorContains(t, err, "OPENAI_CPA_IMPORT_CREDENTIAL_REJECTED")
+			if status == http.StatusUnauthorized {
+				require.ErrorContains(t, err, "OPENAI_CPA_IMPORT_CREDENTIAL_REJECTED")
+			} else {
+				require.ErrorContains(t, err, "OPENAI_CPA_IMPORT_PREFLIGHT_UNAVAILABLE")
+			}
 		})
 	}
 }

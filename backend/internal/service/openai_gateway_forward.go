@@ -115,7 +115,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
 	wsDecision = resolveOpenAIWSDecisionByClientTransport(wsDecision, GetOpenAIClientTransport(c))
-	passthroughEnabled := account.IsOpenAIPassthroughEnabled() && !c.GetBool(OpenAIGPT6JContextKey)
+	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
 	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
 		body, err = flattenOpenAIResponsesNamespaces(c, body)
@@ -1209,13 +1209,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		if err := guardGPT6JHTTPResponse(c, resp); err != nil {
-			_ = resp.Body.Close()
-			setOpsUpstreamError(c, http.StatusBadGateway, err.Error(), "")
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "code": "upstream_model_mismatch", "message": "GPT-6J upstream did not confirm the requested model"}})
-			return nil, err
-		}
-
 		if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
 			maxLineSize := defaultMaxLineSize
 			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -1383,9 +1376,6 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
-	if err := validateGPT6JUpstreamModel(c, gjson.GetBytes(body, "model").String()); err != nil {
-		return nil, err
-	}
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {

@@ -123,7 +123,8 @@ func deleteCPAAccountAuthorizations(ctx context.Context, account *Account, accou
 		}
 		for _, other := range references {
 			if other.ID != account.ID {
-				return infraerrors.New(http.StatusConflict, "CPA_AUTH_SHARED", "CPA 授权文件仍被其他业务账号使用，已保留授权文件")
+				// Unlink this account without revoking another account's credential.
+				return nil
 			}
 		}
 	}

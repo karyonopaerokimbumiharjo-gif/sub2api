@@ -463,6 +463,20 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (_c *UsageLogCreate) SetVpsLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetVpsLatencyMs(v)
+	return _c
+}
+
+// SetNillableVpsLatencyMs sets the "vps_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableVpsLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetVpsLatencyMs(*v)
+	}
+	return _c
+}
+
 // SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
 func (_c *UsageLogCreate) SetPromptAuditLatencyMs(v int) *UsageLogCreate {
 	_c.mutation.SetPromptAuditLatencyMs(v)
@@ -1101,6 +1115,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstTokenMs(); ok {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
+	}
+	if value, ok := _c.mutation.VpsLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldVpsLatencyMs, field.TypeInt, value)
+		_node.VpsLatencyMs = &value
 	}
 	if value, ok := _c.mutation.PromptAuditLatencyMs(); ok {
 		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
@@ -1886,6 +1904,30 @@ func (u *UsageLogUpsert) AddFirstTokenMs(v int) *UsageLogUpsert {
 // ClearFirstTokenMs clears the value of the "first_token_ms" field.
 func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldFirstTokenMs)
+	return u
+}
+
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (u *UsageLogUpsert) SetVpsLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldVpsLatencyMs, v)
+	return u
+}
+
+// UpdateVpsLatencyMs sets the "vps_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateVpsLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldVpsLatencyMs)
+	return u
+}
+
+// AddVpsLatencyMs adds v to the "vps_latency_ms" field.
+func (u *UsageLogUpsert) AddVpsLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldVpsLatencyMs, v)
+	return u
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (u *UsageLogUpsert) ClearVpsLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldVpsLatencyMs)
 	return u
 }
 
@@ -2864,6 +2906,34 @@ func (u *UsageLogUpsertOne) UpdateFirstTokenMs() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (u *UsageLogUpsertOne) SetVpsLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetVpsLatencyMs(v)
+	})
+}
+
+// AddVpsLatencyMs adds v to the "vps_latency_ms" field.
+func (u *UsageLogUpsertOne) AddVpsLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddVpsLatencyMs(v)
+	})
+}
+
+// UpdateVpsLatencyMs sets the "vps_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateVpsLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateVpsLatencyMs()
+	})
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearVpsLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearVpsLatencyMs()
 	})
 }
 
@@ -4048,6 +4118,34 @@ func (u *UsageLogUpsertBulk) UpdateFirstTokenMs() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetVpsLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetVpsLatencyMs(v)
+	})
+}
+
+// AddVpsLatencyMs adds v to the "vps_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddVpsLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddVpsLatencyMs(v)
+	})
+}
+
+// UpdateVpsLatencyMs sets the "vps_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateVpsLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateVpsLatencyMs()
+	})
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearVpsLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearVpsLatencyMs()
 	})
 }
 

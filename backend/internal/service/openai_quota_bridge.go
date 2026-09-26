@@ -83,6 +83,7 @@ type openAIQuotaBridgeIdentity struct {
 }
 
 type openAIQuotaBridgeAPICallRequest struct {
+	ProxyURL string `json:"proxy_url,omitempty"`
 	AuthIndex string            `json:"auth_index"`
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
@@ -201,13 +202,15 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 	// Validate the incoming credential through CPA before replacing a live file.
 	// A syntactically valid JWT may still be revoked; a failed preflight must
 	// leave the currently working pool untouched.
-	preflight, err := callOpenAIQuotaBridge(ctx, config, openAIQuotaBridgeIdentity{}, http.MethodGet, chatGPTUsageURL, buildCodexCommonHeaders(accessToken, accountID, false), "")
-	if err != nil {
-		return nil, err
+	proxyURL := ""
+	if runtime != nil {
+		input := *runtime
+		input.Name = openAICPAAuthFileName(email, accountID)
+		fields, fieldErr := s.cpaRuntimeFields(ctx, input)
+		if fieldErr != nil { return nil, fieldErr }
+		proxyURL, _ = fields["proxy_url"].(string)
 	}
-	if preflight.StatusCode != http.StatusOK {
-		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_CPA_IMPORT_CREDENTIAL_REJECTED", "CPA 未能验证此 OAuth 授权；现有账号池未修改，请重新授权后重试")
-	}
+	if err := preflightCPAImport(ctx, config, accessToken, accountID, proxyURL); err != nil { return nil, err }
 
 	var boundName, boundEmail string
 	var bridgeID int64

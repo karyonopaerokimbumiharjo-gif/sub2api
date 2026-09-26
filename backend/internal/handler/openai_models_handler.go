@@ -46,13 +46,6 @@ func writeOpenAIModelsError(c *gin.Context, status int, errorType, message strin
 }
 
 func writeOpenAIModelsResponse(c *gin.Context, manifest *service.OpenAIModelsResponse) {
-	if _, present := c.Get(jCatalogContext); present && !manifest.NotModified {
-		copy := *manifest
-		copy.Body = decorateJCatalogue(c, manifest.Body)
-		copy.ETag = service.CodexModelsManifestETag(copy.Body)
-		copy.NotModified = service.CodexModelsManifestETagMatches(c.GetString("sub2api.j.client_etag"), copy.ETag)
-		manifest = &copy
-	}
 	if c.Param("model") != "" {
 		writeRetrievedModel(c, manifest.Body)
 		return
@@ -77,7 +70,6 @@ func writeModelsListResponse(c *gin.Context, models any) {
 		writeOpenAIModelsError(c, 500, "api_error", "Failed to encode model catalogue")
 		return
 	}
-	body = decorateJCatalogue(c, body)
 	if c.Param("model") == "" {
 		c.Data(http.StatusOK, "application/json", body)
 		return

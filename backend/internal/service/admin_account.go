@@ -732,14 +732,15 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			}
 		}
 		// Identity-bound execution metadata must survive partial UI setting updates.
-		for _, key := range []string{"cpa_identity", "cpa_auth_id", "cpa_connection_only", OpenAIQuotaViaCompatibleUpstreamExtraKey, OpenAIQuotaBridgeAuthNameExtraKey, OpenAIQuotaBridgeAuthEmailExtraKey} {
+		for _, key := range []string{"cpa_identity", "cpa_auth_id", "cpa_connection_only", BasisPointsEnabledExtraKey, OpenAIQuotaViaCompatibleUpstreamExtraKey, OpenAIQuotaBridgeAuthNameExtraKey, OpenAIQuotaBridgeAuthEmailExtraKey} {
 			if _, provided := normalizedExtra[key]; !provided {
 				if value, exists := account.Extra[key]; exists {
 					normalizedExtra[key] = value
 				}
 			}
 		}
-		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
+        if err := validateBasisPointsExtra(account, normalizedExtra); err != nil { return nil, err }
+        normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
 		if account.Platform == PlatformAntigravity && wasOveragesEnabled && !account.IsOveragesEnabled() {
 			delete(account.Extra, "antigravity_credits_overages") // 清理旧版 overages 运行态

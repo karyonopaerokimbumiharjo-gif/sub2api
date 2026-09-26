@@ -80,7 +80,7 @@ func TestSyncCPAAccountsCreatesDisabledAccountAndReusesExactBinding(t *testing.T
 
 	first, err := svc.SyncCPAAccounts(context.Background(), []string{"one.json"})
 	require.NoError(t, err)
-	require.Equal(t, &CPAAccountSyncResult{Created: 1, Identities: 1}, first)
+	require.Equal(t, &CPAAccountSyncResult{Created: 1, Identities: 1, AccountIDs: []int64{101}}, first)
 	require.Len(t, repo.accounts, 1)
 	account := repo.accounts[101]
 	require.Equal(t, StatusDisabled, account.Status)
@@ -93,7 +93,7 @@ func TestSyncCPAAccountsCreatesDisabledAccountAndReusesExactBinding(t *testing.T
 
 	second, err := svc.SyncCPAAccounts(context.Background(), []string{"one.json", "one.json"})
 	require.NoError(t, err)
-	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1}, second)
+	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1, AccountIDs: []int64{101}}, second)
 	require.Equal(t, 1, repo.created)
 	require.Equal(t, 0, repo.updated, "identical binding needs no database write")
 
@@ -101,7 +101,7 @@ func TestSyncCPAAccountsCreatesDisabledAccountAndReusesExactBinding(t *testing.T
 	accountID = "workspace-2" // Same exact auth ID wins despite an improved identity claim.
 	third, err := svc.SyncCPAAccounts(context.Background(), []string{"one.json"})
 	require.NoError(t, err)
-	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1}, third)
+	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1, AccountIDs: []int64{101}}, third)
 	require.Equal(t, 1, repo.created)
 	require.Equal(t, 1, repo.updated)
 	require.Equal(t, StatusActive, account.Status)
@@ -123,7 +123,7 @@ func TestSyncCPAAccountsRebindsSameIdentityWithoutChangingAccountSettings(t *tes
 	authID = "auth-2" // CPA replaced the file but retained the workspace.
 	result, err := svc.SyncCPAAccounts(context.Background(), []string{"one.json"})
 	require.NoError(t, err)
-	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1}, result)
+	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1, AccountIDs: []int64{101}}, result)
 	require.Equal(t, "auth-2", account.GetExtraString("cpa_auth_id"))
 	require.Equal(t, StatusDisabled, account.Status)
 	require.True(t, account.Schedulable)

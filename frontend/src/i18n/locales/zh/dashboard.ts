@@ -398,6 +398,8 @@ export default {
     latencyDurationWithoutAudit: '总耗时（不含审）',
     latencyDurationWithAudit: '总耗时（含审）',
     promptAuditLatency: '提示词审计耗时',
+    tps: 'TPS',
+    tpsHint: '输出 tokens/秒。流式按输出 token 数 ÷（总耗时 − 首字延迟）计算；非流式或缺少首字计时按总耗时计算。缺少有效数据或图片请求显示 —。',
     promptAuditLatencyValue: '提示词审计耗时：{value}',
     promptAuditLatencyMissing: '该历史记录没有提示词审计耗时',
     time: '时间',

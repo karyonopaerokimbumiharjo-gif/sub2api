@@ -509,7 +509,7 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
 		AdaptiveEnabled: req.AdaptiveEnabled, AdaptiveCollectWhenDisabled: req.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: req.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: req.AdaptiveRiskSampleRate,
-		JevSafetyEnabled: req.JevSafetyEnabled, OutputAuditEnabled: req.OutputAuditEnabled, OutputAllowSampleRate: req.OutputAllowSampleRate, OutputRiskSampleRate: req.OutputRiskSampleRate,
+		NativeAuditEnabled: req.NativeAuditEnabled, JevSafetyEnabled: req.JevSafetyEnabled, OutputAuditEnabled: req.OutputAuditEnabled, OutputAllowSampleRate: req.OutputAllowSampleRate, OutputRiskSampleRate: req.OutputRiskSampleRate,
 		Strategy: strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
 		PromptChunkConcurrency: promptChunkConcurrency,
 		QueueCapacity:          req.QueueCapacity, Scanners: append([]string(nil), req.Scanners...),

@@ -37,7 +37,7 @@ Do not publish these endpoints directly. The gateway does not follow redirects o
 
 ## Evidence and tests
 
-`npm test --prefix runtime/pi` verifies native SDK request formation, raw SSE bytes, real local WebSocket reuse/delta behavior, OAuth state/owner checks, credential isolation, and concurrent-turn rejection. The Go service tests cover API-key ownership, invalid ingress, native refresh routing and refresh-binding validation. The frontend composable test checks that both OAuth steps preserve the same owner and runtime.
+`npm test --prefix runtime/pi` verifies native SDK request formation, raw SSE bytes, real local WebSocket reuse/delta behavior, OAuth state/owner checks, credential isolation, and concurrent same-session lanes with cancellation isolation. The Go service tests cover API-key ownership, invalid ingress, native refresh routing and refresh-binding validation. The frontend composable test checks that both OAuth steps preserve the same owner and runtime.
 
 `PI_AUTH_FILE=/private/path/auth.json node runtime/pi/verify-live.mjs` opts into two real requests using an existing local OAuth access token. This tests request execution; it does **not** prove a new browser OAuth login. It requests `gpt-6-astra` by default, exercises a function call and result continuation, and independently checks the models declared in upstream response events. Use `PI_TRANSPORT=websocket-cached` to test connection reuse and delta continuation. Tokens, prompts, responses, state values and raw identifiers are never written by this runner.
 

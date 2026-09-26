@@ -122,7 +122,7 @@ func (s *PromptService) HasBackgroundAudit() bool {
 		return false
 	}
 	cfg, ok := s.config.Active()
-	return ok && cfg.RiskControlEnabled && cfg.Enabled && cfg.EffectiveBackgroundAuditMode() != BackgroundAuditModeOff && len(cfg.EnabledEndpointsFor(false)) > 0
+	return ok && !cfg.NativeAuditEnabled && cfg.RiskControlEnabled && cfg.Enabled && cfg.EffectiveBackgroundAuditMode() != BackgroundAuditModeOff && len(cfg.EnabledEndpointsFor(false)) > 0
 }
 
 // CaptureAuditGap records a complete received prompt when the prompt-audit

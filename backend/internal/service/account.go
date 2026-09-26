@@ -908,12 +908,7 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
 	}
-	// GPT-6J executes its GPT turns on Astra. An account exposing Astra need
-	// not advertise a second upstream model or collect a separate state.
-	if a.IsOpenAI() && requestedModel == "gpt-6j" &&
-		mappingSupportsRequestedModel(mapping, "gpt-6-astra") && a.GetMappedModel("gpt-6-astra") == "gpt-6-astra" {
-		return true
-	}
+
 	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
 	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
 }
@@ -928,9 +923,7 @@ func (a *Account) GetMappedModel(requestedModel string) string {
 // ResolveMappedModel 获取映射后的模型名，并返回是否命中了账号级映射。
 // matched=true 表示命中了精确映射或通配符映射，即使映射结果与原模型名相同。
 func (a *Account) ResolveMappedModel(requestedModel string) (mappedModel string, matched bool) {
-	if a.IsOpenAI() && requestedModel == "gpt-6j" {
-		return "gpt-6-astra", true
-	}
+
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
 		return requestedModel, false

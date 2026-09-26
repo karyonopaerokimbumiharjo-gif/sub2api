@@ -721,6 +721,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		DurationMs:                l.DurationMs,
 		FirstTokenMs:              l.FirstTokenMs,
 		PromptAuditLatencyMs:      l.PromptAuditLatencyMs,
+		VPSLatencyMs: l.VPSLatencyMs,
 		ImageCount:                l.ImageCount,
 		ImageSize:                 l.ImageSize,
 		ImageInputSize:            l.ImageInputSize,

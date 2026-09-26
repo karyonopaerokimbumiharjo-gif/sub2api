@@ -39,10 +39,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
 	responseModelObserver := &upstreamResponseModelObserver{}
-	gpt6JGuard := &gpt6JResponseGuard{}
-	if err := validateGPT6JUpstreamModel(c, mappedModel); err != nil {
-		return nil, err
-	}
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
 	if err != nil {
@@ -608,12 +604,6 @@ readLoop:
 			}
 			setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(readErr.Error()), "")
 			return nil, fmt.Errorf("openai ws read event: %w", readErr)
-		}
-		if c.GetBool(OpenAIGPT6JContextKey) {
-			if err := gpt6JGuard.event(message); err != nil {
-				lease.MarkBroken()
-				return nil, err
-			}
 		}
 		if normalized, changed := normalizeCompletedImageGenerationStatus(message); changed {
 			message = normalized

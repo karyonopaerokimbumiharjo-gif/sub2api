@@ -389,9 +389,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(requestModel))
-		if err := validateGPT6JUpstreamModel(c, upstreamModel); err != nil {
-			return openAIWSClientPayload{}, err
-		}
 		if modelMissing || upstreamModel != originalModel {
 			next, setErr := applyPayloadMutation(normalized, "model", upstreamModel)
 			if setErr != nil {
@@ -961,7 +958,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (*OpenAIForwardResult, error) {
 		responseModelObserver := &upstreamResponseModelObserver{}
-		gpt6JGuard := &gpt6JResponseGuard{}
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
 		}
@@ -1023,12 +1019,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					fmt.Errorf("read upstream websocket event: %w", readErr),
 					wroteDownstream,
 				)
-			}
-			if c.GetBool(OpenAIGPT6JContextKey) {
-				if err := gpt6JGuard.event(upstreamMessage); err != nil {
-					lease.MarkBroken()
-					return nil, wrapOpenAIWSIngressTurnError("upstream_model_mismatch", err, wroteDownstream)
-				}
 			}
 			if normalized, changed := normalizeCompletedImageGenerationStatus(upstreamMessage); changed {
 				upstreamMessage = normalized

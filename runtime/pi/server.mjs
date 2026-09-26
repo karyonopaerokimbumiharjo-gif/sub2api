@@ -159,7 +159,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    // Deliberately do not echo provider exceptions, callbacks, tokens or payloads.
    const safe=['oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','unsupported_pi_field:max_output_tokens'];
    const code=safe.includes(error.message)?error.message:'pi_runtime_error';
-   if(res.headersSent)res.destroy();else json(res,error.message==='pi_session_busy'?409:400,{error:code});
+   if(res.headersSent)res.destroy();else json(res,400,{error:code});
   }
  });
  server.on('close',()=>{for(const record of sessions.values()){clearTimeout(record.timeout);record.controller.abort()}sessions.clear();closeSessions()});

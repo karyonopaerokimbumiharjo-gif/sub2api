@@ -1215,7 +1215,6 @@ func (h *GatewayHandler) CodexModels(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Failed to build Codex models manifest")
 		return
 	}
-	body = decorateJCatalogue(c, body)
 	etag := service.CodexModelsManifestETag(body)
 	c.Header("ETag", etag)
 	clientETag := c.GetHeader("If-None-Match")

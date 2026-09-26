@@ -71,10 +71,15 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
  transport='sse',signal,onBytes,onHeaders=()=>{},baseUrl='https://chatgpt.com/backend-api',fetchImpl=fetch}) {
  if(credentialAccount(accessToken)!==accountId)throw Error('oauth_account_mismatch');
  if(!['auto','sse','websocket','websocket-cached'].includes(transport))throw Error('invalid_transport');
- const scoped=scopedSession(sessionSecret,ownerId,credentialId,accountId,request.model,sessionId);
+ const canonical=scopedSession(sessionSecret,ownerId,credentialId,accountId,request.model,sessionId);
  // Validate before any credentials leave the process.
  nativeBody(request,{instructions:'You are a helpful assistant.'});
- if(inFlight.has(scoped))throw Error('pi_session_busy');
+ // Each parallel turn owns its SDK socket and continuation cache.
+ // Idle lanes are reused; the SDK validates the full input prefix.
+ let scoped=canonical;
+ for(let lane=1;inFlight.has(scoped);lane++) {
+  scoped=createHmac('sha256',sessionSecret).update(JSON.stringify(['parallel',canonical,lane])).digest('hex');
+ }
  inFlight.add(scoped);
  const observer=new ResponseObserver();
  const state={active:true,observer,onBytes,outbound:null,transport:null,pending:Promise.resolve(),deliveryFailed:false,sseEOF:false,transportInterrupted:false};

@@ -138,6 +138,16 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable prompt audit latency', () => {
+  it.each([true,false])('shows output TPS for both audiences (%s)', (showAuditLatencyComparison) => {
+    const row={...baseImageRow,request_id:'tps',model:'gpt-6-astra',billing_mode:'token',image_count:0,stream:true,output_tokens:100,duration_ms:2500,first_token_ms:500}
+    const wrapper=mount(UsageTable,{props:{data:[row],loading:false,columns:[],showAuditLatencyComparison},global:{stubs:{DataTable:DataTableStub,EmptyState:true,Icon:true,Teleport:true}}})
+    expect(wrapper.get('[data-testid="usage-tps"]').text()).toBe('50.0 tok/s')
+    expect(wrapper.find('[data-testid="usage-vps-latency"]').exists()).toBe(false)
+  })
+  it('does not invent TPS when token timing is missing', () => {
+    const wrapper=mount(UsageTable,{props:{data:[{...baseImageRow,request_id:'tps-history',image_count:0}],loading:false,columns:[]},global:{stubs:{DataTable:DataTableStub,EmptyState:true,Icon:true,Teleport:true}}})
+    expect(wrapper.get('[data-testid="usage-tps"]').text()).toBe('-')
+  })
   it('shows upstream-only and audit-inclusive latency without rewriting the original values', () => {
     const wrapper = mount(UsageTable, {
       props: {

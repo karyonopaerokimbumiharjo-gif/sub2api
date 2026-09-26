@@ -78,6 +78,13 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 		return
 	}
 	c.Set(key, value)
+	if key == OpsRoutingLatencyMsKey && c.Request != nil && VPSLatencyFromContext(c.Request.Context()) == nil {
+		if auth, ok := c.Get(OpsAuthLatencyMsKey); ok {
+			if authMS, ok := auth.(int64); ok && authMS >= 0 {
+				c.Request = c.Request.WithContext(WithVPSLatency(c.Request.Context(), int(authMS+value)))
+			}
+		}
+	}
 }
 
 // SetOpsUpstreamModel stores only the effective model slug for final Ops

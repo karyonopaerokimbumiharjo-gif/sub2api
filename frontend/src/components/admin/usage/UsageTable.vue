@@ -90,7 +90,7 @@
             <div v-if="row.upstream_response_model && row.upstream_response_model === sentUpstreamModel(row)" data-testid="upstream-model-confirmed" class="break-all pl-3 text-[11px] text-green-700 dark:text-green-400" :title="modelAuditTitle(row)">
               {{ t('usage.upstreamModelConfirmed') }}: {{ row.upstream_response_model }}
             </div>
-            <div v-else-if="!row.upstream_response_model && (row.model === 'gpt-6j' || (row.upstream_model && row.upstream_model !== row.model))" data-testid="upstream-model-unconfirmed" class="pl-3 text-[11px] text-gray-500">
+            <div v-else-if="!row.upstream_response_model && ((row.upstream_model && row.upstream_model !== row.model))" data-testid="upstream-model-unconfirmed" class="pl-3 text-[11px] text-gray-500">
               {{ t('usage.upstreamModelUnconfirmed') }}
             </div>
           </div>
@@ -248,6 +248,8 @@
               aria-hidden="true"
             ></span>
             <div v-if="showAuditLatencyComparison" class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
+              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.tpsHint')">{{ t('usage.tps') }}</span>
+              <span data-testid="usage-tps" class="font-medium tabular-nums">{{ formatOutputTokensPerSecond(row) }}</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstTokenWithoutAudit') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
@@ -261,6 +263,8 @@
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
             </div>
             <div v-else class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
+              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.tpsHint')">{{ t('usage.tps') }}</span>
+              <span data-testid="usage-tps" class="font-medium tabular-nums">{{ formatOutputTokensPerSecond(row) }}</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
@@ -558,6 +562,7 @@ import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } fro
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { formatOutputTokensPerSecond } from '@/utils/usageThroughput'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,

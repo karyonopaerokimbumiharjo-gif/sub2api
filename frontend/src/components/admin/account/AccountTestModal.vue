@@ -59,7 +59,6 @@
       <p v-if="account && account.status !== 'active'" role="status" class="text-sm text-amber-700">账号已停用。模型目录可查看；正式调用前请在账号行启用账号。</p>
       <p v-else-if="isPaused" role="status" class="text-sm text-amber-700">账号已暂停调度。模型目录和连接测试仍可使用；正式调用前请在账号行恢复调度。</p>
       <div v-if="modelLoadError" role="alert" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{{ modelLoadError }} <button type="button" class="underline" :disabled="loadingModels" @click="loadAvailableModels">重新加载模型</button></div>
-      <p v-if="selectedModelId === 'gpt-6j' || selectedModelId.endsWith('-j')" class="text-sm text-gray-500">J 系列模型会使用对应的 GPT/Codex 基础模型，并由已启用的 Jev 节点协作；使用记录显示实际调用的基础模型。</p>
       <div v-if="showModelSelect" class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.selectTestModel') }}

@@ -712,6 +712,33 @@ func (_u *UsageLogUpdate) ClearFirstTokenMs() *UsageLogUpdate {
 	return _u
 }
 
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (_u *UsageLogUpdate) SetVpsLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetVpsLatencyMs()
+	_u.mutation.SetVpsLatencyMs(v)
+	return _u
+}
+
+// SetNillableVpsLatencyMs sets the "vps_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableVpsLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetVpsLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddVpsLatencyMs adds value to the "vps_latency_ms" field.
+func (_u *UsageLogUpdate) AddVpsLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddVpsLatencyMs(v)
+	return _u
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (_u *UsageLogUpdate) ClearVpsLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearVpsLatencyMs()
+	return _u
+}
+
 // SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
 func (_u *UsageLogUpdate) SetPromptAuditLatencyMs(v int) *UsageLogUpdate {
 	_u.mutation.ResetPromptAuditLatencyMs()
@@ -1340,6 +1367,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.VpsLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldVpsLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedVpsLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldVpsLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.VpsLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldVpsLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.PromptAuditLatencyMs(); ok {
 		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)
@@ -2267,6 +2303,33 @@ func (_u *UsageLogUpdateOne) ClearFirstTokenMs() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetVpsLatencyMs sets the "vps_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetVpsLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetVpsLatencyMs()
+	_u.mutation.SetVpsLatencyMs(v)
+	return _u
+}
+
+// SetNillableVpsLatencyMs sets the "vps_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableVpsLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetVpsLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddVpsLatencyMs adds value to the "vps_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddVpsLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddVpsLatencyMs(v)
+	return _u
+}
+
+// ClearVpsLatencyMs clears the value of the "vps_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearVpsLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearVpsLatencyMs()
+	return _u
+}
+
 // SetPromptAuditLatencyMs sets the "prompt_audit_latency_ms" field.
 func (_u *UsageLogUpdateOne) SetPromptAuditLatencyMs(v int) *UsageLogUpdateOne {
 	_u.mutation.ResetPromptAuditLatencyMs()
@@ -2925,6 +2988,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.VpsLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldVpsLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedVpsLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldVpsLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.VpsLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldVpsLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.PromptAuditLatencyMs(); ok {
 		_spec.SetField(usagelog.FieldPromptAuditLatencyMs, field.TypeInt, value)

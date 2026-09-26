@@ -1248,7 +1248,7 @@ export const accountsAPI = {
 
 export default accountsAPI
 
-export async function syncCPAAccounts(authNames: string[] = []): Promise<{created:number;updated:number;identities:number}> {
+export async function syncCPAAccounts(authNames: string[] = []): Promise<{created:number;updated:number;identities:number;account_ids:number[]}> {
  const {data}=await apiClient.post('/admin/openai/cpa/sync-accounts',{auth_names:authNames}, {timeout:120000})
  return data
 }

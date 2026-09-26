@@ -44,9 +44,9 @@ func (u *cancelAwareResponsesUpstream) unblock() {
 
 func TestOpenAIResponsesNonStreamingCancelsUpstreamOnClientDisconnect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, gpt6j := range []bool{true, false} {
-		name := "gpt6j_transformed"
-		if !gpt6j {
+	for _, transformed := range []bool{true, false} {
+		name := "transformed_transformed"
+		if !transformed {
 			name = "ordinary_passthrough"
 		}
 		t.Run(name, func(t *testing.T) {
@@ -69,10 +69,10 @@ func TestOpenAIResponsesNonStreamingCancelsUpstreamOnClientDisconnect(t *testing
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
 			SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
-			// GPT-6J uses the transformed branch even when this account is
-			// configured for passthrough; the other subtest covers that path.
-			if gpt6j {
-				c.Set(OpenAIGPT6JContextKey, true)
+			// Exercise standard transformed requests separately.
+			// The other subtest covers ordinary passthrough.
+			if transformed {
+				account.Extra["openai_passthrough"] = false
 			}
 			finished := make(chan struct{})
 			go func() {

@@ -132,6 +132,7 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("first_token_ms").
 			Optional().
 			Nillable(),
+		field.Int("vps_latency_ms").Optional().Nillable().Comment("Handler entry to first upstream dispatch, including auth/audit/queue"),
 		field.Int("prompt_audit_latency_ms").
 			Optional().
 			Nillable().

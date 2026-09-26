@@ -31,7 +31,7 @@ func TestGetAvailableModels_OpenAIAPIKeyLiveCatalogRefreshAndWhitelist(t *testin
 	svc := &GatewayService{accountRepo: repo, httpUpstream: upstream, cfg: cfg,
 		modelsListCache: gocache.New(time.Minute, time.Minute), modelsListCacheTTL: time.Minute}
 	first := svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI)
-	require.Equal(t, []string{"gpt-6-astra", "gpt-6j", "public-alias"}, first)
+	require.Equal(t, []string{"gpt-6-astra", "public-alias"}, first)
 	require.NotContains(t, first, "gpt-5.4", "an unmapped CPA account must not restore static models absent from its live catalog")
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "http://cpa:8317/v1/models", upstream.lastReq.URL.String())
@@ -39,11 +39,11 @@ func TestGetAvailableModels_OpenAIAPIKeyLiveCatalogRefreshAndWhitelist(t *testin
 	require.Equal(t, first, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
 	require.Len(t, upstream.requests, 1, "cached list should not repeatedly query upstream")
 	svc.modelsListCache.Flush()
-	require.Equal(t, []string{"future-upstream-model", "gpt-6-astra", "gpt-6j", "public-alias"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
+	require.Equal(t, []string{"future-upstream-model", "gpt-6-astra", "public-alias"}, svc.GetAvailableModels(context.Background(), &groupID, PlatformOpenAI))
 	require.Len(t, upstream.requests, 2)
 }
 
-func TestGetAvailableModels_GPT6JRequiresAstraInLiveCatalog(t *testing.T) {
+func TestGetAvailableModels_DoesNotSynthesizeRetiredAliases(t *testing.T) {
 	groupID := int64(2)
 	cfg := upstreamModelSyncTestConfig()
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true

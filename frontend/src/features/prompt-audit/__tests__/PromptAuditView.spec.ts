@@ -73,11 +73,21 @@ const FilterDeleteStub = defineComponent({
 
 function mountView() {
   return mount(PromptAuditView, {
-    global: { stubs: { AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, PolicyHistory: PolicyHistoryStub, EventWorkspace: EventsStub, AdaptiveWorkspace: AdaptiveStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
+    global: { stubs: { RiskControlView: { template: '<div />' }, AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, PolicyHistory: PolicyHistoryStub, EventWorkspace: EventsStub, AdaptiveWorkspace: AdaptiveStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
   })
 }
 
 describe('PromptAuditView', () => {
+  it('saves native audit selection without rewriting custom endpoints', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test=tab-native]').trigger('click')
+    await wrapper.get('[data-test=native-audit-toggle]').setValue(true)
+    await wrapper.get('[data-test=save-native-audit]').trigger('click')
+    await flushPromises()
+    expect(mocks.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ native_audit_enabled: true, endpoints: expect.any(Array) }))
+  })
+
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset())
     mocks.getConfig.mockResolvedValue(baseConfig())

@@ -393,6 +393,8 @@ export default {
     latencyDurationWithoutAudit: 'Total (no audit)',
     latencyDurationWithAudit: 'Total (with audit)',
     promptAuditLatency: 'Prompt audit latency',
+    tps: 'TPS',
+    tpsHint: 'Output tokens per second. Streaming uses output tokens / (duration minus time to first token); non-streaming or missing first-token timing uses total duration. Missing/invalid measurements and image requests show —.',
     promptAuditLatencyValue: 'Prompt audit latency: {value}',
     promptAuditLatencyMissing: 'Prompt audit latency was not recorded for this historical request',
     time: 'Time',

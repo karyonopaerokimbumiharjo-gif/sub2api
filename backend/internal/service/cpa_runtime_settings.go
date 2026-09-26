@@ -163,8 +163,15 @@ func cpaSettings(auth openAIQuotaBridgeAuthFile, m map[string]any) CPACredential
 
 func cpaAuthList(ctx context.Context, cfg openAIQuotaBridgeConfig) ([]openAIQuotaBridgeAuthFile, error) {
 	var response openAIQuotaBridgeAuthFilesResponse
-	err := callOpenAIQuotaBridgeManagement(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, &response)
-	return response.Files, err
+    err := callOpenAIQuotaBridgeManagement(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, &response)
+    // Plugin credentials are in-memory shadows of the same OAuth file, not
+    // additional user accounts and must never be imported or deleted separately.
+    files := make([]openAIQuotaBridgeAuthFile, 0, len(response.Files))
+    for _, f := range response.Files {
+        if f.Provider == "oai-basispoints" || f.Type == "oai-basispoints" { continue }
+        files = append(files, f)
+    }
+    return files, err
 }
 
 func findCPAAuth(ctx context.Context, cfg openAIQuotaBridgeConfig, name string) (openAIQuotaBridgeAuthFile, error) {

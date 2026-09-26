@@ -82,6 +82,8 @@ const (
 	FieldDurationMs = "duration_ms"
 	// FieldFirstTokenMs holds the string denoting the first_token_ms field in the database.
 	FieldFirstTokenMs = "first_token_ms"
+	// FieldVpsLatencyMs holds the string denoting the vps_latency_ms field in the database.
+	FieldVpsLatencyMs = "vps_latency_ms"
 	// FieldPromptAuditLatencyMs holds the string denoting the prompt_audit_latency_ms field in the database.
 	FieldPromptAuditLatencyMs = "prompt_audit_latency_ms"
 	// FieldUserAgent holds the string denoting the user_agent field in the database.
@@ -196,6 +198,7 @@ var Columns = []string{
 	FieldStream,
 	FieldDurationMs,
 	FieldFirstTokenMs,
+	FieldVpsLatencyMs,
 	FieldPromptAuditLatencyMs,
 	FieldUserAgent,
 	FieldIPAddress,
@@ -473,6 +476,11 @@ func ByDurationMs(opts ...sql.OrderTermOption) OrderOption {
 // ByFirstTokenMs orders the results by the first_token_ms field.
 func ByFirstTokenMs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFirstTokenMs, opts...).ToFunc()
+}
+
+// ByVpsLatencyMs orders the results by the vps_latency_ms field.
+func ByVpsLatencyMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldVpsLatencyMs, opts...).ToFunc()
 }
 
 // ByPromptAuditLatencyMs orders the results by the prompt_audit_latency_ms field.

@@ -432,13 +432,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body, probeBody)
 		}
 
-		if err := guardGPT6JHTTPResponse(c, resp); err != nil {
-			_ = resp.Body.Close()
-			setOpsUpstreamError(c, http.StatusBadGateway, err.Error(), "")
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "code": "upstream_model_mismatch", "message": "GPT-6J upstream did not confirm the requested model"}})
-			return nil, err
-		}
-
 		if mapping, ok := openAIResponsesClientToolMapping(c); ok && isEventStreamResponse(resp.Header) {
 			maxLineSize := defaultMaxLineSize
 			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -592,9 +585,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
-	if err := validateGPT6JUpstreamModel(c, gjson.GetBytes(body, "model").String()); err != nil {
-		return nil, err
-	}
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:

@@ -71,7 +71,7 @@ func TestCPAAccountLifecycleUsesExactBoundAuth(t *testing.T) {
 	require.NoError(t, setCPAAccountEnabled(ctx, account, false))
 	require.Equal(t, 1, statusWrites)
 	references := cpaLifecycleReferences{accounts: []Account{*account, {ID: 42, Extra: map[string]any{"cpa_auth_id": "bound-id"}}}}
-	require.ErrorContains(t, deleteCPAAccountAuthorizations(ctx, account, references), "仍被其他业务账号使用")
+	require.NoError(t, deleteCPAAccountAuthorizations(ctx, account, references))
 	require.False(t, deleted)
 	references.accounts = references.accounts[:1]
 	require.NoError(t, deleteCPAAccountAuthorizations(ctx, account, references))

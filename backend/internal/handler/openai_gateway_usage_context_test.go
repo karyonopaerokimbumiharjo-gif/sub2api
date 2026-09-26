@@ -66,3 +66,27 @@ func TestOpenAISubmitUsageRecordTaskCopiesPromptAuditLatency(t *testing.T) {
 	require.NotNil(t, gotLatencyMS)
 	require.Equal(t, 765, *gotLatencyMS)
 }
+
+func TestSubmitUsageRecordTaskCopiesVPSLatencyAfterCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		submit func(context.Context, service.UsageRecordTask)
+	}{
+		{name: "gateway", submit: (&GatewayHandler{}).submitUsageRecordTask},
+		{name: "openai", submit: (&OpenAIGatewayHandler{}).submitUsageRecordTask},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent, cancel := context.WithCancel(service.WithVPSLatency(context.Background(), 125))
+			cancel()
+			var gotLatencyMS *int
+			var gotContextError error
+			tc.submit(parent, func(ctx context.Context) {
+				gotLatencyMS = service.VPSLatencyFromContext(ctx)
+				gotContextError = ctx.Err()
+			})
+			require.NoError(t, gotContextError)
+			require.NotNil(t, gotLatencyMS)
+			require.Equal(t, 125, *gotLatencyMS)
+		})
+	}
+}

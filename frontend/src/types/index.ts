@@ -1750,6 +1750,7 @@ export interface UsageLog {
   duration_ms: number | null
   first_token_ms: number | null
   prompt_audit_latency_ms?: number | null
+  vps_latency_ms?: number | null
 
   // 图片生成字段
   image_count: number

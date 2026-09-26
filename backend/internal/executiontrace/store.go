@@ -1,4 +1,4 @@
-// Package executiontrace keeps bounded, metadata-only diagnostics for GPT-6J.
+// Package executiontrace keeps bounded, metadata-only diagnostics for gateway requests.
 // It is intentionally ephemeral and never stores request or response bodies.
 package executiontrace
 
@@ -158,7 +158,7 @@ var reasons = map[string]bool{
 	"prompt_guard_review_required": true, "prompt_guard_invalid_response": true,
 	"prompt_audit_config_conflict": true, "prompt_audit_config_unavailable": true,
 	"prompt_audit_encryption_key_required": true, "prompt_guard_requires_audit_enabled": true,
-	"content_policy_violation": true, "gpt6j_guard_unavailable": true,
+	"content_policy_violation": true,
 	"invalid_request_error": true, "upstream_error": true,
 	"upstream_failed": true, "request_rejected": true, "request_failed": true,
 	"model_mismatch": true, "client_disconnected": true,

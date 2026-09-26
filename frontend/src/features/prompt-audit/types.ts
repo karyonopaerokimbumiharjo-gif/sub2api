@@ -39,6 +39,7 @@ export interface PromptAuditConfig {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
   output_allow_sample_rate: number
@@ -86,6 +87,7 @@ export interface PromptAuditUpdateRequest {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
   output_allow_sample_rate: number

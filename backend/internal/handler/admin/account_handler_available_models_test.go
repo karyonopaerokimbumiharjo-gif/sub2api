@@ -261,8 +261,8 @@ func TestAccountHandlerGetAvailableModels_OpenAIAPIKeyUsesLiveCatalog(t *testing
 		status        int
 		want          []string
 	}{
-		{name: "new upstream models appear automatically", accountStatus: service.StatusActive, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model", "gpt-6j"}},
-		{name: "inactive CPA account still reads its model catalog", accountStatus: service.StatusDisabled, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model", "gpt-6j"}},
+		{name: "new upstream models appear automatically", accountStatus: service.StatusActive, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model"}},
+		{name: "inactive CPA account still reads its model catalog", accountStatus: service.StatusDisabled, status: http.StatusOK, want: []string{"gpt-6-astra", "future-upstream-model"}},
 		{name: "explicit whitelist stays authoritative", accountStatus: service.StatusActive, mapping: map[string]any{"public-alias": "gpt-6-astra"}, status: http.StatusOK, want: []string{"public-alias"}},
 		{name: "failed refresh is visible", accountStatus: service.StatusActive, status: http.StatusBadGateway},
 	} {

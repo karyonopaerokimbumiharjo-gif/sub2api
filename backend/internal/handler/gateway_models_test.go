@@ -1312,7 +1312,7 @@ func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForMappedMo
 	require.Empty(t, got.Data[0].CreatedAt)
 }
 
-func TestGatewayModels_GPT6JGenericListRespectsGroupAllowlist(t *testing.T) {
+func TestGatewayModels_RetiredAliasIsNotSynthesized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const groupID int64 = 528
 	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{byGroup: map[int64][]service.Account{
@@ -1324,8 +1324,8 @@ func TestGatewayModels_GPT6JGenericListRespectsGroupAllowlist(t *testing.T) {
 		allowed []string
 		want    []string
 	}{
-		{name: "GPT-6J explicitly allowed", allowed: []string{"gpt-6j"}, want: []string{"gpt-6j"}},
-		{name: "GPT-6J omitted from allowlist", allowed: []string{"gpt-6-astra"}, want: []string{"gpt-6-astra"}},
+		{name: "retired alias remains unavailable", allowed: []string{"gpt-6j"}, want: []string{}},
+		{name: "base model remains listed", allowed: []string{"gpt-6-astra"}, want: []string{"gpt-6-astra"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

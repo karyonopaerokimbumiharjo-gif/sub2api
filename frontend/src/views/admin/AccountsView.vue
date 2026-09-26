@@ -14,9 +14,12 @@
           <AccountTableActions
             :loading="loading"
             @refresh="handleManualRefresh"
-            @create="showCreate = true"
+            @create="openAccountImport('cpa')"
           >
             <template #after>
+              <button type="button" class="btn btn-secondary" data-testid="basispoints-authorize" @click="openAccountImport('basispoints')">
+                {{ locale.startsWith('zh') ? 'Excel / Basis Points 授权导入' : 'Authorize Excel / Basis Points' }}
+              </button>
 
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
@@ -254,6 +257,7 @@
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
+                <span v-if="row.platform === 'openai' && row.extra?.openai_basispoints_enabled === true" data-testid="account-backend-basispoints" class="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200" :title="text('仅管理端标签；用户模型名保持原名，覆盖此账号已获授权的模型系列。', 'Admin-only label. Public model IDs remain unchanged for the model families authorized for this account.')">Excel / Basis Points</span>
                 <span
                   v-if="getOpenAIExecutionBackend(row) === 'pi'"
                   data-testid="account-backend-pi"
@@ -474,7 +478,7 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" :current-user-id="authStore.user?.id" @close="showCreate = false" @created="reload()" />
+    <CreateAccountModal :show="showCreate" :initial-backend="createBackend" :proxies="proxies" :groups="groups" :current-user-id="authStore.user?.id" @close="showCreate = false" @created="reload()" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated($event)" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" :pelican-test="pelicanTest" @close="closeTestModal" />
@@ -615,6 +619,11 @@ const selTypes = computed<AccountType[]>(() => {
   return [...types]
 })
 const showCreate = ref(false)
+const createBackend = ref<'cpa' | 'basispoints'>('cpa')
+function openAccountImport(backend: 'cpa' | 'basispoints') {
+  createBackend.value = backend
+  showCreate.value = true
+}
 const showCPA = ref(false)
 const selectedCPAAuth = ref('')
 const showEdit = ref(false)
@@ -2586,6 +2595,9 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
+  if (new URLSearchParams(window.location.search).get('import') === 'basispoints') {
+    openAccountImport('basispoints')
+  }
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches

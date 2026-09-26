@@ -110,15 +110,6 @@
           </div>
         </div>
 
-        <JSettingsPanel
-          v-if="showGPT6JControls && show"
-          :api-key-id="apiKeyId"
-          v-model:enabled="gpt6JMode"
-          v-model:base-model="jBaseModel"
-          :models="jBaseModels"
-          @changed="loadCodexModelManifest"
-        />
-
         <!-- OS/Shell Tabs -->
         <div v-if="showShellTabs" class="overflow-x-auto border-b border-gray-200 dark:border-dark-700">
           <nav class="-mb-px flex min-w-max gap-4" aria-label="Tabs">
@@ -269,7 +260,6 @@ import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import JSettingsPanel from './JSettingsPanel.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { fetchCodexModelsManifest } from '@/api/codex'
 import type { GroupPlatform } from '@/types'
@@ -317,12 +307,7 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
-const gpt6JMode = ref(false)
-const jBaseModel = ref('')
 
-const showGPT6JControls = computed(() =>
-  props.platform === 'openai'
-)
 type CodexModelManifestState = 'idle' | 'loading' | 'ready' | 'error'
 const codexModelManifestState = ref<CodexModelManifestState>('idle')
 const codexModelManifestContent = ref('')
@@ -367,13 +352,11 @@ watch(() => props.platform, () => {
   activeTab.value = 'unix'
   activeClientTab.value = defaultClientTab.value
   codexAuthMode.value = 'legacy'
-  gpt6JMode.value = false
 }, { immediate: true })
 
 watch(() => props.show, (show) => {
   if (show) {
     codexAuthMode.value = 'legacy'
-    gpt6JMode.value = false
   } else {
     resetCodexModelManifest()
   }
@@ -686,15 +669,6 @@ const codexCatalogModelSlugs = computed(() =>
   parseCodexCatalogModels(codexModelManifestContent.value).map((model) => model.slug)
 )
 
-const jBaseModels = computed(() => {
-  const discovered = codexCatalogModelSlugs.value.filter(model =>
-    /^(gpt-|codex-)/.test(model) && model !== 'gpt-6j' && !model.endsWith('-j') && !/(image|audio|realtime|tts|transcribe)/.test(model)
-  )
-  // Keep the J switch usable while the upstream catalogue is unavailable or
-  // still loading. The gateway validates the selected base model again; this
-  // fallback only keeps the control visible and does not grant extra access.
-  return discovered.length > 0 ? discovered : ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
-})
 
 function selectCodexCatalogModel(preferredModel: string): string {
   if (codexCatalogModelSlugs.value.includes(preferredModel)) return preferredModel
@@ -973,7 +947,7 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  const model = gpt6JMode.value && jBaseModel.value ? `${jBaseModel.value}-j` : selectCodexCatalogModel('gpt-5.5')
+  const model = selectCodexCatalogModel('gpt-5.5')
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content

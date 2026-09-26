@@ -76,20 +76,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	gpt6jMode, modeErr := parseGPT6JRequestMode(c, reqModel)
-	if modeErr != nil {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", modeErr.Error())
-		return
-	}
-	if gpt6jMode.Enabled {
-		// J is a full-input Responses workflow. Letting a Chat Completions
-		// request continue into the ordinary scheduler selects no Pi account
-		// (Pi intentionally advertises Responses only) and ends as a misleading
-		// 503 capability_mismatch. Fail at the protocol boundary with an
-		// actionable contract instead.
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "J models require POST /v1/responses; use the Responses API endpoint for J cooperation")
-		return
-	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")

@@ -636,6 +636,7 @@ type UsageLog struct {
 	FirstTokenMs       *int `json:"first_token_ms"`
 	// Audit latency remains separate from upstream timing.
 	PromptAuditLatencyMs *int `json:"prompt_audit_latency_ms"`
+	VPSLatencyMs *int `json:"vps_latency_ms"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`

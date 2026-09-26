@@ -85,6 +85,7 @@ type StorageEndpoint struct {
 }
 
 type storageConfig struct {
+	NativeAuditEnabled  bool   `json:"native_audit_enabled"`
 	Enabled             bool   `json:"enabled"`
 	BlockingEnabled     bool   `json:"blocking_enabled"`
 	BlockingAuditMode   string `json:"blocking_audit_mode"`
@@ -139,6 +140,7 @@ type ActiveEndpoint struct {
 }
 
 type ActiveConfig struct {
+	NativeAuditEnabled          bool `json:"native_audit_enabled"`
 	RiskControlEnabled          bool
 	Enabled                     bool
 	BlockingEnabled             bool
@@ -185,6 +187,7 @@ type PublicEndpoint struct {
 }
 
 type PublicConfig struct {
+	NativeAuditEnabled          bool             `json:"native_audit_enabled"`
 	Enabled                     bool             `json:"enabled"`
 	BlockingEnabled             bool             `json:"blocking_enabled"`
 	BlockingAuditMode           string           `json:"blocking_audit_mode"`
@@ -246,6 +249,7 @@ type UpdateEndpoint struct {
 }
 
 type UpdateConfigRequest struct {
+	NativeAuditEnabled          bool             `json:"native_audit_enabled"`
 	ExpectedConfigVersion       int64            `json:"expected_config_version" binding:"required"`
 	Enabled                     bool             `json:"enabled"`
 	BlockingEnabled             bool             `json:"blocking_enabled"`
@@ -522,13 +526,13 @@ func validateStorageConfig(cfg storageConfig) error {
 			}
 		}
 	}
-	if cfg.Enabled && enabled == 0 {
+	if cfg.Enabled && !cfg.NativeAuditEnabled && enabled == 0 {
 		return infraerrors.BadRequest("prompt_audit_endpoint_required", "启用提示词审计前至少需要启用一个审计节点")
 	}
-	if cfg.Enabled && cfg.BlockingEnabled && cfg.JevSafetyEnabled && enabled-enabledNormal == 0 {
+	if cfg.Enabled && !cfg.NativeAuditEnabled && cfg.BlockingEnabled && cfg.JevSafetyEnabled && enabled-enabledNormal == 0 {
 		return infraerrors.BadRequest("prompt_audit_jev_endpoint_required", "启用 Jev Safety 前需要一个有效的 Jev 审计节点")
 	}
-	if cfg.Enabled && normalizeBackgroundAuditMode(cfg.BackgroundAuditMode) != BackgroundAuditModeOff && enabledNormal == 0 {
+	if cfg.Enabled && !cfg.NativeAuditEnabled && normalizeBackgroundAuditMode(cfg.BackgroundAuditMode) != BackgroundAuditModeOff && enabledNormal == 0 {
 		return infraerrors.BadRequest("prompt_audit_normal_endpoint_required", "启用后台审计前至少需要启用一个非 Jev 审计节点")
 	}
 	return nil
@@ -667,7 +671,7 @@ func (cfg ActiveConfig) EffectiveBackgroundAuditMode() string {
 }
 
 func (cfg ActiveConfig) EffectiveMode() Mode {
-	if !cfg.RiskControlEnabled || !cfg.Enabled {
+	if cfg.NativeAuditEnabled || !cfg.RiskControlEnabled || !cfg.Enabled {
 		return ModeOff
 	}
 	if cfg.BlockingEnabled {
@@ -771,7 +775,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, StorePassEvents: cfg.StorePassEvents,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
-		JevSafetyEnabled:   cfg.JevSafetyEnabled,
+		NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		EffectiveMode: active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
@@ -788,7 +792,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 		StorePassEvents: cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
-		JevSafetyEnabled:   cfg.JevSafetyEnabled,
+		NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
 		QueueCapacity:          cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,
@@ -827,6 +831,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 
 func changeSummary(cfg storageConfig) string {
 	summary := struct {
+		NativeAuditEnabled     bool   `json:"native_audit_enabled"`
 		Enabled                bool   `json:"enabled"`
 		BlockingEnabled        bool   `json:"blocking_enabled"`
 		BlockingAuditMode      string `json:"blocking_audit_mode"`
@@ -844,7 +849,7 @@ func changeSummary(cfg storageConfig) string {
 		GroupHash              string `json:"group_hash"`
 		WhitelistCount         int    `json:"whitelist_count"`
 		WhitelistHash          string `json:"whitelist_hash"`
-	}{cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.JevSafetyEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), ""}
+	}{cfg.NativeAuditEnabled, cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.JevSafetyEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), ""}
 	rawGroups, _ := json.Marshal(cfg.GroupIDs)
 	digest := sha256.Sum256(rawGroups)
 	summary.GroupHash = hex.EncodeToString(digest[:])

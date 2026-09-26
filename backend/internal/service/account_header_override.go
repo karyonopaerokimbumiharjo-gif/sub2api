@@ -180,13 +180,14 @@ func (a *Account) ApplyHeaderOverrides(h http.Header) {
 			return
 		}
 		for key := range h {
-			if strings.EqualFold(key, "X-Sub2API-CPA-Auth-ID") {
+            if strings.EqualFold(key, "X-Sub2API-CPA-Auth-ID") || strings.EqualFold(key, BasisPointsHeader) {
 				delete(h, key)
 			}
 		}
 		if a != nil && ValidateCPAAccount(a) == nil {
 			if id := a.GetExtraString("cpa_auth_id"); id != "" {
-				h.Set("X-Sub2API-CPA-Auth-ID", id)
+                h.Set("X-Sub2API-CPA-Auth-ID", id)
+                if a.UsesBasisPoints() { h.Set(BasisPointsHeader, "1") }
 			}
 		}
 	}()

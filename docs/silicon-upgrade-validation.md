@@ -1,3 +1,5 @@
+> Historical validation record. On 2026-09-24 the J cooperation feature and its dedicated bridge were retired. This file does not describe the current deployment.
+
 # Silicon v0.2.7 integration status — 2026-09-20
 
 This is an integration candidate, not a production release. Do not replace the

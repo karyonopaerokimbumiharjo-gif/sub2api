@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/executiontrace"
-	"github.com/Wei-Shaw/sub2api/internal/jruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -36,7 +34,6 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
-	jStore                     *jruntime.Store
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
@@ -260,6 +257,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if promptAuditLatencyMS := service.PromptAuditLatencyFromContext(parent); promptAuditLatencyMS != nil {
 		base = service.WithPromptAuditLatency(base, *promptAuditLatencyMS)
 	}
+	if vpsLatencyMS := service.VPSLatencyFromContext(parent); vpsLatencyMS != nil {
+		base = service.WithVPSLatency(base, *vpsLatencyMS)
+	}
 	return base
 }
 
@@ -468,53 +468,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	var jPinnedAccount int64
-	gpt6jMode, gpt6jErr := parseGPT6JRequestMode(c, reqModel)
-	if gpt6jErr != nil {
-		reqLog.Warn("openai.gpt6j_request_invalid", zap.Error(gpt6jErr))
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", gpt6jErr.Error())
-		return
-	}
-	if gpt6jMode.Enabled {
-		if legacyCompact || nativeV2 {
-			h.errorResponse(c, 400, "invalid_request_error", "J execution uses full-input Responses requests; native compaction uses the base model directly")
-			return
-		}
-		body = normalizeJBody(body, gpt6jMode)
-		reqModel = gpt6jMode.BaseModel
-		if h.jStore == nil {
-			h.errorResponse(c, 503, "j_execution_error", "J storage unavailable")
-			return
-		}
-		binding := jruntime.Binding{UserID: apiKey.UserID, KeyID: apiKey.ID, SessionID: jSession(c, body), BaseModel: reqModel}
-		var expandErr error
-		body, jPinnedAccount, expandErr = h.jStore.Expand(c.Request.Context(), binding, body)
-		if expandErr != nil {
-			h.errorResponse(c, 409, "j_continuation_error", "J response is expired or belongs to another key, session or model")
-			return
-		}
-		callAccount, callErr := h.jStore.ClientCallAccount(c.Request.Context(), binding, body)
-		if callErr != nil || (callAccount > 0 && jPinnedAccount > 0 && callAccount != jPinnedAccount) {
-			h.errorResponse(c, 409, "j_continuation_error", "J tool result does not match this conversation")
-			return
-		}
-		if callAccount > 0 {
-			jPinnedAccount = callAccount
-		}
-		if task := strings.TrimSpace(c.GetHeader("Idempotency-Key")); task != "" {
-			priorAccount, lookupErr := h.jStore.ExistingAccount(c.Request.Context(), apiKey.UserID, apiKey.ID, task)
-			if lookupErr != nil || (priorAccount > 0 && jPinnedAccount > 0 && priorAccount != jPinnedAccount) {
-				h.errorResponse(c, 409, "j_execution_error", "J task binding conflict")
-				return
-			}
-			if priorAccount > 0 {
-				jPinnedAccount = priorAccount
-			}
-		}
-		defer beginGPT6JTrace(c, body)()
-
-		c.Header("X-Sub2API-Model-Mode", gpt6JModeValue)
-	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -590,13 +543,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
 	decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, body)
-	if gpt6jMode.Enabled && decision != nil {
-		reason := decision.ErrorCode
-		if decision.AllowNextStage {
-			reason = "allowed"
-		}
-		recordGPT6JTrace(c, executiontrace.Event{Stage: "guard_result", Reason: reason})
-	}
 	if decision != nil && !decision.AllowNextStage {
 		h.openAISecurityAuditError(c, decision)
 		return
@@ -782,14 +728,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
-		if jPinnedAccount > 0 && account.ID != jPinnedAccount {
-			failedAccountIDs[account.ID] = struct{}{}
-			if selection.ReleaseFunc != nil {
-				selection.ReleaseFunc()
-				selection.ReleaseFunc = nil
-			}
-			continue
-		}
 		if previousResponseID != "" && requestPlatform == service.PlatformOpenAI && !account.IsOpenAIApiKey() {
 			// The public Responses HTTP API supports previous_response_id on API-key
 			// accounts. OAuth/SetupToken upstreams do not, so keep searching instead
@@ -841,35 +779,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 从不可变的 canonical forwardBody 派生本次尝试 body 并整块剔除上游私有的加密
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
 		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
-		if gpt6jMode.Enabled {
-			recordGPT6JTrace(c, executiontrace.Event{Stage: "gpt_handoff", AccountID: account.ID, Model: forwardModel})
-		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
-			if gpt6jMode.Enabled {
-				return h.forwardJ(c, apiKey, account, attemptBody, gpt6jMode)
-			}
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
-
-		if gpt6jMode.Enabled {
-			event := executiontrace.Event{
-				Stage: "gpt_response", AccountID: account.ID, Model: forwardModel,
-				DurationMS: time.Since(forwardStart).Milliseconds(),
-			}
-			if result != nil {
-				event.ActualModel = result.UpstreamResponseModel
-				event.ResponseID = result.ResponseID
-			}
-			if err != nil {
-				event.Reason = "upstream_failed"
-			}
-			recordGPT6JTrace(c, event)
-		}
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
@@ -2434,11 +2351,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 	// Consume product headers before the upgrade; every turn still checks the
 	// actual model and the independent safety policy.
-	gpt6jMode, modeErr := parseGPT6JRequestMode(c, gpt6JUpstreamModel)
-	if modeErr != nil {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", modeErr.Error())
-		return
-	}
 	wsConn, err := coderws.Accept(c.Writer, c.Request, &coderws.AcceptOptions{
 		CompressionMode: coderws.CompressionContextTakeover,
 	})
@@ -2496,10 +2408,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
-		return
-	}
-	if _, alias := jruntime.BaseModel(reqModel); gpt6jMode.Enabled || alias {
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "J execution requires POST /v1/responses")
 		return
 	}
 	// 分组级模型白名单：首帧校验客户端模型，不通过则关闭连接并标记运维原因。
@@ -2925,9 +2833,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if model == "" {
 					model = reqModel
-				}
-				if _, alias := jruntime.BaseModel(model); gpt6jMode.Enabled || alias {
-					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, errGPT6JWrongModel.Error(), nil)
 				}
 				// 分组级模型白名单：后续 turn 同样校验客户端模型（省略 model 时
 				// 沿用会话实际生效模型，含 session.update 轮换后的模型），不通过
@@ -3617,7 +3522,6 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 	streamStarted bool,
 	countTowardsSLA bool,
 ) {
-	recordGPT6JTrace(c, executiontrace.Event{Stage: "request_failed", Status: status, Reason: errType})
 	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
 	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
@@ -3808,7 +3712,6 @@ func openAIFirstOutputFailoverExhausted(failoverErr *service.UpstreamFailoverErr
 
 // errorResponse returns OpenAI API format error response
 func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType, message string) {
-	recordGPT6JTrace(c, executiontrace.Event{Stage: "request_failed", Status: status, Reason: errType})
 	// body-signal compact 心跳可能已把响应头提交为 200：JSON 错误体会与已
 	// 提交的 SSE 流交错，必须降级为 response.failed 终止事件（#3887）。
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {

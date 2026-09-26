@@ -225,6 +225,11 @@ func FirstTokenMs(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldFirstTokenMs, v))
 }
 
+// VpsLatencyMs applies equality check predicate on the "vps_latency_ms" field. It's identical to VpsLatencyMsEQ.
+func VpsLatencyMs(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldVpsLatencyMs, v))
+}
+
 // PromptAuditLatencyMs applies equality check predicate on the "prompt_audit_latency_ms" field. It's identical to PromptAuditLatencyMsEQ.
 func PromptAuditLatencyMs(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldPromptAuditLatencyMs, v))
@@ -1788,6 +1793,56 @@ func FirstTokenMsIsNil() predicate.UsageLog {
 // FirstTokenMsNotNil applies the NotNil predicate on the "first_token_ms" field.
 func FirstTokenMsNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldFirstTokenMs))
+}
+
+// VpsLatencyMsEQ applies the EQ predicate on the "vps_latency_ms" field.
+func VpsLatencyMsEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsNEQ applies the NEQ predicate on the "vps_latency_ms" field.
+func VpsLatencyMsNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsIn applies the In predicate on the "vps_latency_ms" field.
+func VpsLatencyMsIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldVpsLatencyMs, vs...))
+}
+
+// VpsLatencyMsNotIn applies the NotIn predicate on the "vps_latency_ms" field.
+func VpsLatencyMsNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldVpsLatencyMs, vs...))
+}
+
+// VpsLatencyMsGT applies the GT predicate on the "vps_latency_ms" field.
+func VpsLatencyMsGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsGTE applies the GTE predicate on the "vps_latency_ms" field.
+func VpsLatencyMsGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsLT applies the LT predicate on the "vps_latency_ms" field.
+func VpsLatencyMsLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsLTE applies the LTE predicate on the "vps_latency_ms" field.
+func VpsLatencyMsLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldVpsLatencyMs, v))
+}
+
+// VpsLatencyMsIsNil applies the IsNil predicate on the "vps_latency_ms" field.
+func VpsLatencyMsIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldVpsLatencyMs))
+}
+
+// VpsLatencyMsNotNil applies the NotNil predicate on the "vps_latency_ms" field.
+func VpsLatencyMsNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldVpsLatencyMs))
 }
 
 // PromptAuditLatencyMsEQ applies the EQ predicate on the "prompt_audit_latency_ms" field.

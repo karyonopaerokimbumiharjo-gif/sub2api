@@ -38,6 +38,18 @@
         </div>
 
         <main class="card px-4 sm:px-6 lg:px-8">
+          <section v-if="activeTab === 'native'" class="space-y-6 py-6" data-test="tab-panel-native">
+            <div v-if="draft" class="rounded-xl border border-primary-200 bg-primary-50 p-5 dark:border-dark-600 dark:bg-dark-800">
+              <label class="flex cursor-pointer items-center gap-3 font-semibold">
+                <input v-model="draft.native_audit_enabled" type="checkbox" class="h-4 w-4 rounded" data-test="native-audit-toggle" />
+                {{ nativeAuditCopy.toggle }}
+              </label>
+              <p class="mt-3 text-sm text-gray-600 dark:text-dark-200">{{ nativeAuditCopy.description }}</p>
+              <p class="mt-2 text-sm text-amber-700 dark:text-amber-300" role="status">{{ nativeAuditCopy.warning }}</p>
+              <button type="button" class="btn btn-primary mt-4" :disabled="!dirty || loading.saving" data-test="save-native-audit" @click="saveConfig">{{ loading.saving ? t('common.saving') : t('common.save') }}</button>
+            </div>
+            <RiskControlView embedded />
+          </section>
           <div v-show="activeTab === 'config'" data-test="tab-panel-config">
             <RuntimeOverview :runtime="runtime" :loading="loading.runtime" :error="loadErrors.runtime" @refresh="loadRuntime" />
 
@@ -223,6 +235,7 @@
 import { computed, defineComponent, h, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import RiskControlView from '@/views/admin/RiskControlView.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
@@ -266,12 +279,22 @@ onBeforeUnmount(() => {
   previewGate.invalidate()
 })
 const appStore = useAppStore()
-type PromptAuditPageTab = 'config' | 'events' | 'adaptive'
+type PromptAuditPageTab = 'config' | 'events' | 'adaptive' | 'native'
+const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
+ title: '原生 Sub2API 审计', toggle: '使用原生审计替代自定义模型审计',
+ description: '仅使用下方原生 OpenAI / TypeSafe AI 审计，并保留本地破甲库与明确绕过规则；不再重复运行自定义 Jev、后台或输出模型审计。',
+ warning: '请先配置并启用下方原生审计，再保存此开关。配置不可用时请求会被拒绝；关闭开关可恢复原自定义配置。'
+} : {
+ title: 'Native Sub2API Audit', toggle: 'Replace custom model audits with native auditing',
+ description: 'Use native OpenAI / TypeSafe AI auditing plus local repository and explicit-bypass rules, without duplicate custom, background or output model audits.',
+ warning: 'Configure and enable native auditing below before saving this switch. Unavailable audit configuration rejects requests. Turn this off to restore custom settings.'
+})
 const activeTab = ref<PromptAuditPageTab>('events')
 const pageTabs = computed(() => [
   { id: 'events' as const, label: t('admin.promptAudit.tabs.events') },
   { id: 'adaptive' as const, label: t('admin.promptAudit.tabs.adaptive') },
   { id: 'config' as const, label: t('admin.promptAudit.tabs.config') },
+  { id: 'native' as const, label: nativeAuditCopy.value.title },
 ])
 const blockingAuditModes = computed<Array<{ id: PromptBlockingAuditMode; label: string; description: string }>>(() => [
   { id: 'fast_latest', label: t('admin.promptAudit.auditMode.fast'), description: t('admin.promptAudit.auditMode.fastHint') },

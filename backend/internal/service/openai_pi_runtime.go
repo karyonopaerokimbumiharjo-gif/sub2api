@@ -141,9 +141,6 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
 	}
 	upstreamModel := account.GetMappedModel(model)
-	if err := validateGPT6JUpstreamModel(c, upstreamModel); err != nil {
-		return fail(http.StatusBadRequest, err.Error())
-	}
 	request["model"] = upstreamModel
 	SetOpsUpstreamModel(c, upstreamModel)
 	transport := runtimeAccount.GetCredential("pi_transport")
@@ -183,9 +180,6 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
-	}
-	if err := guardGPT6JHTTPResponse(c, resp); err != nil {
-		return fail(http.StatusBadGateway, err.Error())
 	}
 	SetActualOpenAIUpstreamEndpoint(c, "/backend-api/codex/responses")
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: upstreamModel, Stream: reqStream, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses"}
@@ -274,9 +268,6 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 		}
 		return fail(http.StatusBadGateway, "Pi compact upstream rejected the request")
-	}
-	if err := guardGPT6JHTTPResponse(c, resp); err != nil {
-		return fail(http.StatusBadGateway, err.Error())
 	}
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: model, Stream: false, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses/compact", BillingModel: model, RequestID: resp.Header.Get("x-request-id"), Duration: time.Since(started)}
 	nonstream, err := s.handleNonStreamingResponse(ctx, resp, c, account, model, model)

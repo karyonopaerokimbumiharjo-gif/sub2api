@@ -250,7 +250,7 @@ func buildPromptSnapshot(req Request, extracted, audited []promptSegment) (Promp
 	fullSegments := normalizedPromptSegments(extracted)
 	cleanedAuditSegments := cleanRuntimeAuditPromptSegments(audited)
 	if req.RequireJev {
-		// Runtime-looking tags are still client-controlled evidence. GPT-6J never
+		// Runtime-looking tags are still client-controlled evidence. gateway requests never
 		// strips them or relies on the optional incremental allow cache. The
 		// known Grok CLI envelope is a fixed system policy, however; retaining it
 		// beside every user turn causes Jev to classify client policy prose as the
