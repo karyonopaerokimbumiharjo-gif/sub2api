@@ -19,6 +19,9 @@ import (
 // Runtime edits are deliberately allowlisted. OAuth tokens and proxy passwords
 // never enter a browser response or an arbitrary management API passthrough.
 type CPACredentialSettings struct {
+	LegacyIdentity    string  `json:"-"`
+	Principal         string  `json:"-"`
+	Workspace         string  `json:"-"`
 	Name              string  `json:"name"`
 	BusinessAccountID int64   `json:"business_account_id,omitempty"`
 	BusinessStatus    string  `json:"business_status,omitempty"`
@@ -150,8 +153,31 @@ func cpaSettings(auth openAIQuotaBridgeAuthFile, m map[string]any) CPACredential
 	if identity == "" {
 		identity = auth.Name
 	}
-	digest := sha256.Sum256([]byte(auth.Provider + "\x00" + identity))
-	result.Identity = fmt.Sprintf("%x", digest[:16])
+	legacy := sha256.Sum256([]byte(auth.Provider + "\x00" + identity))
+	result.LegacyIdentity = fmt.Sprintf("%x", legacy[:16])
+	source := shallowCopyMap(m)
+	if openAICPACredentialString(source, "email") == "" {
+		source["email"] = auth.Email
+	}
+	for _, field := range []string{"token", "tokens"} {
+		if nested, ok := m[field].(map[string]any); ok {
+			for key, value := range nested {
+				if source[key] == nil {
+					source[key] = value
+				}
+			}
+		}
+	}
+	result.Principal = OpenAIOAuthPrincipal(source)
+	if result.Principal == "" {
+		result.Principal = "file:" + auth.Name
+	}
+	if workspace := openAIOAuthWorkspace(source); workspace != "" {
+		identity = workspace
+	}
+	result.Workspace = identity
+	digest := sha256.Sum256([]byte(auth.Provider + "\x00" + identity + "\x00" + result.Principal))
+	result.Identity = "v2:" + fmt.Sprintf("%x", digest[:16])
 	result.Unavailable = auth.Unavailable
 	result.AuthID = auth.ID
 	if id := cpaNumber(m, "sub2_proxy_id", 0); id > 0 {
@@ -165,15 +191,17 @@ func cpaSettings(auth openAIQuotaBridgeAuthFile, m map[string]any) CPACredential
 
 func cpaAuthList(ctx context.Context, cfg openAIQuotaBridgeConfig) ([]openAIQuotaBridgeAuthFile, error) {
 	var response openAIQuotaBridgeAuthFilesResponse
-    err := callOpenAIQuotaBridgeManagement(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, &response)
-    // Plugin credentials are in-memory shadows of the same OAuth file, not
-    // additional user accounts and must never be imported or deleted separately.
-    files := make([]openAIQuotaBridgeAuthFile, 0, len(response.Files))
-    for _, f := range response.Files {
-        if f.Provider == "oai-basispoints" || f.Type == "oai-basispoints" { continue }
-        files = append(files, f)
-    }
-    return files, err
+	err := callOpenAIQuotaBridgeManagement(ctx, cfg, http.MethodGet, "/v0/management/auth-files", nil, &response)
+	// Plugin credentials are in-memory shadows of the same OAuth file, not
+	// additional user accounts and must never be imported or deleted separately.
+	files := make([]openAIQuotaBridgeAuthFile, 0, len(response.Files))
+	for _, f := range response.Files {
+		if f.Provider == "oai-basispoints" || f.Type == "oai-basispoints" {
+			continue
+		}
+		files = append(files, f)
+	}
+	return files, err
 }
 
 func findCPAAuth(ctx context.Context, cfg openAIQuotaBridgeConfig, name string) (openAIQuotaBridgeAuthFile, error) {
@@ -415,9 +443,32 @@ func preserveCPAImportRuntime(ctx context.Context, cfg openAIQuotaBridgeConfig, 
 		if auth.Name != name {
 			continue
 		}
+		provider := strings.TrimSpace(auth.Provider)
+		if provider == "" {
+			provider = strings.TrimSpace(auth.Type)
+		}
+		if expected := openAICPACredentialString(payload, "type"); provider != "" && expected != "" && !strings.EqualFold(provider, expected) {
+			continue
+		}
 		old, err := cpaAuthMetadata(ctx, cfg, name)
 		if err != nil {
 			return err
+		}
+		if openAICPACredentialString(payload, "type") == "codex" {
+			oldSource := shallowCopyMap(old)
+			for _, field := range []string{"token", "tokens"} {
+				if nested, ok := old[field].(map[string]any); ok {
+					for key, value := range nested {
+						if oldSource[key] == nil {
+							oldSource[key] = value
+						}
+					}
+				}
+			}
+			oldPrincipal, newPrincipal := OpenAIOAuthPrincipal(oldSource), OpenAIOAuthPrincipal(payload)
+			if strings.HasPrefix(oldPrincipal, "user:") && strings.HasPrefix(newPrincipal, "user:") && oldPrincipal != newPrincipal {
+				return infraerrors.New(http.StatusConflict, "CPA_IMPORT_LOGIN_CONFLICT", "已有授权文件属于另一位登录用户，已停止覆盖")
+			}
 		}
 		for _, key := range []string{"proxy_url", "sub2_proxy_id", "priority", "weight", "request_retry", "disabled"} {
 			if value, ok := old[key]; ok {
@@ -448,10 +499,19 @@ func verifyCPAImportedRuntime(ctx context.Context, cfg openAIQuotaBridgeConfig, 
 }
 
 // CPAExecutionAPIKey is server-side provisioning data and must never enter a DTO.
-func (s *OpenAIQuotaService) CPAExecutionAPIKey(ctx context.Context) (string,error) {
- cfg,err:=cpaRuntimeConfig();if err!=nil{return "",err}
- var keys openAIQuotaBridgeAPIKeysResponse
- if err=callOpenAIQuotaBridgeManagement(ctx,cfg,http.MethodGet,"/v0/management/api-keys",nil,&keys);err!=nil{return "",err}
- for _,key:=range keys.Keys{if strings.TrimSpace(key)!=""{return strings.TrimSpace(key),nil}}
- return "",infraerrors.BadRequest("CPA_EXECUTION_KEY_MISSING","执行后端未配置 API Key")
+func (s *OpenAIQuotaService) CPAExecutionAPIKey(ctx context.Context) (string, error) {
+	cfg, err := cpaRuntimeConfig()
+	if err != nil {
+		return "", err
+	}
+	var keys openAIQuotaBridgeAPIKeysResponse
+	if err = callOpenAIQuotaBridgeManagement(ctx, cfg, http.MethodGet, "/v0/management/api-keys", nil, &keys); err != nil {
+		return "", err
+	}
+	for _, key := range keys.Keys {
+		if strings.TrimSpace(key) != "" {
+			return strings.TrimSpace(key), nil
+		}
+	}
+	return "", infraerrors.BadRequest("CPA_EXECUTION_KEY_MISSING", "执行后端未配置 API Key")
 }

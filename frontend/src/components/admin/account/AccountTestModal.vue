@@ -796,7 +796,7 @@ const loadAvailableModels = async () => {
     // Default selection by platform
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'openai') {
-        selectedModelId.value = availableModels.value.find((m) => m.id === 'gpt-6-astra')?.id || availableModels.value[0].id
+        selectedModelId.value = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'].find(id => availableModels.value.some(model => model.id === id)) || availableModels.value[0].id
       } else if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {

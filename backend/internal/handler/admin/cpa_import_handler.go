@@ -153,12 +153,14 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	var req struct {
-		GroupIDs    []int64                      `json:"group_ids,omitempty"`
-		Runtime     *service.CPACredentialUpdate `json:"runtime,omitempty"`
-		Content     string                       `json:"content"`
-		Contents    []string                     `json:"contents"`
-		Credentials map[string]any               `json:"credentials"`
-		Data        json.RawMessage              `json:"data"`
+		AccountConcurrency *int                         `json:"account_concurrency,omitempty"`
+		AccountPriority    *int                         `json:"account_priority,omitempty"`
+		GroupIDs           []int64                      `json:"group_ids,omitempty"`
+		Runtime            *service.CPACredentialUpdate `json:"runtime,omitempty"`
+		Content            string                       `json:"content"`
+		Contents           []string                     `json:"contents"`
+		Credentials        map[string]any               `json:"credentials"`
+		Data               json.RawMessage              `json:"data"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid CPA import payload")
@@ -191,6 +193,11 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 	}
 	result := CodexSessionImportResult{Total: len(entries), Items: make([]CodexSessionImportItem, 0, len(entries))}
 	importCtx := service.WithCPAUserImport(c.Request.Context())
+	importCtx, err = importAccountDefaults(importCtx, req.AccountConcurrency, req.AccountPriority)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if err := h.validateImportGroups(importCtx, req.GroupIDs); err != nil {
 		response.ErrorFrom(c, err)
 		return

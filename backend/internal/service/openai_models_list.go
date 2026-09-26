@@ -319,7 +319,6 @@ func (s *OpenAIGatewayService) FetchPinnedOpenAIModelsList(ctx context.Context, 
 		}
 	}
 
-
 	if group.ModelAllowlistEnabled() {
 		models = selectModelCatalogEntries(byID, group.ModelAllowlist.FilterForListing(modelIDs))
 	}
@@ -426,6 +425,10 @@ func (s *OpenAIGatewayService) fetchNativePiModelsManifest(ctx context.Context, 
 	}
 	owner, _ := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 	var manifest json.RawMessage
-	err = piruntime.JSON(ctx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": token}, &manifest)
+	clientVersion := CodexCanonicalClientVersion()
+	if s.settingService != nil {
+		clientVersion = s.settingService.GetOpenAICodexClientVersion(ctx)
+	}
+	err = piruntime.JSON(ctx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": token, "client_version": clientVersion}, &manifest)
 	return manifest, err
 }

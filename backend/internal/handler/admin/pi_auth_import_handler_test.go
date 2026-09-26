@@ -119,7 +119,7 @@ func TestImportPiAuthVerifiesWithRuntimeAndCreatesEnabledAccountInExistingGroup(
 	if recorder.Code != http.StatusOK || calls != 1 || stub.created == nil {
 		t.Fatalf("expected verified Pi account, status=%d calls=%d body=%s", recorder.Code, calls, recorder.Body.String())
 	}
-	if stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 10 || !stub.created.SkipDefaultGroupBind || len(stub.created.GroupIDs) != 1 || stub.created.GroupIDs[0] != 42 {
+	if stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 4 || !stub.created.SkipDefaultGroupBind || len(stub.created.GroupIDs) != 1 || stub.created.GroupIDs[0] != 42 {
 		t.Fatalf("unsafe initial Pi account options: %#v", stub.created)
 	}
 	if stub.created.Credentials["refresh_token"] != "synthetic-refresh-secret" || stub.created.Credentials["pi_owner_user_id"] != "7" {
@@ -160,7 +160,7 @@ func TestImportPiAuthRejectsDuplicateIdentityBeforeRefresh(t *testing.T) {
 	}
 }
 
-func TestCreatePiAccountOAuthPathAllowsExistingGroupsAndDefaultsToTenConcurrent(t *testing.T) {
+func TestCreatePiAccountOAuthPathAllowsExistingGroupsAndDefaultsToFourConcurrent(t *testing.T) {
 	secretPath := filepath.Join(t.TempDir(), "pi-secret")
 	if err := os.WriteFile(secretPath, []byte(strings.Repeat("s", 40)), 0600); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestCreatePiAccountOAuthPathAllowsExistingGroupsAndDefaultsToTenConcurrent(
 	if acks != 1 {
 		t.Fatal("saved account must acknowledge runtime session")
 	}
-	if got.Code != http.StatusOK || calls != 1 || stub.created == nil || stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 10 {
+	if got.Code != http.StatusOK || calls != 1 || stub.created == nil || stub.created.InitiallyDisabled || stub.created.InitiallyUnschedulable || stub.created.Concurrency != 4 {
 		t.Fatalf("OAuth Pi account was not created safely: status=%d calls=%d", got.Code, calls)
 	}
 	if strings.Contains(got.Body.String(), "oauth-refresh-secret") {

@@ -232,7 +232,6 @@
                 </template>
               </HelpTooltip>
               <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
-              <span v-if="row.extra?.openai_quota_bridge_auth_email" class="text-xs text-teal-700 dark:text-teal-300 break-all">额度展示：{{ row.extra.openai_quota_bridge_auth_email }}</span>
               <span
                 v-if="accountDisplayEmail(row)"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -1740,13 +1739,17 @@ function getAntigravityTierLabel(row: any): string | null {
 // 账号显示邮箱:优先账号自身(extra/credentials),影子账号回退母账号 parent_email。
 // 供名称单元格 v-if/标题/文本三处共用,避免同一回退链在模板里重复三次。
 function accountDisplayEmail(row: any): string {
-  return row.extra?.email_address || row.extra?.email || row.credentials?.email || row.parent_email || ''
+  const email = row.extra?.email_address || row.extra?.email || row.credentials?.email || row.extra?.openai_quota_bridge_auth_email || row.parent_email || ''
+  return email && !String(row.name || '').toLowerCase().includes(String(email).toLowerCase()) ? email : ''
 }
 
 function accountHomepageUrl(row: Account): string {
   if (row.type !== 'apikey' || typeof row.credentials?.base_url !== 'string') return ''
+  if (row.platform === 'openai' && (row.extra?.cpa_auth_id || row.extra?.cpa_identity || row.extra?.openai_quota_bridge_auth_name)) return ''
   const baseUrl = sanitizeUrl(row.credentials.base_url)
-  return baseUrl ? new URL(baseUrl).origin : ''
+  if (!baseUrl) return ''
+  const url = new URL(baseUrl)
+  return url.hostname === 'cpa' ? '' : url.origin
 }
 
 type OpenAICompactBadgeState = 'active' | 'blocked' | 'auto'

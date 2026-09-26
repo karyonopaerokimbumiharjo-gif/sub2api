@@ -18,6 +18,8 @@ import (
 func TestPiSchedulerHonorsNativeCapabilities(t *testing.T) {
 	a := nativePiAccount()
 	a.Extra = map[string]any{"openai_compact_mode": "force_on"}
+	require.True(t, a.AllowsOpenAICompact(), "Pi has a dedicated compact forwarding path")
+	a.Extra["openai_compact_mode"] = "force_off"
 	require.False(t, a.AllowsOpenAICompact())
 	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
 	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponsesText))

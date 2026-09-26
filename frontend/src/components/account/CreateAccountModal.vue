@@ -45,7 +45,12 @@
         <summary class="cursor-pointer text-sm text-gray-600">{{ text('高级设置（可选）', 'Advanced settings (optional)') }}</summary>
         <fieldset :disabled="busy" class="mt-3 space-y-3">
           <p class="text-sm text-gray-500">{{ cpaText('importScope') }}</p>
-          <CPARuntimeFields v-model="runtime" :proxies="proxies || []" :allow-preserve="false" />
+          <p class="text-sm text-gray-500">{{ text('以下容量与优先级仅用于新账号，已有账号保留原值。', 'Capacity and priority apply to new accounts only; existing accounts keep their values.') }}</p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="input-label">{{ text('新账号并发容量', 'New account concurrency') }}<input v-model.number="accountDefaults.account_concurrency" data-testid="import-account-concurrency" class="input" type="number" min="1" max="10000" /></label>
+            <label class="input-label">{{ text('账号优先级（数值越小越优先）', 'Account priority (lower is preferred)') }}<input v-model.number="accountDefaults.account_priority" data-testid="import-account-priority" class="input" type="number" min="-10000" max="10000" /></label>
+          </div>
+          <CPARuntimeFields v-model="runtime" :proxies="proxies || []" :allow-preserve="false" :show-scheduling="false" />
         </fieldset>
       </details>
       <p v-if="error || oauth.error.value" role="alert" class="whitespace-pre-wrap text-sm text-red-600">{{ error || oauth.error.value }}</p>
@@ -80,6 +85,7 @@ const oauth = useOpenAIOAuth()
 const cpaText = useCPAText()
 const newRuntime = (): CPACredentialUpdate => ({ name: 'new-credential', disabled: false, proxy_id: 0, priority: 0, weight: 1, request_retry: 0 })
 const runtime = ref(newRuntime())
+const accountDefaults = ref({ account_concurrency: 4, account_priority: 0 })
 const mode = ref<'oauth' | 'refresh' | 'json'>('json')
 const authLinkCopied = ref(false)
 const tabs = computed(() => [
@@ -117,6 +123,7 @@ function reset() {
   content.value = callback.value = refreshTokens.value = error.value = summary.value = ''
   fileContents.value = []
   runtime.value = newRuntime()
+  accountDefaults.value = { account_concurrency: 4, account_priority: 0 }
   groupId.value = ''
   mode.value = 'json'
   authLinkCopied.value = false
@@ -167,7 +174,7 @@ async function submit() {
     if (mode.value === 'json') {
       const contents = [...fileContents.value, ...(content.value.trim() ? [content.value.trim()] : [])]
       if (!contents.length) throw new Error(text('请选择文件或粘贴授权 JSON。', 'Select files or paste authorization JSON.'))
-      const result = await adminAPI.accounts.importCPAAuthFiles(contents, runtime.value, [servingGroupId])
+      const result = await adminAPI.accounts.importCPAAuthFiles(contents, runtime.value, [servingGroupId], accountDefaults.value)
       for (const item of result.items || []) {
         if (item.action !== 'failed') acceptAccountIDs(item.account_id ? [item.account_id] : undefined)
       }
@@ -181,7 +188,7 @@ async function submit() {
           if (!tokenInfo) throw new Error(oauth.error.value || 'OAuth refresh failed')
           const credentials = oauth.buildCredentials(tokenInfo)
           credentials.refresh_token ||= tokens[index]
-          const result = await adminAPI.accounts.importOpenAIOAuthToCPA(credentials, runtime.value, [servingGroupId])
+          const result = await adminAPI.accounts.importOpenAIOAuthToCPA(credentials, runtime.value, [servingGroupId], accountDefaults.value)
           acceptAccountIDs(result.account_ids)
         } catch (err) { failures.push(`#${index + 1}: ${extractApiErrorMessage(err, 'Import failed')}`) }
       }
@@ -196,7 +203,7 @@ async function submit() {
         if (!tokenInfo) throw new Error(oauth.error.value || 'OAuth exchange failed')
         pendingOAuth = { key: pendingKey, credentials: oauth.buildCredentials(tokenInfo) }
       }
-      const result = await adminAPI.accounts.importOpenAIOAuthToCPA(pendingOAuth.credentials, runtime.value, [servingGroupId])
+      const result = await adminAPI.accounts.importOpenAIOAuthToCPA(pendingOAuth.credentials, runtime.value, [servingGroupId], accountDefaults.value)
       acceptAccountIDs(result.account_ids)
     }
     if (importedAccountIDs.size > 0) {

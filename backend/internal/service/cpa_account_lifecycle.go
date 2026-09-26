@@ -35,7 +35,8 @@ func findBoundCPAAccountAuth(ctx context.Context, cfg openAIQuotaBridgeConfig, a
 			if err != nil {
 				return nil, err
 			}
-			if cpaSettings(*auth, metadata).Identity != identity {
+			settings := cpaSettings(*auth, metadata)
+			if settings.Identity != identity && settings.LegacyIdentity != identity {
 				continue
 			}
 		}

@@ -25,6 +25,8 @@ const fillOAuth = async (w: Wrapper, code = 'once', state = 'expected-state') =>
   await w.get('[data-testid="cpa-tab-oauth"]').trigger('click')
   await w.get('[data-testid="cpa-callback"]').setValue(`http://localhost/callback?code=${code}&state=${state}`)
 }
+const defaults = { account_concurrency: 4, account_priority: 0 }
+
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.files.mockResolvedValue({ created: 1, updated: 0, items: [{ index: 1, action: 'imported_cpa', account_id: 101 }], errors: [] })
@@ -36,13 +38,22 @@ beforeEach(() => {
 describe('one-step account import', () => {
   it('imports with the selected group in one request and displays only completed accounts', async () => {
     const w = render(); await fillJSON(w); await submit(w)
-    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ proxy_id: 0 }), [42])
+    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ proxy_id: 0 }), [42], defaults)
     for (const followup of [mocks.sync, mocks.getById, mocks.update, mocks.setSchedulable, mocks.create]) expect(followup).not.toHaveBeenCalled()
     expect(w.get('[role="status"]').text()).toContain('已导入 1 个账号，可以使用')
     expect(w.text()).not.toContain('业务接入')
     expect(w.find('[data-testid="cpa-routing-warning"]').exists()).toBe(false)
     expect((w.get('[data-testid="cpa-json"]').element as HTMLTextAreaElement).value).toBe('')
     expect(w.emitted('created')).toHaveLength(1)
+  })
+  it('defaults new account capacity to four and uses lower-first account priority', async () => {
+    const w = render()
+    expect((w.get('[data-testid="import-account-concurrency"]').element as HTMLInputElement).value).toBe('4')
+    expect(w.text()).toContain('数值越小越优先')
+    expect(w.text()).not.toContain('数值越大越优先')
+    await w.get('[data-testid="import-account-priority"]').setValue(2)
+    await fillJSON(w); await submit(w)
+    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.anything(), [42], { account_concurrency: 4, account_priority: 2 })
   })
   it('defaults an unselected proxy to the configured CPA exit', async () => {
     const w = render()
@@ -62,7 +73,7 @@ describe('one-step account import', () => {
     const w = render([group, { ...group, id: 43 }]); await fillJSON(w); await submit(w)
     expect(mocks.files).not.toHaveBeenCalled()
     await w.get('[data-testid="cpa-import-group"]').setValue('43'); await submit(w)
-    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.anything(), [43])
+    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.anything(), [43], defaults)
   })
   it('refuses import when no active OpenAI group exists', async () => {
     const w = render([]); await fillJSON(w); await submit(w)
@@ -83,7 +94,7 @@ describe('one-step account import', () => {
   })
   it('honors the disabled option in the same import request', async () => {
     const w = render(); await fillJSON(w); await w.get('[data-testid="cpa-runtime-fields"] input[type="checkbox"]').setValue(false); await submit(w)
-    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ disabled: true }), [42])
+    expect(mocks.files).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ disabled: true }), [42], defaults)
     expect(w.get('[role="status"]').text()).toContain('保持停用')
   })
   it('retries finalization without redeeming the single-use OAuth code twice', async () => {
@@ -94,7 +105,7 @@ describe('one-step account import', () => {
     await submit(w)
     expect(mocks.exchange).toHaveBeenCalledTimes(1)
     expect(mocks.oauth).toHaveBeenCalledTimes(2)
-    expect(mocks.oauth).toHaveBeenLastCalledWith({ access_token: 'synthetic' }, expect.anything(), [42])
+    expect(mocks.oauth).toHaveBeenLastCalledWith({ access_token: 'synthetic' }, expect.anything(), [42], defaults)
     expect(w.emitted('created')).toHaveLength(1)
   })
   it('discards cached credentials when the callback changes', async () => {
@@ -108,7 +119,7 @@ describe('one-step account import', () => {
   })
   it('preserves the submitted refresh token if exchange omits its replacement', async () => {
     const w = render(); await w.get('[data-testid="cpa-tab-refresh"]').trigger('click'); await w.get('[data-testid="cpa-refresh-tokens"]').setValue('synthetic-refresh'); await submit(w)
-    expect(mocks.oauth).toHaveBeenCalledWith(expect.objectContaining({ refresh_token: 'synthetic-refresh' }), expect.anything(), [42])
+    expect(mocks.oauth).toHaveBeenCalledWith(expect.objectContaining({ refresh_token: 'synthetic-refresh' }), expect.anything(), [42], defaults)
   })
   it('shows only completed accounts for a partial batch and retains input', async () => {
     mocks.files.mockResolvedValue({ created: 1, failed: 1, items: [{ action: 'imported_cpa', account_id: 101 }, { action: 'failed' }], errors: [{ index: 2, message: 'invalid credential' }] })

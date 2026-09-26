@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
-import {createRuntime,validateCodexAccess} from './server.mjs';
+import {createRuntime,validateCodexAccess,fetchCodexModels} from './server.mjs';
 
 const jwt=account=>`e30.${Buffer.from(JSON.stringify({'https://api.openai.com/auth':{chatgpt_account_id:account}})).toString('base64url')}.test`;
 
@@ -11,11 +11,22 @@ test('read-only Pi access check uses only the fixed official models endpoint',as
   requested={url,init};return new Response(JSON.stringify({models:[{slug:'gpt-6-astra'}]}),{status:200,headers:{'content-type':'application/json'}});
  }});
  assert.equal(result,'account-a');
- assert.equal(requested.url,'https://chatgpt.com/backend-api/codex/models?client_version=0.144.0');
+ assert.equal(requested.url,'https://chatgpt.com/backend-api/codex/models?client_version=0.157.1');
  assert.equal(requested.init.method,'GET');
  assert.equal(requested.init.redirect,'error');
  assert.equal(requested.init.headers['chatgpt-account-id'],'account-a');
  assert.equal(requested.init.headers.authorization,`Bearer ${jwt('account-a')}`);
+});
+
+test('model discovery uses the configured version consistently and preserves its full catalog',async()=>{
+ const manifest={models:[{slug:'gpt-6-astra'},{slug:'gpt-6-sol'},{slug:'gpt-6-luna'},{slug:'gpt-5.6-sol'}]};
+ const actual=await fetchCodexModels({accessToken:jwt('account-a'),accountId:'account-a',clientVersion:'0.158.0',fetchImpl:async(url,init)=>{
+  assert.equal(url,'https://chatgpt.com/backend-api/codex/models?client_version=0.158.0');
+  assert.equal(init.headers.version,'0.158.0');assert.equal(init.headers['user-agent'],'codex_cli_rs/0.158.0');
+  return new Response(JSON.stringify(manifest),{status:200});
+ }});
+ assert.deepEqual(actual,manifest);
+ await assert.rejects(fetchCodexModels({accessToken:jwt('account-a'),accountId:'account-a',clientVersion:'bad\r\nversion'}),/invalid_codex_client_version/);
 });
 
 test('read-only Pi access check rejects wrong identity, 401 and non-manifest responses',async()=>{
@@ -72,13 +83,14 @@ test('early callback survives delayed SDK prompt and failed exchanges never expo
 
 test('private models endpoint returns only the selected account catalog',async()=>{
  const secret='s'.repeat(40);let calls=0;
- const runtime=createRuntime({secret,loadModels:async({accountId,accessToken})=>{
+ const runtime=createRuntime({secret,loadModels:async({accountId,accessToken,clientVersion})=>{
   calls++;assert.equal(accountId,'account-a');assert.equal(accessToken,jwt('account-a'));
+  assert.equal(clientVersion,'0.158.0');
   return {models:[{slug:'gpt-5.6-sol',display_name:'Sol'}]};
  }});
  runtime.listen(0,'127.0.0.1');await once(runtime,'listening');
  try{
-  const response=await fetch(`http://127.0.0.1:${runtime.address().port}/models`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({owner_id:7,account_id:'account-a',access_token:jwt('account-a')})});
+  const response=await fetch(`http://127.0.0.1:${runtime.address().port}/models`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({owner_id:7,account_id:'account-a',access_token:jwt('account-a'),client_version:'0.158.0'})});
   assert.equal(response.status,200);assert.deepEqual(await response.json(),{models:[{slug:'gpt-5.6-sol',display_name:'Sol'}]});assert.equal(calls,1);
  }finally{runtime.closeAllConnections();await new Promise(resolve=>runtime.close(resolve))}
 });

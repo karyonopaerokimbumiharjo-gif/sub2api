@@ -1436,7 +1436,7 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 					Slug string `json:"slug"`
 				} `json:"models"`
 			}
-			fetchErr := piruntime.JSON(fetchCtx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": runtimeAccount.GetCredential("access_token")}, &manifest)
+			fetchErr := piruntime.JSON(fetchCtx, "/models", map[string]any{"owner_id": owner, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"), "access_token": runtimeAccount.GetCredential("access_token"), "client_version": CodexCanonicalClientVersion()}, &manifest)
 			cancel()
 			if fetchErr != nil {
 				slog.Warn("gateway_pi_catalog_unavailable", "account_id", acc.ID)
@@ -1502,7 +1502,6 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		}
 		return nil
 	}
-
 
 	// Convert to slice
 	models := make([]string, 0, len(modelSet))

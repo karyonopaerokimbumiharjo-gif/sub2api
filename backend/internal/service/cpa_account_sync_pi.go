@@ -39,6 +39,10 @@ func (s *OpenAIQuotaService) preparePiReimport(ctx context.Context, account *Acc
 	if identity == "" || identity != runtime.GetCredential("chatgpt_account_id") || identity != account.GetCredential("chatgpt_account_id") {
 		return nil, nil, infraerrors.New(http.StatusConflict, "PI_REIMPORT_IDENTITY_CONFLICT", "授权身份与已有账号不一致，请核对后重新授权")
 	}
+	source["chatgpt_account_id"] = identity
+	if !SameOpenAIOAuthIdentity(runtime.Credentials, source) {
+		return nil, nil, infraerrors.New(http.StatusConflict, "PI_REIMPORT_LOGIN_CONFLICT", "授权属于同一工作区的另一位用户，已停止覆盖原账号")
+	}
 	expiry := source["expires_at"]
 	if expiry == nil || expiry == "" {
 		expiry = source["expired"]
@@ -54,7 +58,7 @@ func (s *OpenAIQuotaService) preparePiReimport(ctx context.Context, account *Acc
 	if !expires.After(time.Now().Add(30 * time.Second)) {
 		return nil, nil, infraerrors.BadRequest("PI_REIMPORT_AUTH_EXPIRED", "授权已过期，请重新授权后导入")
 	}
-	patch := map[string]any{"expires_at": expiresAt, "chatgpt_account_id": identity}
+	patch := map[string]any{"expires_at": expiresAt, "chatgpt_account_id": identity, "openai_oauth_principal": OpenAIOAuthPrincipal(source)}
 	for _, key := range []string{"access_token", "refresh_token", "id_token", "email", "chatgpt_user_id", "organization_id", "plan_type", "client_id"} {
 		if value := strings.TrimSpace(openAICPACredentialString(source, key)); value != "" {
 			patch[key] = value
@@ -80,7 +84,7 @@ func (s *OpenAIQuotaService) persistPiReimport(ctx context.Context, runtime *Acc
 	if err != nil {
 		return err
 	}
-	if current == nil || !current.UsesNativePiRuntime() || current.GetCredential("harness_kind") != PiNativeHarnessKind || current.GetCredential("chatgpt_account_id") != runtime.GetCredential("chatgpt_account_id") || current.GetCredential("pi_owner_user_id") != runtime.GetCredential("pi_owner_user_id") {
+	if current == nil || !current.UsesNativePiRuntime() || current.GetCredential("harness_kind") != PiNativeHarnessKind || !SameOpenAIOAuthIdentity(current.Credentials, oauth) || current.GetCredential("pi_owner_user_id") != runtime.GetCredential("pi_owner_user_id") {
 		return infraerrors.New(http.StatusConflict, "PI_REIMPORT_ACCOUNT_CHANGED", "账号状态已改变，请刷新后重试导入")
 	}
 	credentials := shallowCopyMap(current.Credentials)

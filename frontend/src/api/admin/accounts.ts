@@ -495,8 +495,10 @@ export interface OpenAICPAImportResult {
 /**
  * Import authorization and, when groups are supplied, complete account setup.
  */
-export async function importCPAAuthFiles(contents: string[], runtime?: CPACredentialUpdate, groupIDs?: number[]): Promise<CodexSessionImportResult> {
-  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/openai/import-cpa-files', { contents, runtime, group_ids: groupIDs }, { timeout: 180000 })
+export interface ImportedAccountDefaults { account_concurrency: number; account_priority: number }
+
+export async function importCPAAuthFiles(contents: string[], runtime?: CPACredentialUpdate, groupIDs?: number[], defaults?: ImportedAccountDefaults): Promise<CodexSessionImportResult> {
+  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/openai/import-cpa-files', { contents, runtime, group_ids: groupIDs, ...defaults }, { timeout: 180000 })
   return data
 }
 
@@ -519,11 +521,12 @@ export async function ensureCPAQuotaBridge(authName: string, groupIDs: number[])
 export async function importOpenAIOAuthToCPA(
   credentials: Record<string, unknown>,
   runtime?: CPACredentialUpdate,
-  groupIDs?: number[]
+  groupIDs?: number[],
+  defaults?: ImportedAccountDefaults
 ): Promise<OpenAICPAImportResult> {
   const { data } = await apiClient.post<OpenAICPAImportResult>(
     '/admin/openai/import-to-cpa',
-    { credentials, runtime, group_ids: groupIDs },
+    { credentials, runtime, group_ids: groupIDs, ...defaults },
     { timeout: 180000 }
   )
   return data

@@ -10,7 +10,7 @@
       </select>
       <span class="input-hint">{{ text('proxyHint') }}</span>
     </label>
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div v-if="showScheduling" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <label><span class="input-label">{{ text('priority') }}</span><input class="input" type="number" min="-10000" max="10000" step="1" :value="modelValue.priority" @input="change('priority', Number(($event.target as HTMLInputElement).value))" /></label>
       <label><span class="input-label">{{ text('weight') }}</span><input class="input" type="number" min="1" max="1000000" step="1" :value="modelValue.weight" @input="change('weight', Number(($event.target as HTMLInputElement).value))" /></label>
       <label><span class="input-label">{{ text('retry') }}</span><input class="input" type="number" min="0" max="10" step="1" :value="modelValue.request_retry" @input="change('request_retry', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -22,7 +22,7 @@ import { computed } from 'vue'
 import type { CPACredentialUpdate } from '@/api/admin/accounts'
 import type { Proxy } from '@/types'
 import { useCPAText } from './cpaRuntimeText'
-const props = withDefaults(defineProps<{modelValue: CPACredentialUpdate; proxies: Proxy[]; allowPreserve?: boolean}>(), { allowPreserve: true })
+const props = withDefaults(defineProps<{modelValue: CPACredentialUpdate; proxies: Proxy[]; allowPreserve?: boolean; showScheduling?: boolean}>(), { allowPreserve: true, showScheduling: true })
 const emit = defineEmits<{ 'update:modelValue': [value: CPACredentialUpdate] }>()
 const text = useCPAText()
 const available = computed(() => props.proxies.filter(p => p.status === 'active' && !p.expires_at && (!p.fallback_mode || p.fallback_mode === 'none')))

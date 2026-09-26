@@ -102,7 +102,8 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 	}
 	for i := range accounts {
 		account := &accounts[i]
-		if account.UsesNativePiRuntime() && account.GetCredential("chatgpt_account_id") == auth.Tokens.AccountID {
+		incoming := map[string]any{"chatgpt_account_id": auth.Tokens.AccountID, "access_token": auth.Tokens.AccessToken, "id_token": auth.Tokens.IDToken}
+		if account.GetCredential("harness_kind") == service.PiNativeHarnessKind && account.GetCredential("chatgpt_account_id") == auth.Tokens.AccountID && (service.SameOpenAIOAuthIdentity(account.Credentials, incoming) || service.OpenAIOAuthPrincipal(account.Credentials) == "" || service.OpenAIOAuthPrincipal(incoming) == "") {
 			response.Error(c, http.StatusConflict, "This ChatGPT identity already has a Pi account; reauthorize that account instead")
 			return
 		}
@@ -115,7 +116,7 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 		ChatGPTAccountID string `json:"chatgpt_account_id"`
 	}
 	if err := piruntime.JSON(verifyCtx, "/oauth/validate", map[string]any{
-		"owner_id": req.OwnerUserID, "account_id": auth.Tokens.AccountID, "access_token": auth.Tokens.AccessToken,
+		"owner_id": req.OwnerUserID, "account_id": auth.Tokens.AccountID, "access_token": auth.Tokens.AccessToken, "client_version": service.CodexCanonicalClientVersion(),
 	}, &verified); err != nil {
 		response.BadRequest(c, "Pi runtime could not verify this ChatGPT authorization")
 		return
@@ -141,7 +142,7 @@ func (h *OpenAIOAuthHandler) ImportPiAuth(c *gin.Context) {
 	}
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
 		Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
-		Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 10,
+		Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 4,
 		GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true,
 	})
 	if err != nil {

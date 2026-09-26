@@ -17,7 +17,7 @@ const labels = {
   unknownRouting: ['尚未确认这份凭证对应的业务后端；此处只显示已保存的 CPA 配置。', 'The business backend for this credential is unconfirmed; only saved CPA settings are shown.'],
   proxyHint: ['代理来自 IP管理；支持无到期、无自动回退的代理。绑定后修改代理地址会同步到 CPA；删除或停用前需要先解绑。', 'Uses proxies from IP Management without automatic expiry/fallback. Address edits sync to CPA; unbind before disabling or deleting.'],
   direct: ['未指定代理（使用 CPA 默认出口）', 'No override (CPA default egress)'],
-  priority: ['优先级（数值越大越优先）', 'Priority (higher is preferred)'],
+  priority: ['CPA 内部凭证优先级（数值越大越优先）', 'CPA internal credential priority (higher is preferred)'],
   weight: ['调度权重', 'Scheduling weight'],
   retry: ['凭证重试次数', 'Credential retries'],
   enabled: ['启用凭证', 'Enable credential'],

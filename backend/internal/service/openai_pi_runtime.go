@@ -364,5 +364,8 @@ func refreshNativePiToken(ctx context.Context, account *Account) (*OpenAITokenIn
 	if info.HarnessKind != "pi" || info.PiOwnerUserID != strconv.FormatInt(owner, 10) || info.ChatGPTAccountID != account.GetCredential("chatgpt_account_id") || info.AccessToken == "" || info.ExpiresAt <= time.Now().Unix() {
 		return nil, errors.New("Pi refresh returned an invalid binding")
 	}
+	if strings.HasPrefix(OpenAIOAuthPrincipal(account.Credentials), "user:") && !SameOpenAIOAuthIdentity(account.Credentials, map[string]any{"access_token": info.AccessToken, "chatgpt_account_id": info.ChatGPTAccountID}) {
+		return nil, errors.New("Pi refresh returned a different login identity")
+	}
 	return &info, nil
 }

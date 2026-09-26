@@ -198,6 +198,19 @@ describe('AccountTestModal', () => {
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-astra')
   })
 
+  it('Pi 模型目录完整展示且优先选择可用的 GPT-6 对话模型', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-reserve', display_name: 'Reserve' },
+      { id: 'gpt-6-sol', display_name: 'GPT-6 Sol' },
+      { id: 'gpt-6-luna', display_name: 'GPT-6 Luna' }
+    ])
+    const wrapper = mountModal({ id: 50, name: 'Pi', platform: 'openai', type: 'oauth', status: 'active', credentials: { harness_kind: 'pi' } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-6-sol')
+    expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual(['gpt-reserve', 'gpt-6-sol', 'gpt-6-luna'])
+  })
+
   it('暂停调度的账号显示业务状态并仍可加载测试模型', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-6-astra', display_name: 'GPT-6 Astra' },

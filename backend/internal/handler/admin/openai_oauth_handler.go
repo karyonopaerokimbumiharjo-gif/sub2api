@@ -119,9 +119,11 @@ func NewOpenAIOAuthHandler(
 }
 
 type openAICPAImportRequest struct {
-	Credentials map[string]any               `json:"credentials" binding:"required"`
-	Runtime     *service.CPACredentialUpdate `json:"runtime,omitempty"`
-	GroupIDs    []int64                      `json:"group_ids,omitempty"`
+	AccountConcurrency *int                         `json:"account_concurrency,omitempty"`
+	AccountPriority    *int                         `json:"account_priority,omitempty"`
+	Credentials        map[string]any               `json:"credentials" binding:"required"`
+	Runtime            *service.CPACredentialUpdate `json:"runtime,omitempty"`
+	GroupIDs           []int64                      `json:"group_ids,omitempty"`
 }
 
 // ImportOAuthToCPA persists OAuth and, when groups are supplied, finishes the
@@ -141,6 +143,11 @@ func (h *OpenAIOAuthHandler) ImportOAuthToCPA(c *gin.Context) {
 	var result *service.OpenAICPAImportResult
 	var err error
 	importCtx := service.WithCPAUserImport(c.Request.Context())
+	importCtx, err = importAccountDefaults(importCtx, req.AccountConcurrency, req.AccountPriority)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if err := h.validateImportGroups(importCtx, req.GroupIDs); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -846,7 +853,8 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 		return
 	}
 	for i := range accounts {
-		if accounts[i].UsesNativePiRuntime() && accounts[i].GetCredential("chatgpt_account_id") == token.ChatGPTAccountID {
+		incoming := map[string]any{"chatgpt_account_id": token.ChatGPTAccountID, "access_token": token.AccessToken, "email": token.Email}
+		if accounts[i].GetCredential("harness_kind") == service.PiNativeHarnessKind && accounts[i].GetCredential("chatgpt_account_id") == token.ChatGPTAccountID && (service.SameOpenAIOAuthIdentity(accounts[i].Credentials, incoming) || service.OpenAIOAuthPrincipal(accounts[i].Credentials) == "" || service.OpenAIOAuthPrincipal(incoming) == "") {
 			response.Error(c, http.StatusConflict, "This ChatGPT identity already has a Pi account; reauthorize that account instead")
 			return
 		}
@@ -855,7 +863,7 @@ func (h *OpenAIOAuthHandler) CreatePiAccount(c *gin.Context) {
 	if name == "" {
 		name = "Pi OpenAI"
 	}
-	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 10, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true})
+	account, err := h.adminService.CreateAccount(c.Request.Context(), &service.CreateAccountInput{Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: h.openaiOAuthService.BuildAccountCredentials(&token), Concurrency: 4, GroupIDs: req.GroupIDs, SkipDefaultGroupBind: true})
 	if err != nil {
 		if infraerrors.Code(err) >= 500 {
 			err = infraerrors.New(http.StatusInternalServerError, "PI_ACCOUNT_SAVE_FAILED", "Pi 授权已完成，但保存账号失败。请保留当前页面并在本次授权开始后 10 分钟内重试导入；超时后需重新授权").WithCause(err)

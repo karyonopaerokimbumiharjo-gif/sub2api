@@ -39,12 +39,13 @@ function runtimeTimeout(value,fallback) {
 
 // A read-only upstream request validates the currently usable access token
 // without rotating the refresh token shared with the operator's local auth.json.
-export async function fetchCodexModels({accessToken,accountId,fetchImpl=fetch}) {
+export async function fetchCodexModels({accessToken,accountId,clientVersion='0.157.1',fetchImpl=fetch}) {
  if(typeof accessToken!=='string'||typeof accountId!=='string'||credentialAccount(accessToken)!==accountId)throw Error('oauth_account_mismatch');
- const response=await fetchImpl('https://chatgpt.com/backend-api/codex/models?client_version=0.144.0',{
+ if(typeof clientVersion!=='string'||clientVersion.length>64||!/^\d+(\.\d+){1,3}(-[0-9A-Za-z.]+)?$/.test(clientVersion))throw Error('invalid_codex_client_version');
+ const response=await fetchImpl('https://chatgpt.com/backend-api/codex/models?client_version='+encodeURIComponent(clientVersion),{
   method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),
   headers:{authorization:`Bearer ${accessToken}`,'chatgpt-account-id':accountId,accept:'application/json',originator:'codex_cli_rs',
-   'user-agent':'codex_cli_rs/0.144.0',version:'0.144.0'}
+   'user-agent':'codex_cli_rs/'+clientVersion,version:clientVersion}
  });
  if(!response.ok)throw Error('oauth_access_rejected');
  const manifest=await response.json();
@@ -136,13 +137,13 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    }
    if(req.url==='/oauth/validate') {
     if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
-    const account=await verifyAccess({accessToken:body.access_token,accountId:body.account_id});
+    const account=await verifyAccess({accessToken:body.access_token,accountId:body.account_id,clientVersion:body.client_version});
     if(account!==body.account_id)throw Error('oauth_account_mismatch');
     json(res,200,{chatgpt_account_id:account,harness_kind:'pi',pi_owner_user_id:String(body.owner_id)});return;
    }
    if(req.url==='/models') {
     if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
-    const manifest=await loadModels({accessToken:body.access_token,accountId:body.account_id});
+    const manifest=await loadModels({accessToken:body.access_token,accountId:body.account_id,clientVersion:body.client_version});
     json(res,200,manifest);return;
    }
    if(req.url==='/responses') {

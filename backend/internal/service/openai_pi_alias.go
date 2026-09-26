@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	PiNativeHarnessKind = "pi"
-	PiSharedHarnessKind = "pi_shared"
+	PiNativeHarnessKind          = "pi"
+	PiSharedHarnessKind          = "pi_shared"
 	PiRuntimeAccountIDCredential = "pi_runtime_account_id"
 )
 
@@ -43,6 +43,9 @@ func ResolveNativePiRuntimeAccount(ctx context.Context, repo PiRuntimeAccountRes
 	}
 	if identity := strings.TrimSpace(account.GetCredential("chatgpt_account_id")); identity != "" && identity != runtimeAccount.GetCredential("chatgpt_account_id") {
 		return nil, fmt.Errorf("Pi shared account identity does not match runtime owner")
+	}
+	if (OpenAIOAuthPrincipal(account.Credentials) != "" || OpenAIOAuthPrincipal(runtimeAccount.Credentials) != "") && !SameOpenAIOAuthIdentity(account.Credentials, runtimeAccount.Credentials) {
+		return nil, fmt.Errorf("Pi shared account login does not match runtime owner")
 	}
 	if owner := strings.TrimSpace(account.GetCredential("pi_owner_user_id")); owner != "" && owner != runtimeAccount.GetCredential("pi_owner_user_id") {
 		return nil, fmt.Errorf("Pi shared account owner does not match runtime owner")

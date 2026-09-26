@@ -107,7 +107,7 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 	if candidates, _, listErr := h.adminService.ListAccounts(c.Request.Context(), 1, 1000, service.PlatformOpenAI, service.AccountTypeOAuth, "", "", 0, "", "id", "asc"); listErr == nil {
 		for i := range candidates {
 			candidate := &candidates[i]
-			if candidate.ID == account.ID || candidate.GetCredential("harness_kind") != service.PiNativeHarnessKind || candidate.GetCredential("chatgpt_account_id") != accountID {
+			if candidate.ID == account.ID || candidate.GetCredential("harness_kind") != service.PiNativeHarnessKind || !service.SameOpenAIOAuthIdentity(candidate.Credentials, oauth) {
 				continue
 			}
 			sharedRuntime = candidate
@@ -129,7 +129,7 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 			PiOwnerUserID    string `json:"pi_owner_user_id"`
 		}
 		if err := piruntime.JSON(c.Request.Context(), "/oauth/validate", map[string]any{
-			"owner_id": ownerID, "account_id": accountID, "access_token": accessToken,
+			"owner_id": ownerID, "account_id": accountID, "access_token": accessToken, "client_version": service.CodexCanonicalClientVersion(),
 		}, &verified); err != nil {
 			return nil, infraerrors.New(http.StatusBadRequest, "PI_AUTH_VERIFY_FAILED", "Pi 无法验证 CPA 当前授权，请先在 CPA 中恢复该授权状态")
 		}
@@ -177,6 +177,9 @@ func (h *OpenAIOAuthHandler) switchCPAAccountToPi(c *gin.Context, account *servi
 // an account leaks implementation details and can make Pi inherit a CPA proxy.
 func piCredentialsFromCPA(source map[string]any) map[string]any {
 	result := make(map[string]any)
+	if principal := service.OpenAIOAuthPrincipal(source); principal != "" {
+		result["openai_oauth_principal"] = principal
+	}
 	for _, key := range []string{
 		"access_token", "refresh_token", "id_token", "expires_at", "expired",
 		"email", "chatgpt_account_id", "account_id", "chatgpt_user_id",
@@ -260,6 +263,8 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 	extra := cloneAnyMap(account.Extra)
 	extra["cpa_auth_id"] = binding.AuthID
 	extra["cpa_identity"] = binding.Identity
+	extra["cpa_principal"] = binding.Principal
+	extra["cpa_workspace_id"] = binding.Workspace
 	extra[service.OpenAIQuotaBridgeAuthNameExtraKey] = imported.AuthName
 	extra[service.OpenAIQuotaBridgeAuthEmailExtraKey] = imported.Email
 	extra[service.OpenAIQuotaViaCompatibleUpstreamExtraKey] = true
@@ -277,7 +282,7 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 		delete(extra, key)
 	}
 	newCredentials := map[string]any{"api_key": apiKey, "base_url": baseURL}
-	for _, key := range []string{"access_token", "refresh_token", "id_token", "cpa_bridge_api_key", "cpa_bridge_base_url"} {
+	for _, key := range []string{"access_token", "refresh_token", "id_token", "cpa_bridge_api_key", "cpa_bridge_base_url", "harness_kind", "pi_owner_user_id", "pi_transport", service.PiRuntimeAccountIDCredential, "openai_oauth_principal"} {
 		newCredentials[key] = nil
 	}
 	updated, err := h.adminService.UpdateAccount(c.Request.Context(), account.ID, &service.UpdateAccountInput{
@@ -288,7 +293,6 @@ func (h *OpenAIOAuthHandler) switchPiAccountToCPA(c *gin.Context, account *servi
 	}
 	return updated, nil
 }
-
 
 func autoResetSavedKey(key string) string {
 	switch key {

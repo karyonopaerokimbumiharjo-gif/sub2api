@@ -92,7 +92,7 @@ func TestSyncCPAAccountsCreatesDisabledAccountAndReusesExactBinding(t *testing.T
 	require.Equal(t, &CPAAccountSyncResult{Created: 1, Identities: 1, AccountIDs: []int64{101}}, first)
 	require.Len(t, repo.accounts, 1)
 	account := repo.accounts[101]
-	require.Equal(t, 5, account.Concurrency, "new CPA imports default to five concurrent requests")
+	require.Equal(t, 4, account.Concurrency, "new imported accounts default to four concurrent requests")
 	require.Equal(t, StatusDisabled, account.Status)
 	require.False(t, account.Schedulable)
 	require.Empty(t, account.GroupIDs)

@@ -30,6 +30,7 @@ func TestSyncCPAAccountsReimportsExistingPiWithoutChangingBackend(t *testing.T) 
 	account := &Account{
 		ID: 50, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
 		Credentials: map[string]any{
+			"email":        "one@example.com",
 			"harness_kind": PiNativeHarnessKind, "pi_owner_user_id": "1", "pi_transport": "sse",
 			"chatgpt_account_id": accountID, "access_token": "old-access", "refresh_token": "old-refresh",
 			"cpa_bridge_api_key": "saved-bridge", "model_mapping": map[string]any{"client": "upstream"},
@@ -69,10 +70,10 @@ func TestSyncCPAAccountsPiAliasUpdatesOnlyRuntimeOwner(t *testing.T) {
 	server := cpaAccountSyncTestServer(t, &authID, &accountID)
 	defer server.Close()
 	owner := &Account{ID: 50, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-		Credentials: map[string]any{"harness_kind": PiNativeHarnessKind, "pi_owner_user_id": "1", "chatgpt_account_id": accountID,
+		Credentials: map[string]any{"email": "one@example.com", "harness_kind": PiNativeHarnessKind, "pi_owner_user_id": "1", "chatgpt_account_id": accountID,
 			"access_token": "old-access", "refresh_token": "old-refresh"}, Extra: map[string]any{}}
 	alias := &Account{ID: 51, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
-		Credentials: map[string]any{"harness_kind": PiSharedHarnessKind, "pi_owner_user_id": "1", "chatgpt_account_id": accountID, PiRuntimeAccountIDCredential: "50"},
+		Credentials: map[string]any{"email": "one@example.com", "harness_kind": PiSharedHarnessKind, "pi_owner_user_id": "1", "chatgpt_account_id": accountID, PiRuntimeAccountIDCredential: "50"},
 		Extra:       map[string]any{"cpa_auth_id": authID}}
 	repo := &cpaAccountSyncRepo{accounts: map[int64]*Account{50: owner, 51: alias}}
 	cache := &cpaReimportTokenCache{locked: false}

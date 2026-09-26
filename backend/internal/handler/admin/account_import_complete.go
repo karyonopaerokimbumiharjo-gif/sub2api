@@ -8,6 +8,20 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func importAccountDefaults(ctx context.Context, concurrency, priority *int) (context.Context, error) {
+	defaults := service.CPAImportAccountDefaults{Concurrency: 4, Priority: 0}
+	if concurrency != nil {
+		defaults.Concurrency = *concurrency
+	}
+	if priority != nil {
+		defaults.Priority = *priority
+	}
+	if defaults.Concurrency < 1 || defaults.Concurrency > 10000 || defaults.Priority < -10000 || defaults.Priority > 10000 {
+		return ctx, infraerrors.BadRequest("ACCOUNT_IMPORT_DEFAULTS_INVALID", "账号容量或优先级无效")
+	}
+	return service.WithCPAImportAccountDefaults(ctx, defaults), nil
+}
+
 // Group IDs opt the account-import UI into one server-side completion flow.
 // Legacy credential-only clients keep their existing API contract.
 func (h *OpenAIOAuthHandler) validateImportGroups(ctx context.Context, ids []int64) error {

@@ -92,6 +92,9 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 			return nil, err
 		}
 		credential := cpaSettings(file, metadata)
+		if openAICPACredentialString(metadata, "email") == "" {
+			metadata["email"] = file.Email
+		}
 		if previous, duplicate := seenIdentities[credential.Identity]; duplicate && previous != name {
 			return nil, infraerrors.New(http.StatusConflict, "CPA_ACCOUNT_SYNC_IDENTITY_AMBIGUOUS", "多份 CPA 授权文件指向同一身份，请只选择其中一份")
 		}
@@ -114,6 +117,19 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		if err != nil {
 			return nil, err
 		}
+		// Upgrade legacy bindings only with a matching login email as well as
+		// workspace. A team workspace alone must never merge its members.
+		if len(byAuthID) == 0 && len(byIdentity) == 0 && credential.Email != "" {
+			legacy, lookupErr := s.accountRepo.FindByExtraField(ctx, OpenAIQuotaBridgeAuthEmailExtraKey, credential.Email)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			for _, prior := range legacy {
+				if prior.GetExtraString("cpa_identity") == credential.LegacyIdentity {
+					byIdentity = append(byIdentity, prior)
+				}
+			}
+		}
 		byAuthName, err := s.accountRepo.FindByExtraField(ctx, OpenAIQuotaBridgeAuthNameExtraKey, credential.Name)
 		if err != nil {
 			return nil, err
@@ -130,6 +146,9 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		} else if len(byIdentity) == 1 {
 			account = &byIdentity[0]
 		}
+		if account == nil && len(byAuthName) == 1 && byAuthName[0].GetExtraString("cpa_identity") != "" {
+			account = &byAuthName[0]
+		}
 		if len(byAuthName) == 1 && (account == nil || byAuthName[0].ID != account.ID) {
 			// A legacy shared bridge may only carry the file name. Never
 			// silently convert it into an identity-bound business account or
@@ -139,6 +158,12 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		if account == nil {
 			needCreate = true
 			continue
+		}
+		if email := account.GetExtraString(OpenAIQuotaBridgeAuthEmailExtraKey); email != "" && !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(credential.Email)) {
+			return nil, infraerrors.New(http.StatusConflict, "CPA_ACCOUNT_SYNC_LOGIN_CONFLICT", "已有账号与本次授权的登录用户不同，已停止覆盖")
+		}
+		if principal := account.GetExtraString("cpa_principal"); principal != "" && principal != credential.Principal {
+			return nil, infraerrors.New(http.StatusConflict, "CPA_ACCOUNT_SYNC_LOGIN_CONFLICT", "已有账号与本次授权的登录用户不同，已停止覆盖")
 		}
 		if account.UsesNativePiRuntime() {
 			runtime, oauth, err := s.preparePiReimport(ctx, account, candidates[i].metadata)
@@ -176,6 +201,8 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 	for _, candidate := range candidates {
 		credential := candidate.credential
 		binding := map[string]any{
+			"cpa_principal":                          credential.Principal,
+			"cpa_workspace_id":                       credential.Workspace,
 			"cpa_auth_id":                            credential.AuthID,
 			"cpa_identity":                           credential.Identity,
 			OpenAIQuotaBridgeAuthNameExtraKey:        credential.Name,
@@ -207,10 +234,11 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		if name == "" {
 			name = credential.Name
 		}
+		defaults := cpaImportAccountDefaults(ctx)
 		account := &Account{
 			Name: name, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 			Credentials: map[string]any{"base_url": cpapolicy.BaseURL, "api_key": apiKey},
-			Extra:       binding, Concurrency: 5, Status: StatusDisabled,
+			Extra:       binding, Concurrency: defaults.Concurrency, Priority: defaults.Priority, Status: StatusDisabled,
 			Schedulable: false, AutoPauseOnExpired: true,
 		}
 		if err := s.accountRepo.Create(ctx, account); err != nil {
