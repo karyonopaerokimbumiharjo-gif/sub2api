@@ -216,9 +216,8 @@ const selectedProxy = computed(() => {
 })
 
 const selectedLabel = computed(() => {
-  if (!selectedProxy.value) {
-    return t('admin.accounts.noProxy')
-  }
+  if (props.modelValue === null || props.modelValue === 0) return t('admin.accounts.noProxy')
+  if (!selectedProxy.value) return t('admin.accounts.proxyUnavailable', { id: props.modelValue })
   const proxy = selectedProxy.value
   return `${proxy.name} (${proxy.protocol}://${proxy.host}:${proxy.port})`
 })

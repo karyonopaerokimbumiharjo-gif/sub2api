@@ -162,10 +162,10 @@ describe('feature route guard', () => {
       'risk control',
       { requiresRiskControl: true },
       { risk_control_enabled: false },
-      '/admin/settings',
+      undefined,
     ],
     ['subscription', { requiresSubscription: true }, { subscription_enabled: false }, '/dashboard'],
-  ])('redirects when loaded settings explicitly disable %s', async (_name, meta, settings, target) => {
+  ])('keeps admin configuration accessible while respecting disabled %s', async (_name, meta, settings, target) => {
     authStore.isAdmin = meta.requiresRiskControl === true
     appStore.cachedPublicSettings = settings
     appStore.publicSettingsLoaded = true
@@ -175,7 +175,8 @@ describe('feature route guard', () => {
 
     expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledOnce()
-    expect(next).toHaveBeenCalledWith(target)
+    if (target === undefined) expect(next).toHaveBeenCalledWith()
+    else expect(next).toHaveBeenCalledWith(target)
   })
 })
 

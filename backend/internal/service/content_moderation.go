@@ -383,6 +383,7 @@ func (in ContentModerationInput) Hash() string {
 }
 
 type ContentModerationDecision struct {
+	AuditLatencyMS  *int               `json:"-"`
 	Allowed         bool               `json:"allowed"`
 	Blocked         bool               `json:"blocked"`
 	Flagged         bool               `json:"flagged"`
@@ -417,14 +418,19 @@ type ContentModerationLog struct {
 	CategoryScores    map[string]float64           `json:"category_scores"`
 	ThresholdSnapshot map[string]float64           `json:"threshold_snapshot"`
 	InputExcerpt      string                       `json:"input_excerpt"`
-	UpstreamLatencyMS *int                         `json:"upstream_latency_ms,omitempty"`
-	Error             string                       `json:"error"`
-	ViolationCount    int                          `json:"violation_count"`
-	AutoBanned        bool                         `json:"auto_banned"`
-	EmailSent         bool                         `json:"email_sent"`
-	UserStatus        string                       `json:"user_status"`
-	QueueDelayMS      *int                         `json:"queue_delay_ms,omitempty"`
-	CreatedAt         time.Time                    `json:"created_at"`
+	// Full evidence is only exposed by the administrator event-detail endpoint.
+	FullPrompt        string    `json:"-"`
+	AuditedPrompt     string    `json:"-"`
+	PromptHash        string    `json:"-"`
+	ContentTruncated  bool      `json:"-"`
+	UpstreamLatencyMS *int      `json:"upstream_latency_ms,omitempty"`
+	Error             string    `json:"error"`
+	ViolationCount    int       `json:"violation_count"`
+	AutoBanned        bool      `json:"auto_banned"`
+	EmailSent         bool      `json:"email_sent"`
+	UserStatus        string    `json:"user_status"`
+	QueueDelayMS      *int      `json:"queue_delay_ms,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type ContentModerationLogFilter struct {
@@ -1052,6 +1058,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 	start := time.Now()
 	result, err := s.callModeration(ctx, cfg, content.ModerationInput(), trackPreBlock)
 	latency := int(time.Since(start).Milliseconds())
+	allow.AuditLatencyMS = &latency
 	if err != nil {
 		if trackPreBlock {
 			s.recordPreBlockSyncMetric(latency, ContentModerationActionError)
@@ -1116,6 +1123,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 	}
 	if blocked {
 		return &ContentModerationDecision{
+			AuditLatencyMS:  &latency,
 			Allowed:         false,
 			Blocked:         true,
 			Flagged:         true,
@@ -1128,6 +1136,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		}
 	}
 	return &ContentModerationDecision{
+		AuditLatencyMS:  &latency,
 		Allowed:         true,
 		Flagged:         flagged,
 		Message:         "",
@@ -1893,6 +1902,7 @@ func (s *ContentModerationService) resolveModerationProxyURL(ctx context.Context
 }
 
 func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, cfg *ContentModerationConfig, action string, flagged bool, highestCategory string, highestScore float64, scores map[string]float64, text string, latency *int, queueDelay *int, errText string) *ContentModerationLog {
+	full, audited, hash, truncated := nativeModerationEvidence(input.Body, text)
 	var userID *int64
 	if input.UserID > 0 {
 		userID = &input.UserID
@@ -1920,6 +1930,10 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		CategoryScores:    cloneFloatMap(scores),
 		ThresholdSnapshot: cloneFloatMap(cfg.Thresholds),
 		InputExcerpt:      trimRunes(redactContentModerationSecrets(text), maxModerationExcerptRunes),
+		FullPrompt:        full,
+		AuditedPrompt:     audited,
+		PromptHash:        hash,
+		ContentTruncated:  truncated,
 		UpstreamLatencyMS: latency,
 		QueueDelayMS:      queueDelay,
 		Error:             errText,

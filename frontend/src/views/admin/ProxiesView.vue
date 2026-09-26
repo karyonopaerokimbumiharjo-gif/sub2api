@@ -91,6 +91,7 @@
       </template>
 
       <template #table>
+        <p class="mb-3 text-sm text-gray-500 dark:text-gray-400" data-testid="proxy-evidence-hint">{{ t('admin.proxies.egressEvidenceHint') }}</p>
         <div ref="proxyTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
           :columns="columns"
@@ -187,7 +188,14 @@
           </template>
 
           <template #cell-location="{ row }">
-            <div class="flex items-center gap-2">
+            <div class="flex flex-col gap-1">
+              <span v-if="row.ip_address" class="text-xs text-gray-500" data-testid="proxy-test-source">{{ t('admin.proxies.testExitLabel') }}</span>
+              <code
+                v-if="row.ip_address"
+                data-testid="proxy-exit-ip"
+                class="text-xs tabular-nums text-gray-700 dark:text-gray-200"
+              >{{ row.ip_address }}</code>
+              <div class="flex items-center gap-2">
               <img
                 v-if="row.country_code"
                 :src="flagUrl(row.country_code)"
@@ -198,6 +206,7 @@
                 {{ formatLocation(row) }}
               </span>
               <span v-else class="text-sm text-gray-400">-</span>
+              </div>
             </div>
           </template>
 
@@ -220,7 +229,7 @@
               <span
                 v-if="row.cpa_credential_count !== undefined"
                 class="inline-flex items-center rounded bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300"
-                :title="row.cpa_credential_names?.join('\n') || undefined"
+                :title="t('admin.proxies.savedBindingHint') + (row.cpa_credential_names?.length ? '\n' + row.cpa_credential_names.join('\n') : '')"
               >
                 {{ t('admin.proxies.cpaCredentialsCount', { count: row.cpa_credential_count }) }}
               </span>

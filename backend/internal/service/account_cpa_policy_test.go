@@ -78,3 +78,22 @@ func TestCPAAuthSelectionFromMultipleCredentials(t *testing.T) {
 	_, err = matchingCPAAuth(files, "expected.json")
 	require.Error(t, err)
 }
+
+func TestCPAAuthSelectionIgnoresPluginDerivedCredentials(t *testing.T) {
+	native := openAIQuotaBridgeAuthFile{Name: "expected.json", ID: "expected.json", Provider: "codex", AuthIndex: "native"}
+	virtual := openAIQuotaBridgeAuthFile{Name: "expected.json", ID: "bp-expected", Provider: "oai-basispoints", AuthIndex: "virtual"}
+	for _, files := range [][]openAIQuotaBridgeAuthFile{{native, virtual}, {virtual, native}} {
+		got, err := matchingCPAAuth(files, "expected.json")
+		require.NoError(t, err)
+		require.Equal(t, "native", got.AuthIndex)
+	}
+	_, err := matchingCPAAuth([]openAIQuotaBridgeAuthFile{virtual}, "expected.json")
+	require.Error(t, err, "a virtual credential cannot replace a missing native credential")
+	_, err = matchingCPAAuth([]openAIQuotaBridgeAuthFile{native, virtual, native}, "expected.json")
+	require.Error(t, err, "duplicate native credentials must still fail closed")
+	native.Provider, native.Type = "", "codex"
+	virtual.Provider, virtual.Type = "", "oai-basispoints"
+	got, err := matchingCPAAuth([]openAIQuotaBridgeAuthFile{virtual, native}, "expected.json")
+	require.NoError(t, err)
+	require.Equal(t, "native", got.AuthIndex)
+}

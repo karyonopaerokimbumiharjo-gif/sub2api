@@ -101,7 +101,17 @@ func ApplyLegacyRequestFields(requestType RequestType, fallbackStream bool, fall
 	}
 }
 
+type UsageAudit struct {
+	Source    string `json:"source"`
+	Status    string `json:"status"`
+	Result    string `json:"result"`
+	Engine    string `json:"engine,omitempty"`
+	Model     string `json:"model,omitempty"`
+	LatencyMS *int   `json:"latency_ms,omitempty"`
+}
+
 type UsageLog struct {
+	Audit     *UsageAudit
 	ID        int64
 	UserID    int64
 	APIKeyID  int64
@@ -184,7 +194,7 @@ type UsageLog struct {
 	IPAddress          *string
 	// PromptAuditLatencyMs measures scanner latency independently of upstream timing.
 	PromptAuditLatencyMs *int
-	VPSLatencyMs *int
+	VPSLatencyMs         *int
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.

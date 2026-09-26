@@ -1,10 +1,13 @@
 package apicompat
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"strings"
 	"time"
 )
@@ -127,8 +130,26 @@ type ResponsesEventToChatState struct {
 	NextToolCallIndex      int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
 	OutputIndexToArguments map[int]string
+	textByPart             map[responsesChatTextPart]*responsesChatTextProgress
+	toolIdentityByOutput   map[int]responsesChatToolIdentity
 	IncludeUsage           bool
 	Usage                  *ChatUsage
+}
+
+type responsesChatTextPart struct {
+	output, content int
+}
+
+// A length and incremental digest verify a completed snapshot's prefix without
+// retaining a second copy of every streamed answer. Each content part has its
+// own progress; output_index and content_index are not interchangeable.
+type responsesChatTextProgress struct {
+	bytes  int
+	digest hash.Hash
+}
+
+type responsesChatToolIdentity struct {
+	id, name string
 }
 
 // NewResponsesEventToChatState returns an initialised stream state.
@@ -138,19 +159,28 @@ func NewResponsesEventToChatState() *ResponsesEventToChatState {
 		Created:                time.Now().Unix(),
 		OutputIndexToToolIndex: make(map[int]int),
 		OutputIndexToArguments: make(map[int]string),
+		textByPart:             make(map[responsesChatTextPart]*responsesChatTextProgress),
+		toolIdentityByOutput:   make(map[int]responsesChatToolIdentity),
 	}
 }
 
 // ResponsesEventToChatChunks converts a single Responses SSE event into zero
 // or more Chat Completions chunks, updating state as it goes.
 func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if state.Finalized {
+		return nil
+	}
 	switch evt.Type {
 	case "response.created":
 		return resToChatHandleCreated(evt, state)
 	case "response.output_text.delta":
 		return resToChatHandleTextDelta(evt, state)
+	case "response.output_text.done":
+		return resToChatRecoverText(evt.Text, responsesChatTextPart{evt.OutputIndex, evt.ContentIndex}, state)
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
+	case "response.output_item.done":
+		return resToChatRecoverOutputItem(evt.OutputIndex, evt.Item, state)
 	case "response.function_call_arguments.delta",
 		// custom/freeform 工具（如新版 apply_patch）的输入增量与 function_call 参数增量同形，
 		// 均按 OutputIndex 累加到对应工具调用。
@@ -240,12 +270,38 @@ func resToChatHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToCh
 }
 
 func resToChatHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	if evt.Delta == "" {
+	return resToChatEmitText(evt.Delta, responsesChatTextPart{evt.OutputIndex, evt.ContentIndex}, state)
+}
+
+func resToChatEmitText(text string, part responsesChatTextPart, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if text == "" {
 		return nil
 	}
+	progress := state.textByPart[part]
+	if progress == nil {
+		progress = &responsesChatTextProgress{digest: sha256.New()}
+		state.textByPart[part] = progress
+	}
+	_, _ = progress.digest.Write([]byte(text))
+	progress.bytes += len(text)
 	state.SawText = true
-	content := evt.Delta
-	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{Content: &content})}
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{Content: &text})}
+}
+
+func resToChatRecoverText(text string, part responsesChatTextPart, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	delivered := 0
+	if progress := state.textByPart[part]; progress != nil {
+		delivered = progress.bytes
+		if len(text) <= delivered {
+			return nil
+		}
+		prefix := sha256.Sum256([]byte(text[:delivered]))
+		if !bytes.Equal(prefix[:], progress.digest.Sum(nil)) {
+			// Already delivered text cannot be replaced by a conflicting snapshot.
+			return nil
+		}
+	}
+	return resToChatEmitText(text[delivered:], part, state)
 }
 
 func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
@@ -255,21 +311,68 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 		return nil
 	}
 
-	state.SawToolCall = true
-	idx := state.NextToolCallIndex
-	state.OutputIndexToToolIndex[evt.OutputIndex] = idx
-	state.NextToolCallIndex++
+	return resToChatRegisterTool(evt.OutputIndex, evt.Item.CallID, evt.Item.Name, state)
+}
 
-	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
-		ToolCalls: []ChatToolCall{{
-			Index: &idx,
-			ID:    evt.Item.CallID,
-			Type:  "function",
-			Function: ChatFunctionCall{
-				Name: evt.Item.Name,
-			},
-		}},
-	})}
+func resToChatRegisterTool(outputIndex int, id, name string, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	idx, known := state.OutputIndexToToolIndex[outputIndex]
+	if !known {
+		idx = state.NextToolCallIndex
+		state.OutputIndexToToolIndex[outputIndex] = idx
+		state.NextToolCallIndex++
+	}
+	state.SawToolCall = true
+	identity := state.toolIdentityByOutput[outputIndex]
+	tool := ChatToolCall{Index: &idx}
+	if !known {
+		tool.Type = "function"
+	}
+	if identity.id == "" {
+		tool.ID, identity.id = id, id
+	}
+	if identity.name == "" {
+		tool.Function.Name, identity.name = name, name
+	}
+	state.toolIdentityByOutput[outputIndex] = identity
+	if known && tool.ID == "" && tool.Function.Name == "" {
+		return nil
+	}
+	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ToolCalls: []ChatToolCall{tool}})}
+}
+
+func resToChatToolIdentityMatches(outputIndex int, id, name string, state *ResponsesEventToChatState) bool {
+	identity := state.toolIdentityByOutput[outputIndex]
+	return (identity.id == "" || id == "" || identity.id == id) &&
+		(identity.name == "" || name == "" || identity.name == name)
+}
+
+func resToChatRecoverOutputItem(outputIndex int, item *ResponsesOutput, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if item == nil {
+		return nil
+	}
+	var chunks []ChatCompletionsChunk
+	switch item.Type {
+	case "message":
+		for contentIndex, part := range item.Content {
+			if part.Type == "output_text" {
+				chunks = append(chunks, resToChatRecoverText(part.Text, responsesChatTextPart{outputIndex, contentIndex}, state)...)
+			}
+		}
+	case "function_call", "custom_tool_call":
+		if !resToChatToolIdentityMatches(outputIndex, item.CallID, item.Name, state) {
+			return nil
+		}
+		if _, known := state.OutputIndexToToolIndex[outputIndex]; !known && (item.CallID == "" || item.Name == "") {
+			return nil
+		}
+		chunks = append(chunks, resToChatRegisterTool(outputIndex, item.CallID, item.Name, state)...)
+		done := &ResponsesStreamEvent{OutputIndex: outputIndex, Arguments: item.Arguments}
+		if item.Type == "custom_tool_call" {
+			done.Type, done.Input = "response.custom_tool_call_input.done", item.Input
+		}
+		chunks = append(chunks, resToChatHandleFuncArgsDone(done, state)...)
+	}
+	return chunks
 }
 
 func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
@@ -294,9 +397,16 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 }
 
 func resToChatHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if !resToChatToolIdentityMatches(evt.OutputIndex, evt.CallID, evt.Name, state) {
+		return nil
+	}
+	var chunks []ChatCompletionsChunk
+	if _, known := state.OutputIndexToToolIndex[evt.OutputIndex]; known || (evt.CallID != "" && evt.Name != "") {
+		chunks = resToChatRegisterTool(evt.OutputIndex, evt.CallID, evt.Name, state)
+	}
 	idx, ok := state.OutputIndexToToolIndex[evt.OutputIndex]
 	if !ok {
-		return nil
+		return chunks
 	}
 
 	completed := evt.Arguments
@@ -305,19 +415,19 @@ func resToChatHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	}
 	current := state.OutputIndexToArguments[evt.OutputIndex]
 	if completed == "" || !strings.HasPrefix(completed, current) || completed == current {
-		return nil
+		return chunks
 	}
 
 	remainder := completed[len(current):]
 	state.OutputIndexToArguments[evt.OutputIndex] = completed
-	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
+	return append(chunks, makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
 			Index: &idx,
 			Function: ChatFunctionCall{
 				Arguments: remainder,
 			},
 		}},
-	})}
+	}))
 }
 
 func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
@@ -331,6 +441,7 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	state.Finalized = true
 	finishReason := "stop"
+	var chunks []ChatCompletionsChunk
 
 	if evt.Usage != nil {
 		state.Usage = chatUsageFromResponsesUsage(evt.Usage)
@@ -341,6 +452,16 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		}
 		if evt.Response.ServiceTier != "" {
 			state.ServiceTier = evt.Response.ServiceTier
+		}
+		// Terminal output is authoritative when a provider omits some or all
+		// deltas. Recover only unseen suffixes before choosing the finish reason,
+		// so a tool-only final snapshot still finishes with tool_calls. A failed
+		// or filtered response must not expose previously withheld output.
+		filtered := evt.Response.IncompleteDetails != nil && evt.Response.IncompleteDetails.Reason == "content_filter"
+		if evt.Type != "response.failed" && evt.Response.Status != "failed" && !filtered {
+			for outputIndex := range evt.Response.Output {
+				chunks = append(chunks, resToChatRecoverOutputItem(outputIndex, &evt.Response.Output[outputIndex], state)...)
+			}
 		}
 
 		switch evt.Response.Status {
@@ -362,7 +483,6 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		finishReason = "tool_calls"
 	}
 
-	var chunks []ChatCompletionsChunk
 	chunks = append(chunks, makeChatFinishChunk(state, finishReason))
 
 	if state.IncludeUsage && state.Usage != nil {

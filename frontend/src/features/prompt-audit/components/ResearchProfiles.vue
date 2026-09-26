@@ -1,7 +1,7 @@
 <template>
   <details class="my-6 rounded-xl border border-gray-200 p-4 dark:border-dark-700" @toggle="open">
     <summary class="cursor-pointer font-semibold">{{ zh ? '生物安全分级与科研核验档案' : 'Biology policy and verified research profiles' }}</summary>
-    <p class="mt-3 text-sm text-gray-500">{{ zh ? '核验档案绑定用户和 Key，最长 90 天。只记录核验范围，不自动放行 B2，不解除 B3/B4、CTE 或破甲库拦截。修改范围需重新审批。' : 'Approvals bind a user and key for up to 90 days. They record verified scope without bypassing review, hard rules or tool grants. Scope changes require a new approval.' }}</p>
+    <p class="mt-3 text-sm text-gray-500">{{ zh ? '核验档案绑定用户和 Key，最长 90 天。只记录核验范围，不自动放行 B2，不解除 B3/B4 或本地明确绕过与已知破甲特征规则的拦截。修改范围需重新审批。' : 'Approvals bind a user and key for up to 90 days. They record verified scope without bypassing review, hard rules or tool grants. Scope changes require a new approval.' }}</p>
     <p v-if="error" role="alert" class="mt-3 text-red-600">{{ error }}</p>
     <table v-if="tiers.length" class="my-4 w-full text-left text-sm"><thead><tr><th>{{ zh ? '等级' : 'Tier' }}</th><th>{{ zh ? '定义' : 'Description' }}</th><th>{{ zh ? '处理' : 'Action' }}</th></tr></thead><tbody><tr v-for="tier in tiers" :key="tier.tier"><td class="p-2 font-semibold">{{ tier.tier }}</td><td class="p-2">{{ tier.description }}</td><td class="p-2">{{ tier.action }}</td></tr></tbody></table>
     <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="approve">

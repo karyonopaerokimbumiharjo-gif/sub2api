@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -209,4 +210,26 @@ func (e *turnCountingEngine) Evaluate(context.Context, securityaudit.Request) (*
 		return e.decisions[call-1], nil
 	}
 	return &securityaudit.PromptDecision{Kind: securityaudit.DecisionAllow, AllowNextStage: true, Result: &securityaudit.NormalizedResult{Decision: securityaudit.EventPass, Action: securityaudit.ActionAllow}}, nil
+}
+
+func TestSecurityAuditNativeLatencyDistinguishesMeasuredChecksFromSkips(t *testing.T) {
+	for _, measured := range []bool{false, true} {
+		t.Run(map[bool]string{false: "skipped", true: "completed"}[measured], func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			legacy := &securityaudit.LegacyDecision{Allowed: true}
+			latency := 100
+			if measured {
+				legacy.AuditLatencyMS = &latency
+			}
+			applySecurityAuditSideEffects(c, nil, securityaudit.Request{}, securityaudit.Decision{Legacy: legacy}, time.Now().Add(-100*time.Millisecond))
+			got := service.PromptAuditLatencyFromContext(c.Request.Context())
+			if measured {
+				require.NotNil(t, got)
+				require.GreaterOrEqual(t, *got, 100)
+			} else {
+				require.Nil(t, got)
+			}
+		})
+	}
 }

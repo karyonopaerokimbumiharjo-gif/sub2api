@@ -248,8 +248,6 @@
               aria-hidden="true"
             ></span>
             <div v-if="showAuditLatencyComparison" class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
-              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.tpsHint')">{{ t('usage.tps') }}</span>
-              <span data-testid="usage-tps" class="font-medium tabular-nums">{{ formatOutputTokensPerSecond(row) }}</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstTokenWithoutAudit') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
@@ -261,16 +259,25 @@
               <span class="text-gray-400 dark:text-gray-500" :title="promptAuditLatencyTitle(row.prompt_audit_latency_ms)">{{ t('usage.latencyDurationWithAudit') }}</span>
               <span v-if="latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms) != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms)!)]">{{ formatDuration(latencyWithAudit(row.duration_ms, row.prompt_audit_latency_ms)) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
-            </div>
-            <div v-else class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500" :title="t('usage.tpsHint')">{{ t('usage.tps') }}</span>
               <span data-testid="usage-tps" class="font-medium tabular-nums">{{ formatOutputTokensPerSecond(row) }}</span>
+            </div>
+            <div v-else class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.tpsHint')">{{ t('usage.tps') }}</span>
+              <span data-testid="usage-tps" class="font-medium tabular-nums">{{ formatOutputTokensPerSecond(row) }}</span>
             </div>
+          </div>
+        </template>
+
+        <template #cell-audit="{ row }">
+          <div class="max-w-56 text-xs" data-testid="usage-audit" :title="t('usage.auditEvidenceHint')">
+            <p class="font-medium" :class="auditResultKey(row) === 'passed' ? 'text-emerald-600' : 'text-gray-600 dark:text-gray-300'">{{ t(`usage.auditResult.${auditResultKey(row)}`) }}</p>
+            <p v-if="row.audit" class="mt-1 text-gray-500">{{ t(`usage.auditSource.${row.audit.source}`) }}<span v-if="row.audit.model"> · {{ row.audit.model }}</span></p>
           </div>
         </template>
 
@@ -604,6 +611,19 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
 function latencyWithAudit(baseMs: number | null | undefined, auditMs: number | null | undefined): number | null {
   if (baseMs == null || auditMs == null || auditMs < 0) return null
   return baseMs + auditMs
+}
+
+function auditResultKey(row: AdminUsageLog): string {
+  const audit = row.audit
+  if (!audit) return row.prompt_audit_latency_ms != null ? 'timed' : 'unknown'
+  if (audit.status === 'partial') return 'partial'
+  if (audit.status === 'gap' || audit.status === 'bypass') return 'notAudited'
+  if (audit.status === 'error' || audit.result === 'error') return 'error'
+  if (audit.result === 'review_required') return 'inconclusive'
+  if (audit.result === 'block' || audit.result === 'hash_block' || audit.result === 'keyword_block' || audit.result === 'critical' || audit.result === 'upstream_policy_block') return 'blocked'
+  if (audit.result === 'flag') return 'flagged'
+  if (audit.result === 'allow' || audit.result === 'pass') return 'passed'
+  return 'unknown'
 }
 
 function promptAuditLatencyTitle(auditMs: number | null | undefined): string {

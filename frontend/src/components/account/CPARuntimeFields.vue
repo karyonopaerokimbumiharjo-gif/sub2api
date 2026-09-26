@@ -3,7 +3,8 @@
     <label class="flex items-center gap-2 text-sm"><input type="checkbox" :checked="!modelValue.disabled" @change="change('disabled', !($event.target as HTMLInputElement).checked)" />{{ text('enabled') }}</label>
     <label class="block"><span class="input-label">{{ text('proxy') }}</span>
       <select class="input" :value="modelValue.proxy_id ?? ''" @change="change('proxy_id', ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)">
-        <option value="">保留当前出口</option>
+        <option v-if="allowPreserve" value="">{{ text('preserve') }}</option>
+        <option v-if="unavailableProxyId" :value="unavailableProxyId" disabled>{{ text('missingProxy') }} #{{ unavailableProxyId }}</option>
         <option value="0">{{ text('direct') }}</option>
         <option v-for="proxy in available" :key="proxy.id" :value="proxy.id">{{ proxy.name }}</option>
       </select>
@@ -21,9 +22,13 @@ import { computed } from 'vue'
 import type { CPACredentialUpdate } from '@/api/admin/accounts'
 import type { Proxy } from '@/types'
 import { useCPAText } from './cpaRuntimeText'
-const props = defineProps<{modelValue: CPACredentialUpdate; proxies: Proxy[]}>()
+const props = withDefaults(defineProps<{modelValue: CPACredentialUpdate; proxies: Proxy[]; allowPreserve?: boolean}>(), { allowPreserve: true })
 const emit = defineEmits<{ 'update:modelValue': [value: CPACredentialUpdate] }>()
 const text = useCPAText()
 const available = computed(() => props.proxies.filter(p => p.status === 'active' && !p.expires_at && (!p.fallback_mode || p.fallback_mode === 'none')))
+const unavailableProxyId = computed(() => {
+  const id = props.modelValue.proxy_id
+  return id != null && id > 0 && !available.value.some(proxy => proxy.id === id) ? id : null
+})
 function change<K extends keyof CPACredentialUpdate>(key: K, value: CPACredentialUpdate[K]) { emit('update:modelValue', {...props.modelValue, [key]: value}) }
 </script>

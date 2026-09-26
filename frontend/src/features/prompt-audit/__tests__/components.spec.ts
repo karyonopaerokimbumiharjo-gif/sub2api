@@ -246,6 +246,8 @@ describe('Prompt Audit components', () => {
     await detail.setProps({ event: upstream })
     expect(detail.text()).toContain('不代表本地已经确认违规')
     const review = detail.get('[data-test="policy-review"]')
+    expect(review.text()).toContain('admin.promptAudit.events.policyReviewScope')
+    expect(review.text()).not.toContain('CTE')
     const buttons = review.findAll('button')
     expect(buttons.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
     await review.get('textarea').setValue('  已人工核实误判  ')

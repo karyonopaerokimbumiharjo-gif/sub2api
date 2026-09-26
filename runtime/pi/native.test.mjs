@@ -59,6 +59,29 @@ test('native SDK produces its own headers, preserves Responses input, and stream
  assert.equal(outbound.body.store,false);assert.equal(outbound.body.stream,true);
  assert.notEqual(outbound.body.prompt_cache_key,'s1');
 });
+test('minimal Responses calls omit SDK reasoning defaults and preserve explicit preferences',async()=>{
+ for(const reasoning of [undefined,{effort:'low'},{effort:'none'}]){
+  const direct={model:'gpt-6-astra',input:'fixture',stream:false};
+  if(reasoning!==undefined)direct.reasoning=reasoning;
+  let outbound;
+  const result=await runNative({...base,request:direct,transport:'sse',fetchImpl:async(_url,init)=>{
+   const headers=new Headers(init.headers);
+   outbound=JSON.parse(headers.get('content-encoding')==='zstd'?zstdDecompressSync(init.body).toString():init.body);
+   // Astra rejects the SDK's invented none default. Explicit caller choices
+   // remain visible upstream instead of being silently replaced.
+   if(reasoning===undefined&&Object.hasOwn(outbound,'reasoning'))return new Response('{"error":{"message":"unsupported reasoning effort"}}',{status:400});
+   return new Response(`data: ${completed('resp_direct')}\n\n`,{headers:{'content-type':'text/event-stream'}});
+  }});
+  assert.equal(result.evidence.terminal_status,'completed');
+  assert.deepEqual(outbound.reasoning,reasoning);
+  assert.equal(Object.hasOwn(outbound,'reasoning'),reasoning!==undefined);
+  assert.deepEqual(outbound.input,[{role:'user',content:[{type:'input_text',text:'fixture'}]}]);
+  assert.equal(outbound.instructions,'You are a helpful assistant.');
+  assert.equal(outbound.stream,true);assert.equal(outbound.store,false);
+ }
+ const nullable=nativeBody({...request,reasoning:null},{reasoning:{effort:'none'}});
+ assert.equal(Object.hasOwn(nullable,'reasoning'),false);
+});
 test('bindings separate users, accounts, models and credentials, but remain stable across refresh',async()=>{
  const args=['secret',1,5,'account-a','gpt-6-astra','s1'];const original=scopedSession(...args);
  assert.equal(original,scopedSession(...args));
@@ -67,13 +90,18 @@ test('bindings separate users, accounts, models and credentials, but remain stab
  assert.throws(()=>nativeBody({...request,previous_response_id:'other-user-response'},{}),/unsupported_pi_field/);
  assert.throws(()=>nativeBody({...request,client_metadata:{}},{}),/unsupported_pi_field/);
 });
-test('max_output_tokens is accepted and forwarded to the Pi SDK',async()=>{
- const limited={...request,max_output_tokens:64};
- assert.equal(nativeBody(limited,{}).max_output_tokens,64);
+test('Codex-unsupported output limits and sampling options do not break direct calls',async()=>{
+ const options={max_output_tokens:64,max_completion_tokens:64,temperature:0.2,top_p:0.9,frequency_penalty:0,presence_penalty:0};
+ const limited={...request,...options};
+ const normalized=nativeBody(limited,options);
+ for(const key of Object.keys(options))assert.equal(Object.hasOwn(normalized,key),false);
  const bytes=Buffer.from(`data: ${completed('resp_limited')}\n\n`);
  let contacted=false;
- const result=await runNative({...base,request:limited,fetchImpl:async()=>{
+ const result=await runNative({...base,request:limited,fetchImpl:async(_url,init)=>{
   contacted=true;
+  const headers=new Headers(init.headers);
+  const outbound=JSON.parse(headers.get('content-encoding')==='zstd'?zstdDecompressSync(init.body).toString():init.body);
+  if(Object.keys(options).some(key=>Object.hasOwn(outbound,key)))return new Response('{"error":{"message":"unsupported parameter"}}',{status:400});
   return new Response(bytes,{headers:{'content-type':'text/event-stream'}});
  }});
  assert.equal(contacted,true);

@@ -17,21 +17,25 @@ import (
 )
 
 type openAIQuotaWorkflowStub struct {
-	resetResult     *service.OpenAIQuotaResetResult
-	resetErr        error
-	queryResult     *service.OpenAIQuotaUsage
-	queryErr        error
-	cacheErr        error
-	autoResetResult *service.OpenAIQuotaAutoResetSettings
-	autoResetErr    error
+	resetResult        *service.OpenAIQuotaResetResult
+	resetErr           error
+	queryResult        *service.OpenAIQuotaUsage
+	queryErr           error
+	cacheErr           error
+	creditsCacheErr    error
+	creditsCacheCalls  int
+	cachedCreditsUsage *service.OpenAIQuotaUsage
 
-	resetCalls     int
-	queryCalls     int
-	cacheCalls     int
-	autoResetCalls int
+	resetCalls int
+	queryCalls int
+	cacheCalls int
 
 	queryCtxErr error
 	cacheCtxErr error
+}
+
+func (s *openAIQuotaWorkflowStub) SetAutoReset(context.Context, int64, bool) (*service.OpenAIQuotaAutoResetSettings, error) {
+	return nil, errors.New("unexpected auto-reset update in quota recovery test")
 }
 
 func (s *openAIQuotaWorkflowStub) ResetCredit(context.Context, int64) (*service.OpenAIQuotaResetResult, error) {
@@ -51,15 +55,16 @@ func (s *openAIQuotaWorkflowStub) CacheResetCreditsSnapshot(ctx context.Context,
 	return s.cacheErr
 }
 
+func (s *openAIQuotaWorkflowStub) CacheCreditsSnapshot(_ context.Context, _ int64, usage *service.OpenAIQuotaUsage) error {
+	s.creditsCacheCalls++
+	s.cachedCreditsUsage = usage
+	return s.creditsCacheErr
+}
+
 func (s *openAIQuotaWorkflowStub) CachePostResetSnapshot(ctx context.Context, _ int64, _ *service.OpenAIQuotaUsage) error {
 	s.cacheCalls++
 	s.cacheCtxErr = ctx.Err()
 	return s.cacheErr
-}
-
-func (s *openAIQuotaWorkflowStub) SetAutoReset(context.Context, int64, bool) (*service.OpenAIQuotaAutoResetSettings, error) {
-	s.autoResetCalls++
-	return s.autoResetResult, s.autoResetErr
 }
 
 type openAIAccountStateRecovererStub struct {
@@ -416,6 +421,34 @@ func TestOpenAIRefreshQuota_PersistFailureStillReturnsUsage(t *testing.T) {
 	require.NotNil(t, envelope.Data.RateLimitResetCredits)
 	require.Equal(t, 2, envelope.Data.RateLimitResetCredits.AvailableCount)
 	require.Equal(t, 1, quota.cacheCalls)
+}
+
+func TestOpenAIRefreshQuota_CreditsPersistIndependently(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		resetErr   error
+		creditsErr error
+	}{
+		{name: "both saved"},
+		{name: "reset details missing", resetErr: errors.New("missing expirations")},
+		{name: "points cache failed", creditsErr: errors.New("write failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			quota := successfulOpenAIQuotaWorkflowStub()
+			balance := "1250.75"
+			quota.queryResult.Credits = &service.OpenAICredits{HasCredits: true, Balance: &balance}
+			quota.cacheErr = tc.resetErr
+			quota.creditsCacheErr = tc.creditsErr
+			status, envelope := performOpenAIQuotaRefreshRequest(t, &OpenAIOAuthHandler{quotaService: quota})
+			require.Equal(t, http.StatusOK, status)
+			require.Equal(t, tc.resetErr == nil, envelope.Data.CachePersisted)
+			require.Equal(t, tc.creditsErr == nil, envelope.Data.CreditsCachePersisted)
+			require.Equal(t, quota.queryResult.Credits, envelope.Data.Credits)
+			require.Equal(t, quota.queryResult, quota.cachedCreditsUsage)
+			require.Equal(t, 1, quota.creditsCacheCalls)
+			require.Zero(t, quota.resetCalls)
+		})
+	}
 }
 
 // An empty-but-successful upstream read must not be dereferenced blindly.

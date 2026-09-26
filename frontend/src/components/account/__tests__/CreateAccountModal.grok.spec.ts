@@ -1,6 +1,7 @@
 import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AdminGroup } from '@/types'
 
 const mocks = vi.hoisted(() => ({ importFiles: vi.fn(), create: vi.fn(), grokAuthorize: vi.fn(), post: vi.fn(), sync: vi.fn() }))
 vi.mock('@/api/admin', () => ({ adminAPI: { accounts: {
@@ -20,7 +21,7 @@ vi.mock('@/composables/useOpenAIOAuth', () => ({ useOpenAIOAuth: () => ({
 import CreateAccountModal from '../CreateAccountModal.vue'
 
 const Dialog = defineComponent({ props: ['show'], template: '<div v-if="show"><slot/><slot name="footer"/></div>' })
-const render = () => mount(CreateAccountModal, { props: { show: true }, global: { stubs: { BaseDialog: Dialog, CPABridgeSetupCard: true } } })
+const render = () => mount(CreateAccountModal, { props: { show: true, groups: [{ id: 42, name: 'Clients', platform: 'openai', status: 'active' } as AdminGroup] }, global: { stubs: { BaseDialog: Dialog, CPABridgeSetupCard: true } } })
 const unsupportedAuth = JSON.stringify({ type: 'grok', api_key: 'synthetic-key', base_url: 'https://relay.example.com/v1' })
 
 describe('CPA import boundary for legacy Grok setup', () => {

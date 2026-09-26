@@ -5,6 +5,7 @@ export type PromptDecision = 'pass' | 'flag' | 'critical'
 export type PromptEventDecision = PromptDecision | 'review_required' | 'upstream_policy_block'
 export type PromptRiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export type PromptEventRiskLevel = PromptRiskLevel | 'unknown'
+export type PromptAuditSource = 'legacy' | 'native' | 'audit_gap' | 'upstream'
 export type PromptAuditProtocol = 'openai_compatible' | 'typesafe_systemone' | 'antigravity_internal' | 'openai_internal'
 export type PromptAuditAdapter = 'qwen3guard' | 'generic_llm'
 
@@ -317,6 +318,14 @@ export interface PromptIssueSummary {
 
 export interface PromptAuditEvent {
   id: number
+  audit_source?: PromptAuditSource
+  event_origin?: 'prompt_audit' | 'content_moderation'
+  event_key?: string
+  content_availability?: 'full' | 'truncated' | 'excerpt_only' | 'unavailable'
+  native_log_id?: number
+  native_action?: string
+  native_error?: string
+  native_engine_meta?: Record<string, unknown>
   job_id: number
   snapshot: PromptSnapshot
   audit_status?: 'audited' | 'gap' | 'bypass' | 'review_required' | string
@@ -348,6 +357,7 @@ export interface PromptAuditEvent {
 
 export interface PromptEventFilters {
   aggregate?: boolean
+  audit_source?: PromptAuditSource | ''
   decision: string
   risk_level: string
   endpoint: string

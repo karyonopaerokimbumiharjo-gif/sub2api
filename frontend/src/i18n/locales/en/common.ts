@@ -213,7 +213,7 @@ export default {
     riskControl: 'Risk Control',
     securityAudit: 'Security Audit',
     contentModeration: 'Content Moderation',
-    promptAudit: 'Prompt Audit',
+    promptAudit: 'Prompt / native audit',
     auditLogs: 'Audit Logs',
   },
 

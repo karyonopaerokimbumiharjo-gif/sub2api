@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 type chatMessageContent struct {
@@ -27,18 +29,19 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 	}
 
 	out := &ResponsesRequest{
-		Model:             req.Model,
-		Instructions:      req.Instructions,
-		Input:             inputJSON,
-		Stream:            true, // upstream always streams
-		Include:           []string{"reasoning.encrypted_content"},
-		ServiceTier:       req.ServiceTier,
-		ParallelToolCalls: req.ParallelToolCalls,
+		Model:              req.Model,
+		Instructions:       req.Instructions,
+		Input:              inputJSON,
+		Stream:             true, // upstream always streams
+		Include:            []string{"reasoning.encrypted_content"},
+		ServiceTier:        req.ServiceTier,
+		PromptCacheOptions: req.PromptCacheOptions,
+		ParallelToolCalls:  req.ParallelToolCalls,
 	}
 
 	// Reasoning models (gpt-5.x) do not accept sampling parameters.
 	// See isReasoningModel in anthropic_to_responses.go.
-	if !isReasoningModel(req.Model) {
+	if !isReasoningModel(req.Model) || (openai.IsGPT6SolOrLunaModelSpelling(req.Model) && req.ReasoningEffort == "none") {
 		out.Temperature = req.Temperature
 		out.TopP = req.TopP
 	}
@@ -82,10 +85,14 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
-	// tool_choice: already compatible format — pass through directly.
-	// Legacy function_call needs mapping.
+	// Named Chat tool choices nest the name under function; Responses expects
+	// it at the top level. String choices and Responses-shaped choices stay intact.
 	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = req.ToolChoice
+		tc, err := convertChatToolChoiceToResponses(req.ToolChoice)
+		if err != nil {
+			return nil, fmt.Errorf("convert tool_choice: %w", err)
+		}
+		out.ToolChoice = tc
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
 		if err != nil {
@@ -365,26 +372,29 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 	for _, p := range parts {
 		switch p.Type {
 		case "text":
-			if p.Text != "" {
+			if p.Text != "" || len(p.PromptCacheBreakpoint) > 0 {
 				responseParts = append(responseParts, ResponsesContentPart{
-					Type: "input_text",
-					Text: p.Text,
+					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
+					Type:                  "input_text",
+					Text:                  p.Text,
 				})
 			}
 		case "image_url":
 			if p.ImageURL != nil && p.ImageURL.URL != "" && !isEmptyBase64DataURI(p.ImageURL.URL) {
 				responseParts = append(responseParts, ResponsesContentPart{
-					Type:     "input_image",
-					ImageURL: p.ImageURL.URL,
+					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
+					Type:                  "input_image",
+					ImageURL:              p.ImageURL.URL,
 				})
 			}
 		case "file":
 			if p.File != nil && (p.File.FileData != "" || p.File.FileID != "") {
 				responseParts = append(responseParts, ResponsesContentPart{
-					Type:     "input_file",
-					Filename: p.File.Filename,
-					FileData: p.File.FileData,
-					FileID:   p.File.FileID,
+					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
+					Type:                  "input_file",
+					Filename:              p.File.Filename,
+					FileData:              p.File.FileData,
+					FileID:                p.File.FileID,
 				})
 			}
 		}
@@ -479,6 +489,33 @@ func defaultStrictFalse(src *bool) *bool {
 		return &value
 	}
 	return src
+}
+
+func convertChatToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err == nil {
+		return raw, nil
+	}
+	var choice struct {
+		Type     string          `json:"type"`
+		Function json.RawMessage `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		return nil, err
+	}
+	if choice.Type != "function" || len(choice.Function) == 0 {
+		return raw, nil
+	}
+	var function struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(choice.Function, &function); err != nil {
+		return nil, err
+	}
+	if function.Name == "" {
+		return nil, fmt.Errorf("function.name is required")
+	}
+	return json.Marshal(map[string]string{"type": "function", "name": function.Name})
 }
 
 // convertChatFunctionCallToToolChoice maps the legacy function_call field to a

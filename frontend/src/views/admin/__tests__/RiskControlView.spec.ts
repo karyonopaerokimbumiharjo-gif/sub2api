@@ -146,7 +146,7 @@ const runtimeStatus = () => ({
   last_cleanup_deleted_non_hit: 0,
 })
 
-const AppLayoutStub = { template: '<div><slot /></div>' }
+const AppLayoutStub = { template: '<div data-test="app-layout"><slot /></div>' }
 const BaseDialogStub = defineComponent({
   props: {
     show: {
@@ -218,6 +218,17 @@ describe('admin RiskControlView', () => {
       api_key_masks: [],
       api_key_statuses: [],
     }))
+  })
+
+  it.each([false, true])('renders exactly the required page layout when embedded is %s', async (embedded) => {
+    const wrapper = mount(RiskControlView, {
+      props: { embedded },
+      global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-test="app-layout"]').exists()).toBe(!embedded)
+    expect(wrapper.text()).toContain('admin.riskControl.title')
+    wrapper.unmount()
   })
 
   it.each(['openai', 'typesafe'] as const)('shows the selected draft engine keys while %s remains active', async (activeEngine) => {

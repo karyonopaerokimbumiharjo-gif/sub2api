@@ -992,14 +992,17 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReports
 
 	ctx := withOpenAIQuotaAutoPauseSettings(context.Background(), OpsOpenAIAccountQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(101201)
+	// These reason-summary fixtures represent execution-validated scheduler projections.
+	executionValid := true
 	accounts := []Account{
 		{
-			ID:          38101,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 1,
+			ID:                      38101,
+			SchedulerExecutionValid: &executionValid,
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Schedulable:             true,
+			Concurrency:             1,
 			Extra: map[string]any{
 				"codex_7d_used_percent":  95.0,
 				"codex_7d_reset_at":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),
@@ -1031,16 +1034,18 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorReports
 
 	ctx := context.Background()
 	groupID := int64(101202)
+	executionValid := true
 	// OAuth account with empty model_mapping: foreign-family models (grok-*)
 	// are not servable by Codex upstream (#3662) and are dropped by the filter.
 	accounts := []Account{
 		{
-			ID:          38111,
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 1,
+			ID:                      38111,
+			SchedulerExecutionValid: &executionValid,
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Schedulable:             true,
+			Concurrency:             1,
 		},
 	}
 	svc := &OpenAIGatewayService{
@@ -1065,13 +1070,15 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_NoAvailableErrorAggrega
 
 	ctx := withOpenAIQuotaAutoPauseSettings(context.Background(), OpsOpenAIAccountQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(101203)
+	executionValid := true
 	quotaPaused := Account{
-		ID:          38121,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeOAuth,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
+		ID:                      38121,
+		SchedulerExecutionValid: &executionValid,
+		Platform:                PlatformOpenAI,
+		Type:                    AccountTypeOAuth,
+		Status:                  StatusActive,
+		Schedulable:             true,
+		Concurrency:             1,
 		Extra: map[string]any{
 			"codex_7d_used_percent":  95.0,
 			"codex_7d_reset_at":      time.Now().Add(24 * time.Hour).Format(time.RFC3339),

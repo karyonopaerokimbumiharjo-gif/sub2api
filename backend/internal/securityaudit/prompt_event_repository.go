@@ -15,18 +15,19 @@ import (
 )
 
 type EventFilter struct {
-	Decision   string     `json:"decision,omitempty"`
-	RiskLevel  string     `json:"risk_level,omitempty"`
-	Endpoint   string     `json:"endpoint,omitempty"`
-	GroupID    *int64     `json:"group_id,omitempty"`
-	UserID     *int64     `json:"user_id,omitempty"`
-	APIKeyID   *int64     `json:"api_key_id,omitempty"`
-	RequestID  string     `json:"request_id,omitempty"`
-	PromptHash string     `json:"prompt_hash,omitempty"`
-	Keyword    string     `json:"keyword,omitempty"`
-	StartAt    *time.Time `json:"start_at,omitempty"`
-	EndAt      *time.Time `json:"end_at,omitempty"`
-	Aggregate  bool       `json:"aggregate,omitempty"`
+	AuditSource string     `json:"audit_source,omitempty"`
+	Decision    string     `json:"decision,omitempty"`
+	RiskLevel   string     `json:"risk_level,omitempty"`
+	Endpoint    string     `json:"endpoint,omitempty"`
+	GroupID     *int64     `json:"group_id,omitempty"`
+	UserID      *int64     `json:"user_id,omitempty"`
+	APIKeyID    *int64     `json:"api_key_id,omitempty"`
+	RequestID   string     `json:"request_id,omitempty"`
+	PromptHash  string     `json:"prompt_hash,omitempty"`
+	Keyword     string     `json:"keyword,omitempty"`
+	StartAt     *time.Time `json:"start_at,omitempty"`
+	EndAt       *time.Time `json:"end_at,omitempty"`
+	Aggregate   bool       `json:"aggregate,omitempty"`
 }
 
 type EventPage struct {
@@ -62,6 +63,9 @@ type EventRepository interface {
 }
 
 func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilter, page, pageSize int) (*EventPage, error) {
+	if err := validateEventSource(filter.AuditSource); err != nil {
+		return nil, err
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -72,32 +76,38 @@ func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilte
 		pageSize = 100
 	}
 	where, args := buildEventWhere(filter, 1)
+	relation := unifiedAuditEventRelation(false)
 	var total int64
 	if filter.Aggregate {
 		countSQL := `SELECT COUNT(*) FROM (
-			SELECT 1 FROM prompt_audit_events e` + where + ` GROUP BY ` + promptAuditEventGroupBy("e") + `
+			SELECT 1 FROM ` + relation + ` e` + where + ` GROUP BY ` + promptAuditEventGroupBy("e") + `
 		) grouped`
 		if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
 			return nil, err
 		}
-	} else if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM prompt_audit_events e`+where, args...).Scan(&total); err != nil {
+	} else if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+relation+` e`+where, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 	queryArgs := append([]any(nil), args...)
 	limitIndex := len(queryArgs) + 1
 	queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
-	query := `SELECT ` + eventColumns("e") + ` FROM prompt_audit_events e` + where +
-		fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1)
+	// Materialize only the requested page before inspecting stored content.
+	// Content may be large TOAST values, so availability must not be calculated
+	// while counting, grouping, or sorting the complete event history.
+	query := `WITH selected AS MATERIALIZED (SELECT * FROM ` + relation + ` e` + where +
+		fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1) + `)
+		SELECT ` + pagedAuditEventColumns("e") + ` FROM selected e ORDER BY e.created_at DESC,e.id DESC`
 	if filter.Aggregate {
-		query = `WITH grouped AS (
+		query = `WITH events AS NOT MATERIALIZED (SELECT * FROM ` + relation + ` all_events), grouped AS (
 			SELECT (array_agg(e.id ORDER BY e.created_at DESC, e.id DESC))[1] AS id,
-				COUNT(*)::int AS duplicate_count
-			FROM prompt_audit_events e` + where + `
+				COUNT(*)::int AS duplicate_count,MAX(e.created_at) AS created_at
+			FROM events e` + where + `
 			GROUP BY ` + promptAuditEventGroupBy("e") + `
-		)
-		SELECT ` + eventColumns("e") + `,g.duplicate_count
-		FROM grouped g JOIN prompt_audit_events e ON e.id=g.id` +
-			fmt.Sprintf(` ORDER BY e.created_at DESC, e.id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1)
+		), selected AS MATERIALIZED (
+			SELECT id,duplicate_count,created_at FROM grouped` +
+			fmt.Sprintf(` ORDER BY created_at DESC,id DESC LIMIT $%d OFFSET $%d`, limitIndex, limitIndex+1) + `)
+		SELECT ` + pagedAuditEventColumns("e") + `,g.duplicate_count
+		FROM selected g JOIN events e ON e.id=g.id ORDER BY e.created_at DESC,e.id DESC`
 	}
 	rows, err := r.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -107,11 +117,7 @@ func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilte
 	items := make([]*Event, 0, pageSize)
 	for rows.Next() {
 		var event *Event
-		if filter.Aggregate {
-			event, err = scanAggregatedEvent(rows)
-		} else {
-			event, err = scanEvent(rows)
-		}
+		event, err = scanUnifiedEvent(rows, false, filter.Aggregate)
 		if err != nil {
 			return nil, err
 		}
@@ -128,6 +134,9 @@ func (r *PostgreSQLRepository) ListEvents(ctx context.Context, filter EventFilte
 }
 
 func (r *PostgreSQLRepository) GetEvent(ctx context.Context, id int64) (*Event, error) {
+	if id < 0 {
+		return r.getNativeEvent(ctx, id)
+	}
 	event, err := scanEvent(r.db.QueryRowContext(ctx, `SELECT `+eventDetailColumns("e")+` FROM prompt_audit_events e WHERE e.id=$1`, id), true)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrEventNotFound
@@ -140,6 +149,11 @@ func (r *PostgreSQLRepository) DeleteEvent(ctx context.Context, id int64) (*Dele
 }
 
 func (r *PostgreSQLRepository) DeleteEventsByIDs(ctx context.Context, ids []int64) (*DeleteResult, error) {
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, errors.New("native content moderation events are read-only in the unified event feed")
+		}
+	}
 	ids = canonicalInt64s(ids)
 	if len(ids) == 0 {
 		return &DeleteResult{}, nil
@@ -263,6 +277,9 @@ func FilterHash(filter EventFilter, snapshotMaxID int64) string {
 }
 
 func validateDeleteFilter(filter EventFilter) error {
+	if err := validateEventSource(filter.AuditSource); err != nil {
+		return err
+	}
 	if filter.StartAt == nil || filter.EndAt == nil || !filter.StartAt.Before(*filter.EndAt) {
 		return errors.New("prompt audit filter delete requires a valid explicit time range")
 	}
@@ -270,6 +287,7 @@ func validateDeleteFilter(filter EventFilter) error {
 }
 
 func canonicalEventFilter(filter EventFilter) EventFilter {
+	filter.AuditSource = strings.TrimSpace(strings.ToLower(filter.AuditSource))
 	filter.Decision = strings.TrimSpace(strings.ToLower(filter.Decision))
 	filter.RiskLevel = strings.TrimSpace(strings.ToLower(filter.RiskLevel))
 	filter.Endpoint = strings.TrimSpace(filter.Endpoint)
@@ -294,6 +312,9 @@ func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
 	add := func(clause string, value any) {
 		clauses = append(clauses, fmt.Sprintf(clause, firstIndex+len(args)))
 		args = append(args, value)
+	}
+	if filter.AuditSource != "" {
+		add(" AND ("+auditSourceSQL("e")+")=$%d", filter.AuditSource)
 	}
 	if filter.Decision != "" {
 		add(" AND e.decision=$%d", filter.Decision)
@@ -360,9 +381,13 @@ func scanAggregatedEvent(row rowScanner) (*Event, error) {
 }
 
 func scanPromptAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount bool) (*Event, error) {
+	return scanAuditEvent(row, withFullPrompt, withDuplicateCount, false)
+}
+
+func scanAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount, unified bool) (*Event, error) {
 	event := &Event{}
 	var userID, apiKeyID, groupID sql.NullInt64
-	var categories, intentCategories, contentCategories, matched, scores, evidence, outputCapture, policyReview []byte
+	var categories, intentCategories, contentCategories, matched, scores, evidence, outputCapture, policyReview, nativeMeta []byte
 	dest := []any{&event.ID, &event.JobID, &event.Snapshot.RequestID, &userID,
 		&event.Snapshot.UsernameSnapshot, &event.Snapshot.UserEmailSnapshot, &apiKeyID,
 		&event.Snapshot.APIKeyNameSnapshot, &groupID, &event.Snapshot.GroupName,
@@ -372,6 +397,9 @@ func scanPromptAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount boo
 		&event.RiskLevel, &event.Action, &categories, &intentCategories, &contentCategories, &matched, &scores, &evidence, &event.ScannerBackend,
 		&event.ScannerVersion, &event.GuardEndpointID, &event.PolicyID, &event.PolicyVersion,
 		&event.ConfigVersion, &event.ChunkTotal, &event.LatencyMS, &event.CreatedAt, &outputCapture, &policyReview}
+	if unified {
+		dest = append(dest, &event.ContentAvailability, &event.NativeAction, &event.NativeError, &nativeMeta)
+	}
 	if withFullPrompt {
 		dest = append(dest, &event.Snapshot.FullPrompt, &event.Snapshot.AuditedPrompt)
 	}
@@ -393,6 +421,9 @@ func scanPromptAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount boo
 	_ = json.Unmarshal(evidence, &event.ScannerEvidence)
 	_ = json.Unmarshal(outputCapture, &event.Snapshot.OutputCapture)
 	_ = json.Unmarshal(policyReview, &event.PolicyReview)
+	if len(nativeMeta) > 0 {
+		event.NativeEngineMeta = json.RawMessage(nativeMeta)
+	}
 	result := NormalizedResult{Decision: event.Decision, RiskLevel: event.RiskLevel, Action: event.Action,
 		Categories: event.Categories, IntentCategories: event.IntentCategories, ContentCategories: event.ContentCategories,
 		MatchedScanners: event.MatchedScanners, ScannerScores: event.ScannerScores,
@@ -403,9 +434,10 @@ func scanPromptAuditEvent(row rowScanner, withFullPrompt, withDuplicateCount boo
 }
 
 func promptAuditEventGroupBy(alias string) string {
-	return fmt.Sprintf(`COALESCE(NULLIF(%[1]s.task_fingerprint,''),%[1]s.prompt_hash),
+	return auditSourceSQL(alias) + "," + fmt.Sprintf(`CASE WHEN %[1]s.id<0 THEN 'content_moderation' ELSE 'prompt_audit' END,
+		COALESCE(NULLIF(%[1]s.task_fingerprint,''),NULLIF(%[1]s.prompt_hash,''),%[1]s.id::text),
 		COALESCE(%[1]s.user_id,0),%[1]s.audit_status,%[1]s.decision,%[1]s.risk_level,%[1]s.action,%[1]s.categories::text,
-		%[1]s.intent_categories::text,%[1]s.content_categories::text,
+		%[1]s.intent_categories::text,%[1]s.content_categories::text,%[1]s.scanner_backend,%[1]s.scanner_version,
 		CASE
 			WHEN %[1]s.stage='upstream_feedback' THEN 'upstream_policy'
 			WHEN %[1]s.stage='local_policy_cache' THEN 'local_cache'
@@ -417,6 +449,7 @@ func decoratePromptAuditEvent(event *Event) {
 	if event == nil {
 		return
 	}
+	decorateAuditEventSource(event)
 	if event.DuplicateCount < 1 {
 		event.DuplicateCount = 1
 	}
@@ -430,6 +463,14 @@ func decoratePromptAuditEvent(event *Event) {
 		return
 	}
 	switch strings.TrimSpace(event.Snapshot.Stage) {
+	case "native_moderation":
+		event.PolicySource = "native_content_moderation"
+		if len(event.Categories) > 0 {
+			event.PolicyCode = event.Categories[0]
+		}
+	case "native_hard_rules":
+		event.PolicySource = "native_hard_rules"
+		event.PolicyCode = event.PolicyID
 	case "audit_gap":
 		event.PolicySource = "audit_gap"
 		event.PolicyCode = "not_audited"

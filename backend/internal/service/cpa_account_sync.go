@@ -13,15 +13,18 @@ import (
 // files. An unchanged existing account still counts as updated: the import UI
 // uses that count to confirm that its auth file has a business account.
 type CPAAccountSyncResult struct {
-	Created    int `json:"created"`
-	Updated    int `json:"updated"`
-	Identities int `json:"identities"`
+	Created    int     `json:"created"`
+	Updated    int     `json:"updated"`
+	Identities int     `json:"identities"`
 	AccountIDs []int64 `json:"account_ids"`
 }
 
 type cpaAccountSyncCandidate struct {
 	credential CPACredentialSettings
 	existing   *Account
+	metadata   map[string]any
+	piRuntime  *Account
+	piOAuth    map[string]any
 }
 
 // SyncCPAAccounts reconciles the requested auth files without changing an
@@ -93,7 +96,7 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 			return nil, infraerrors.New(http.StatusConflict, "CPA_ACCOUNT_SYNC_IDENTITY_AMBIGUOUS", "多份 CPA 授权文件指向同一身份，请只选择其中一份")
 		}
 		seenIdentities[credential.Identity] = name
-		candidates = append(candidates, cpaAccountSyncCandidate{credential: credential})
+		candidates = append(candidates, cpaAccountSyncCandidate{credential: credential, metadata: metadata})
 	}
 
 	// Resolve every binding before writing. Exact auth ID wins over the
@@ -137,7 +140,13 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 			needCreate = true
 			continue
 		}
-		if account.Platform != PlatformOpenAI || account.Type != AccountTypeAPIKey || ValidateCPAAccount(account) != nil || account.GetOpenAIApiKey() == "" {
+		if account.UsesNativePiRuntime() {
+			runtime, oauth, err := s.preparePiReimport(ctx, account, candidates[i].metadata)
+			if err != nil {
+				return nil, err
+			}
+			candidates[i].piRuntime, candidates[i].piOAuth = runtime, oauth
+		} else if account.Platform != PlatformOpenAI || account.Type != AccountTypeAPIKey || ValidateCPAAccount(account) != nil || account.GetOpenAIApiKey() == "" {
 			return nil, infraerrors.New(http.StatusConflict, "CPA_ACCOUNT_SYNC_ACCOUNT_INVALID", "已有身份绑定的业务账号不是有效 CPA OpenAI 账号")
 		}
 		if previous, duplicate := plannedAccounts[account.ID]; duplicate && previous != credential.Name {
@@ -174,6 +183,11 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 			OpenAIQuotaViaCompatibleUpstreamExtraKey: true,
 		}
 		if candidate.existing != nil {
+			if candidate.piRuntime != nil {
+				if err := s.persistPiReimport(ctx, candidate.piRuntime, candidate.piOAuth); err != nil {
+					return nil, err
+				}
+			}
 			updates := make(map[string]any, len(binding))
 			for key, value := range binding {
 				if candidate.existing.Extra[key] != value {
@@ -196,7 +210,7 @@ func (s *OpenAIQuotaService) SyncCPAAccounts(ctx context.Context, authNames []st
 		account := &Account{
 			Name: name, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 			Credentials: map[string]any{"base_url": cpapolicy.BaseURL, "api_key": apiKey},
-			Extra:       binding, Concurrency: 1, Status: StatusDisabled,
+			Extra:       binding, Concurrency: 5, Status: StatusDisabled,
 			Schedulable: false, AutoPauseOnExpired: true,
 		}
 		if err := s.accountRepo.Create(ctx, account); err != nil {

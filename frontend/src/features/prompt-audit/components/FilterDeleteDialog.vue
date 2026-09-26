@@ -2,6 +2,14 @@
   <BaseDialog :show="show" :title="t('admin.promptAudit.events.filterDeleteDialogTitle')" width="wide" @close="$emit('close')">
     <div class="space-y-5 text-sm">
       <p class="text-gray-500 dark:text-dark-300">{{ t('admin.promptAudit.events.filterDeleteDialogDesc') }}</p>
+      <p class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900 dark:text-dark-300">{{ t('admin.promptAudit.events.nativeDeleteScope') }}</p>
+      <label class="block text-xs text-gray-600 dark:text-dark-200">
+        <span>{{ t('admin.promptAudit.events.auditSource') }}</span>
+        <select v-model="local.audit_source" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.auditSource')" data-test="delete-audit-source" @change="criteriaChanged">
+          <option value="">{{ t('common.all') }}</option>
+          <option v-for="source in ['legacy', 'native', 'audit_gap', 'upstream']" :key="source" :value="source">{{ t(`admin.promptAudit.events.auditSources.${source}`) }}</option>
+        </select>
+      </label>
 
       <fieldset>
         <legend class="text-xs font-medium text-gray-600 dark:text-dark-200">{{ t('admin.promptAudit.events.filterTimeRange') }}</legend>

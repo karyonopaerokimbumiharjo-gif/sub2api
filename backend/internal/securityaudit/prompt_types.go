@@ -211,13 +211,14 @@ type PromptDecision struct {
 }
 
 type LegacyDecision struct {
-	Allowed    bool   `json:"allowed"`
-	Blocked    bool   `json:"blocked"`
-	Flagged    bool   `json:"flagged"`
-	Message    string `json:"message"`
-	StatusCode int    `json:"status_code"`
-	ErrorCode  string `json:"error_code"`
-	Action     string `json:"action"`
+	AuditLatencyMS *int   `json:"audit_latency_ms,omitempty"`
+	Allowed        bool   `json:"allowed"`
+	Blocked        bool   `json:"blocked"`
+	Flagged        bool   `json:"flagged"`
+	Message        string `json:"message"`
+	StatusCode     int    `json:"status_code"`
+	ErrorCode      string `json:"error_code"`
+	Action         string `json:"action"`
 }
 
 type Decision struct {

@@ -102,6 +102,7 @@ const DataTableStub = {
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
         <slot name="cell-latency" :row="row" />
+        <slot name="cell-audit" :row="row" />
         <slot name="cell-request_id" :row="row" />
         <slot name="cell-upstream_request_id" :row="row" />
       </div>
@@ -138,11 +139,31 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable prompt audit latency', () => {
-  it.each([true,false])('shows output TPS for both audiences (%s)', (showAuditLatencyComparison) => {
+  it.each([
+    [undefined, undefined, 'unknown'],
+    [undefined, 100, 'timed'],
+    [{source:'native', status:'audited', result:'allow', model:'jev-test'}, 100, 'passed'],
+    [{source:'native', status:'error', result:'error'}, 100, 'error'],
+    [{source:'custom', status:'gap', result:'pass'}, 0, 'notAudited'],
+    [{source:'custom', status:'partial', result:'pass'}, 100, 'partial'],
+  ])('shows evidence without inferring a verdict from latency', (audit, latency, result) => {
+    const wrapper = mount(UsageTable, { props: { data: [{...baseImageRow, audit, prompt_audit_latency_ms: latency}], columns: [] }, global: {stubs:{DataTable:DataTableStub,EmptyState:true,Icon:true,Teleport:true}} })
+    expect(wrapper.get('[data-testid=usage-audit]').text()).toContain(`usage.auditResult.${result}`)
+    if (audit?.source === 'native') expect(wrapper.get('[data-testid=usage-audit]').text()).toContain('usage.auditSource.native')
+  })
+
+  it.each([true,false])('shows average output TPS for both audiences (%s)', (showAuditLatencyComparison) => {
     const row={...baseImageRow,request_id:'tps',model:'gpt-6-astra',billing_mode:'token',image_count:0,stream:true,output_tokens:100,duration_ms:2500,first_token_ms:500}
     const wrapper=mount(UsageTable,{props:{data:[row],loading:false,columns:[],showAuditLatencyComparison},global:{stubs:{DataTable:DataTableStub,EmptyState:true,Icon:true,Teleport:true}}})
-    expect(wrapper.get('[data-testid="usage-tps"]').text()).toBe('50.0 tok/s')
+    expect(wrapper.get('[data-testid="usage-tps"]').text()).toBe('40.0 tok/s')
+    const timingGrid = wrapper.get('[data-testid="usage-tps"]').element.parentElement!
+    expect(timingGrid.lastElementChild?.getAttribute('data-testid')).toBe('usage-tps')
     expect(wrapper.find('[data-testid="usage-vps-latency"]').exists()).toBe(false)
+  })
+  it.each([true, false])('does not show inflated TPS for a short production response (%s)', (showAuditLatencyComparison) => {
+    const row = { ...baseImageRow, request_id: 'buffered-tps', model: 'gpt-6-astra', billing_mode: 'token', image_count: 0, stream: true, output_tokens: 6, duration_ms: 1846, first_token_ms: 1838 }
+    const wrapper = mount(UsageTable, { props: { data: [row], loading: false, columns: [], showAuditLatencyComparison }, global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } } })
+    expect(wrapper.get('[data-testid="usage-tps"]').text()).toBe('3.3 tok/s')
   })
   it('does not invent TPS when token timing is missing', () => {
     const wrapper=mount(UsageTable,{props:{data:[{...baseImageRow,request_id:'tps-history',image_count:0}],loading:false,columns:[]},global:{stubs:{DataTable:DataTableStub,EmptyState:true,Icon:true,Teleport:true}}})

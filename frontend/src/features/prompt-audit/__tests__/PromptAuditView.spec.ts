@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import type { PromptAuditConfig, PromptAuditRuntime } from '../types'
+import type { PromptAdaptiveSample, PromptAuditConfig, PromptAuditEvent, PromptAuditRuntime } from '../types'
 import { SCANNER_CATALOG } from '../viewModel'
 import PromptAuditView from '../PromptAuditView.vue'
 
@@ -10,11 +10,15 @@ const mocks = vi.hoisted(() => ({
   getEvent: vi.fn(), deleteEvent: vi.fn(), batchDeleteEvents: vi.fn(), previewDelete: vi.fn(), deleteEventsByFilter: vi.fn(), listGroups: vi.fn(),
   listOpenAIOAuthAccounts: vi.fn(), listAdaptiveSamples: vi.fn(), reviewAdaptiveSample: vi.fn(),
   listPolicyVersions: vi.fn(), rollbackPolicy: vi.fn(),
-  showSuccess: vi.fn(), showError: vi.fn(),
+  showSuccess: vi.fn(), showError: vi.fn(), updateSettings: vi.fn(), fetchPublicSettings: vi.fn(),
 }))
 
+const layoutState = vi.hoisted(() => ({ sidebarCollapsed: false, riskControlEnabled: true, tab: '' }))
+vi.mock('vue-router', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-router')>(), useRoute: () => ({ query: { tab: layoutState.tab } }) }))
+vi.mock('@/api/admin/settings', async (importOriginal) => ({ ...await importOriginal<typeof import('@/api/admin/settings')>(), updateSettings: mocks.updateSettings }))
+
 vi.mock('../api', () => ({ default: mocks }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ get sidebarCollapsed() { return layoutState.sidebarCollapsed }, get cachedPublicSettings() { return { risk_control_enabled: layoutState.riskControlEnabled } }, fetchPublicSettings: mocks.fetchPublicSettings, showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return { ...actual, useI18n: () => ({ locale: ref('en'), t: (key: string, params?: Record<string, unknown>) => key.replace(/\{(\w+)\}/g, (_, token) => String(params?.[token] ?? `{${token}}`)) }) }
@@ -71,13 +75,33 @@ const FilterDeleteStub = defineComponent({
   template: '<div v-if="show" data-test="filter-delete-dialog"><button data-test="dialog-preview" @click="$emit(\'preview\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">run</button><button data-test="dialog-confirm" @click="$emit(\'confirm\', { ...initialFilters, start_at: \'2026-07-15T00:00\', end_at: \'2026-07-16T00:00\' })">confirm</button><span data-test="dialog-preview-state">{{ preview ? preview.matched_count : \'none\' }}</span></div>',
 })
 
-function mountView() {
+function mountView(componentStubs: Record<string, boolean> = {}) {
   return mount(PromptAuditView, {
-    global: { stubs: { RiskControlView: { template: '<div />' }, AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, PolicyHistory: PolicyHistoryStub, EventWorkspace: EventsStub, AdaptiveWorkspace: AdaptiveStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub } },
+    global: { stubs: { RiskControlView: { template: '<div />' }, AppLayout: AppLayoutStub, RuntimeOverview: RuntimeStub, EndpointPool: EndpointStub, PolicyPanel: PolicyStub, PolicyHistory: PolicyHistoryStub, EventWorkspace: EventsStub, AdaptiveWorkspace: AdaptiveStub, EventDetailDialog: DetailStub, FilterDeleteDialog: FilterDeleteStub, ConfirmDialog: ConfirmStub, ...componentStubs } },
   })
 }
 
 describe('PromptAuditView', () => {
+  it('offers native auditing before configuration tabs and opens a direct native link', async () => {
+    layoutState.tab = 'native'
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-test=open-native-audit]').text()).toContain('Open native audit settings')
+    expect(wrapper.get('[data-test=tab-native]').attributes('aria-selected')).toBe('true')
+  })
+  it('lets administrators enable the global switch without changing audit policies', async () => {
+    layoutState.riskControlEnabled = false
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-test=audit-feature-disabled]').exists()).toBe(true)
+    await wrapper.get('[data-test=enable-audit-feature]').trigger('click')
+    await flushPromises()
+    expect(mocks.updateSettings).toHaveBeenCalledOnce()
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ risk_control_enabled: true })
+    expect(mocks.updateConfig).not.toHaveBeenCalled()
+    expect(mocks.fetchPublicSettings).toHaveBeenCalledWith(true)
+  })
+
   it('saves native audit selection without rewriting custom endpoints', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -89,6 +113,8 @@ describe('PromptAuditView', () => {
   })
 
   beforeEach(() => {
+    layoutState.riskControlEnabled = true
+    layoutState.tab = ''
     Object.values(mocks).forEach((mock) => mock.mockReset())
     mocks.getConfig.mockResolvedValue(baseConfig())
     mocks.getRuntime.mockResolvedValue(runtime())
@@ -231,6 +257,57 @@ describe('PromptAuditView', () => {
     }))
   })
 
+  it('renders historical null adaptive categories without breaking the real event source filter', async () => {
+    const sample = {
+      id: 19, status: 'shadow_failed', review_status: 'pending', stage: 'http', audit_subject: 'input', policy_version: 1,
+      config_version: 1, primary_endpoint_id: '', primary_decision: 'pass', shadow_endpoint_id: '', shadow_decision: '',
+      primary_intent_categories: null, primary_content_categories: null, shadow_intent_categories: null,
+      shadow_content_categories: null, updated_at: '2026-09-26T00:00:00Z', occurrence_count: 1, full_prompt: '', redacted_preview: '',
+    } as unknown as PromptAdaptiveSample
+    mocks.listAdaptiveSamples.mockResolvedValue({ items: [sample], total: 1, page: 1, page_size: 20, pages: 1 })
+    const event: PromptAuditEvent = {
+      id: -7, job_id: 0, audit_source: 'native', event_origin: 'content_moderation', audit_status: 'completed',
+      decision: 'pass', risk_level: 'low', action: 'Allow', categories: [], intent_categories: [], content_categories: [],
+      matched_scanners: [], scanner_scores: {}, scanner_evidence: {}, scanner_backend: 'native-moderation', scanner_version: '',
+      guard_endpoint_id: '', policy_id: '', policy_version: 0, config_version: 0, chunk_total: 1, latency_ms: 1,
+      issue_summaries: [], created_at: '2026-09-26T00:00:00Z', snapshot: {
+        request_id: 'native-7', user_id: 1, username: '', user_email: '', api_key_id: 1, api_key_name: '', group_name: '',
+        provider: 'openai', endpoint: '/v1/responses', protocol: 'openai_responses', model: 'test', prompt_hash: '',
+        redacted_preview: '', full_prompt: '', prompt_length: 0, message_count: 0, stage: 'native_moderation',
+      },
+    }
+    mocks.listEvents.mockImplementation(async filters => ({
+      items: [filters.audit_source === 'legacy' ? { ...event, id: 7, audit_source: 'legacy', event_origin: 'prompt_audit' } : event],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    }))
+    const wrapper = mountView({ EventWorkspace: false, AdaptiveWorkspace: false })
+    await flushPromises()
+    expect(wrapper.get('[data-test="event--7"] [data-test="event-audit-source"]').text()).toContain('auditSources.native')
+    expect(wrapper.get('[data-test="adaptive-sample-19"]').text()).toContain('None')
+    await wrapper.get('[data-test="audit-source-filter"]').setValue('legacy')
+    await wrapper.get('[data-test="tab-panel-events"] form').trigger('submit')
+    await flushPromises()
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(expect.objectContaining({ audit_source: 'legacy' }), 1, 20)
+    expect(wrapper.find('[data-test="event--7"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="event-7"] [data-test="event-audit-source"]').text()).toContain('auditSources.legacy')
+  })
+
+  it('preserves the applied audit source through pagination and opens native event details by their signed ID', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const events = wrapper.getComponent(EventsStub)
+    events.vm.$emit('search', { ...events.props('filters'), audit_source: 'native' })
+    await flushPromises()
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(expect.objectContaining({ audit_source: 'native' }), 1, 20)
+    events.vm.$emit('filters-change', { ...events.props('filters'), audit_source: 'legacy' })
+    events.vm.$emit('page', 2)
+    await flushPromises()
+    expect(mocks.listEvents).toHaveBeenLastCalledWith(expect.objectContaining({ audit_source: 'native' }), 2, 20)
+    events.vm.$emit('view', -7)
+    await flushPromises()
+    expect(mocks.getEvent).toHaveBeenLastCalledWith(-7)
+  })
+
   it('reports real probe progress/results and invalidates filter confirmation when filters change', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -253,6 +330,18 @@ describe('PromptAuditView', () => {
     await flushPromises()
     expect(wrapper.find('[data-test="filter-delete-dialog"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="dialog-preview-state"]').text()).toBe('none')
+  })
+
+  it.each([false, true])('aligns the fixed save surface when sidebarCollapsed is %s', async (collapsed) => {
+    layoutState.sidebarCollapsed = collapsed
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="tab-config"]').trigger('click')
+    const bar = wrapper.get('[data-test="audit-save-bar"]')
+    expect(bar.classes()).toContain(collapsed ? 'lg:left-[72px]' : 'lg:left-64')
+    expect(bar.classes()).not.toContain(collapsed ? 'lg:left-64' : 'lg:left-[72px]')
+    wrapper.unmount()
+    layoutState.sidebarCollapsed = false
   })
 
   it('uses native labeled switches and a responsive fixed save surface', async () => {

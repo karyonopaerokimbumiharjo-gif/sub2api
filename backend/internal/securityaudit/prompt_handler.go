@@ -148,7 +148,7 @@ func (h *PromptAdminHandler) ListEvents(c *gin.Context) {
 
 func (h *PromptAdminHandler) GetEvent(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
+	if err != nil || id == 0 || id == -1<<63 {
 		response.ErrorFrom(c, infraerrors.BadRequest("prompt_audit_invalid_event_id", "事件 ID 无效"))
 		return
 	}
@@ -391,9 +391,13 @@ func eventFilterFromQuery(c *gin.Context) (EventFilter, error) {
 		return EventFilter{}, err
 	}
 	filter := EventFilter{
-		Decision: c.Query("decision"), RiskLevel: c.Query("risk_level"), Endpoint: c.Query("endpoint"),
+		AuditSource: c.Query("audit_source"),
+		Decision:    c.Query("decision"), RiskLevel: c.Query("risk_level"), Endpoint: c.Query("endpoint"),
 		GroupID: groupID, UserID: userID, APIKeyID: apiKeyID, RequestID: c.Query("request_id"),
 		PromptHash: c.Query("prompt_hash"), Keyword: c.Query("keyword"),
+	}
+	if err := validateEventSource(filter.AuditSource); err != nil {
+		return EventFilter{}, infraerrors.BadRequest("prompt_audit_invalid_source", "审核来源无效")
 	}
 	if value := strings.TrimSpace(c.Query("aggregate")); value != "" {
 		aggregate, parseErr := strconv.ParseBool(value)

@@ -6,6 +6,16 @@ import type { Proxy } from '@/types'
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ locale: { value: 'zh' } }) }))
 
 describe('CPA credential settings', () => {
+  it('keeps a missing saved proxy visible without silently selecting another one', () => {
+    const modelValue = {name:'test.json', disabled:false, proxy_id:9, priority:0, weight:1, request_retry:0}
+    const wrapper = mount(CPARuntimeFields, {props:{modelValue, proxies:[]}})
+    expect(wrapper.get('option[value="9"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('option[value="9"]').text()).toContain('不可用或未加载')
+    expect((wrapper.get('select').element as HTMLSelectElement).value).toBe('9')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.get('option[value="0"]').text()).toContain('使用 CPA 默认出口')
+  })
+
   it('only offers supported proxies and emits a full runtime update', async () => {
     const modelValue = { name: 'test.json', disabled: false, proxy_id: null, priority: 2, weight: 1, request_retry: 0 }
     const proxies = [

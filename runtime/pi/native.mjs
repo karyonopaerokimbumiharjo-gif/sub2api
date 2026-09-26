@@ -52,20 +52,28 @@ export function scopedSession(secret,owner,credential,account,model,session) {
 }
 // Keep the accepted subset aligned with the public Responses ingress. The
 // gateway strips backend-owned continuation/metadata fields before this
-// function. max_output_tokens is forwarded unchanged so CPA and Pi expose the
-// same output-limit semantics to callers.
-const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store','max_output_tokens']);
+// function. Output limits and sampling options unsupported by the Codex
+// upstream are omitted, matching the gateway's existing OAuth compatibility.
+const ignoredCodexOptions=new Set(['max_output_tokens','max_completion_tokens','temperature','top_p','frequency_penalty','presence_penalty']);
+const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store']);
 export function nativeBody(request,defaults) {
  if(!request||typeof request!=='object'||Array.isArray(request))throw Error('invalid_responses_request');
- for(const key of Object.keys(request))if(!allowed.has(key))throw Error(`unsupported_pi_field:${key}`);
+ for(const key of Object.keys(request))if(!allowed.has(key)&&!ignoredCodexOptions.has(key))throw Error(`unsupported_pi_field:${key}`);
  if(typeof request.model!=='string'||!request.model)throw Error('model_required');
  if(!Array.isArray(request.input)&&typeof request.input!=='string')throw Error('input_required');
  if(request.tools?.some(tool=>tool.type!=='function'))throw Error('unsupported_pi_tool_type');
  const input=typeof request.input==='string'?[{role:'user',content:[{type:'input_text',text:request.input}]}]:request.input;
- return {...defaults,...structuredClone(request),input:structuredClone(input),store:false,stream:true,
+ const body={...defaults,...structuredClone(request),input:structuredClone(input),store:false,stream:true,
   instructions:request.instructions||defaults.instructions,
   include:[...new Set(['reasoning.encrypted_content',...(request.include||[])])],
   prompt_cache_key:defaults.prompt_cache_key};
+ // The SDK defaults its synthetic reasoning model to effort=none. Public
+ // Responses callers can omit this option, and models such as Astra reject
+ // that invented value. Let the upstream choose its default while preserving
+ // every explicitly supplied reasoning preference.
+ if(request.reasoning==null)delete body.reasoning;
+ for(const key of ignoredCodexOptions)delete body[key];
+ return body;
 }
 export async function runNative({request,accessToken,accountId,ownerId,credentialId,sessionId,sessionSecret,
  transport='sse',signal,onBytes,onHeaders=()=>{},baseUrl='https://chatgpt.com/backend-api',fetchImpl=fetch}) {
@@ -90,7 +98,9 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
   await active.run(state,async()=>{
    const contextMessages=[{role:'system',content:request.instructions||'You are a helpful assistant.',timestamp:0}];
    const response=stream(model,{messages:contextMessages},
-    {apiKey:accessToken,sessionId:scoped,transport,signal,maxRetries:0,timeoutMs:90000,websocketConnectTimeoutMs:15000,
+    // Runtime owns separate header and idle policies. SDK timeoutMs also controls
+    // WebSocket idle reads, so using it would couple otherwise distinct limits.
+    {apiKey:accessToken,sessionId:scoped,transport,signal,maxRetries:0,timeoutMs:0,websocketConnectTimeoutMs:15000,
      onPayload:defaults=>nativeBody(request,defaults),
      fetch:async(url,init)=>{
       // Native SDK has constructed the headers; inspect only redacted evidence.

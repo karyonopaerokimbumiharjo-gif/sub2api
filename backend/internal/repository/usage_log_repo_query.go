@@ -19,9 +19,17 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-const usageLogPromptAuditLatencySelectExpression = "COALESCE(usage_logs.prompt_audit_latency_ms, (SELECT pae.latency_ms FROM prompt_audit_events pae WHERE pae.request_id = usage_logs.request_id AND pae.api_key_id = usage_logs.api_key_id ORDER BY pae.created_at DESC, pae.id DESC LIMIT 1)) AS prompt_audit_latency_ms"
+const usageLogPromptAuditLatencySelectExpression = "COALESCE(usage_logs.prompt_audit_latency_ms, (SELECT pae.latency_ms FROM prompt_audit_events pae WHERE pae.request_id = usage_logs.request_id AND pae.api_key_id = usage_logs.api_key_id AND pae.audit_status NOT IN ('gap', 'bypass') ORDER BY pae.created_at DESC, pae.id DESC LIMIT 1), (SELECT cml.upstream_latency_ms FROM content_moderation_logs cml WHERE cml.request_id = usage_logs.request_id AND cml.api_key_id = usage_logs.api_key_id AND usage_logs.request_id <> '' ORDER BY cml.created_at DESC, cml.id DESC LIMIT 1)) AS prompt_audit_latency_ms"
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, requested_reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, upstream_request_id, session_id, native_compaction_v2, " + usageLogPromptAuditLatencySelectExpression + ", vps_latency_ms, created_at"
+const usageLogAuditSelectExpression = `(SELECT jsonb_build_object('source', audit.source, 'status', audit.status, 'result', audit.result, 'engine', audit.engine, 'model', audit.model, 'latency_ms', audit.latency_ms) FROM (
+ SELECT 'custom' AS source, pae.audit_status AS status, pae.decision AS result, pae.scanner_backend AS engine, pae.scanner_version AS model, pae.latency_ms, pae.created_at, pae.id
+ FROM prompt_audit_events pae WHERE pae.request_id = usage_logs.request_id AND pae.api_key_id = usage_logs.api_key_id AND usage_logs.request_id <> ''
+ UNION ALL
+ SELECT 'native' AS source, CASE WHEN cml.action = 'error' THEN 'error' ELSE 'audited' END AS status, CASE WHEN cml.flagged AND cml.action = 'allow' THEN 'flag' ELSE cml.action END AS result, COALESCE(cml.engine_meta->>'engine', 'openai') AS engine, COALESCE(cml.engine_meta->>'model', '') AS model, cml.upstream_latency_ms AS latency_ms, cml.created_at, cml.id
+ FROM content_moderation_logs cml WHERE cml.request_id = usage_logs.request_id AND cml.api_key_id = usage_logs.api_key_id AND usage_logs.request_id <> ''
+) audit ORDER BY (audit.status IN ('gap', 'bypass')) ASC, audit.created_at DESC, audit.id DESC LIMIT 1) AS audit_summary`
+
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, requested_reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, upstream_request_id, session_id, native_compaction_v2, " + usageLogPromptAuditLatencySelectExpression + ", vps_latency_ms, " + usageLogAuditSelectExpression + ", created_at"
 
 func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (log *service.UsageLog, err error) {
 	query := "SELECT " + usageLogSelectColumns + " FROM usage_logs WHERE id = $1"
@@ -505,7 +513,8 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		sessionID                 sql.NullString
 		nativeCompactionV2        bool
 		promptAuditLatencyMs      sql.NullInt64
-		vpsLatencyMs sql.NullInt64
+		vpsLatencyMs              sql.NullInt64
+		auditSummary              sql.NullString
 		createdAt                 time.Time
 	)
 
@@ -574,6 +583,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&nativeCompactionV2,
 		&promptAuditLatencyMs,
 		&vpsLatencyMs,
+		&auditSummary,
 		&createdAt,
 	); err != nil {
 		return nil, err
@@ -712,7 +722,17 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		value := int(promptAuditLatencyMs.Int64)
 		log.PromptAuditLatencyMs = &value
 	}
-	if vpsLatencyMs.Valid { value := int(vpsLatencyMs.Int64); log.VPSLatencyMs = &value }
+	if vpsLatencyMs.Valid {
+		value := int(vpsLatencyMs.Int64)
+		log.VPSLatencyMs = &value
+	}
+	if auditSummary.Valid {
+		var audit service.UsageAudit
+		if err := json.Unmarshal([]byte(auditSummary.String), &audit); err != nil {
+			return nil, fmt.Errorf("decode usage audit metadata: %w", err)
+		}
+		log.Audit = &audit
+	}
 	if upstreamRequestID.Valid {
 		log.UpstreamRequestID = &upstreamRequestID.String
 	}

@@ -97,7 +97,7 @@ const CategoryLines = defineComponent({
     content: { type: Array as PropType<string[]>, required: true },
   },
   setup(props) {
-    const labels = (values: string[]) => values.length > 0 ? values.join(', ') : 'None'
+    const labels = (values: string[] | null | undefined) => Array.isArray(values) && values.length > 0 ? values.join(', ') : 'None'
     return () => h('div', { class: 'mt-2 space-y-1 text-xs text-gray-600 dark:text-dark-300' }, [
       h('p', `${t('admin.promptAudit.samples.intent')}: ${labels(props.intent)}`),
       h('p', `${t('admin.promptAudit.samples.content')}: ${labels(props.content)}`),

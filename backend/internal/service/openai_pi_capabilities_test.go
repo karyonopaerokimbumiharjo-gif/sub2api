@@ -21,7 +21,8 @@ func TestPiSchedulerHonorsNativeCapabilities(t *testing.T) {
 	require.False(t, a.AllowsOpenAICompact())
 	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponses))
 	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityResponsesText))
-	for _, endpoint := range []OpenAIEndpointCapability{OpenAIEndpointCapabilityLive, OpenAIEndpointCapabilityAlphaSearch, OpenAIEndpointCapabilityEmbeddings, OpenAIEndpointCapabilityChatCompletions} {
+	require.True(t, a.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions))
+	for _, endpoint := range []OpenAIEndpointCapability{OpenAIEndpointCapabilityLive, OpenAIEndpointCapabilityAlphaSearch, OpenAIEndpointCapabilityEmbeddings} {
 		require.False(t, a.SupportsOpenAIEndpointCapability(endpoint), string(endpoint))
 	}
 	require.False(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))

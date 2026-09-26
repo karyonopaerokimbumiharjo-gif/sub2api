@@ -21,6 +21,14 @@ async function openSelector() {
 }
 
 describe('proxy connection tests', () => {
+  it('distinguishes an unavailable configured proxy from no proxy', async () => {
+    const wrapper = mount(ProxySelector, { props:{modelValue:9, proxies:[]}, global:{stubs:{Icon:true}} })
+    expect(wrapper.get('.select-value').text()).toBe('admin.accounts.proxyUnavailable')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    await wrapper.setProps({modelValue:null})
+    expect(wrapper.get('.select-value').text()).toBe('admin.accounts.noProxy')
+  })
+
   it('does not restart an individual test when a batch is started', async () => {
     let finish!: (result: object) => void
     testProxy.mockImplementation((id: number) => id === 1

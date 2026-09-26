@@ -1,5 +1,5 @@
 <template>
-  <component :is="embedded ? 'div' : AppLayout">
+  <component :is="props.embedded ? 'div' : AppLayout">
     <div class="space-y-6">
       <div v-if="loading" class="flex items-center justify-center py-16">
         <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600"></div>
@@ -23,6 +23,10 @@
           </div>
         </div>
 
+        <p v-if="!configForm.record_non_hits" class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-test="native-pass-records-disabled">
+          {{ t('admin.riskControl.recordNonHitsDisabled') }}
+          <button type="button" class="ml-2 underline" @click="openSettings(); activeSettingsTab = 'runtime'">{{ t('admin.riskControl.openSettings') }}</button>
+        </p>
         <p class="text-sm text-gray-600 dark:text-gray-300" data-test="active-audit-engine">
           {{ t('admin.riskControl.activeEngine', { engine: engineLabel(status?.engine ?? savedEngine) }) }}
         </p>
@@ -902,10 +906,10 @@
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700">
                 <div>
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">账号停用须人工复核</p>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">达到风险命中阈值后记录复核提示；模型分数或上游拒绝不会自动永久停用用户。请求级拦截仍正常生效。</p>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.riskControl.autoBan') }}</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.riskControl.autoBanHint') }}</p>
                 </div>
-
+                <Toggle v-model="configForm.auto_ban_enabled" />
               </div>
               <div class="flex items-center justify-between rounded-lg border border-gray-100 p-4 dark:border-dark-700 lg:col-span-2">
                 <div>
@@ -1147,7 +1151,6 @@
 </template>
 
 <script setup lang="ts">
-withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 import { computed, onMounted, onUnmounted, reactive, ref, toRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -1178,6 +1181,8 @@ import type { AdminGroup, Proxy, SelectOption } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTime as formatDateTimeValue } from '@/utils/format'
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 
 type SettingsTab = 'basic' | 'scope' | 'runtime' | 'response' | 'riskThresholds' | 'retention' | 'keywords'
 type WorkerSlotState = 'active' | 'idle' | 'disabled'
@@ -1283,7 +1288,7 @@ const configForm = reactive({
   block_status: 403,
   block_message: defaultBlockMessage(),
   email_on_hit: true,
-  auto_ban_enabled: false,
+  auto_ban_enabled: true,
   cyber_policy_exclude_from_ban_count: false,
   ban_threshold: 10,
   violation_window_hours: 720,
@@ -1810,7 +1815,7 @@ function applyConfig(config: ContentModerationConfig) {
   configForm.block_status = config.block_status || 403
   configForm.block_message = config.block_message || defaultBlockMessage()
   configForm.email_on_hit = config.email_on_hit ?? true
-  configForm.auto_ban_enabled = false
+  configForm.auto_ban_enabled = config.auto_ban_enabled ?? true
   configForm.cyber_policy_exclude_from_ban_count = config.cyber_policy_exclude_from_ban_count ?? false
   configForm.ban_threshold = config.ban_threshold || 10
   configForm.violation_window_hours = config.violation_window_hours || 720
@@ -1904,7 +1909,7 @@ async function saveConfig() {
       block_status: Number(configForm.block_status) || 403,
       block_message: configForm.block_message || defaultBlockMessage(),
       email_on_hit: configForm.email_on_hit,
-      auto_ban_enabled: false,
+      auto_ban_enabled: configForm.auto_ban_enabled,
       cyber_policy_exclude_from_ban_count: configForm.cyber_policy_exclude_from_ban_count,
       ban_threshold: Number(configForm.ban_threshold) || 10,
       violation_window_hours: Number(configForm.violation_window_hours) || 720,

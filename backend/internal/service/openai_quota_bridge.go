@@ -83,7 +83,7 @@ type openAIQuotaBridgeIdentity struct {
 }
 
 type openAIQuotaBridgeAPICallRequest struct {
-	ProxyURL string `json:"proxy_url,omitempty"`
+	ProxyURL  string            `json:"proxy_url,omitempty"`
 	AuthIndex string            `json:"auth_index"`
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
@@ -101,10 +101,11 @@ type openAIQuotaBridgeAPICallResponse struct {
 // credential has been persisted in the private CPA auth store. Tokens are never
 // echoed back to the handler or browser.
 type OpenAICPAImportResult struct {
-	AuthName          string `json:"auth_name"`
-	Email             string `json:"email"`
-	BridgeAccountID   int64  `json:"bridge_account_id"`
-	ReplacedBoundAuth bool   `json:"replaced_bound_auth"`
+	AccountIDs        []int64 `json:"account_ids,omitempty"`
+	AuthName          string  `json:"auth_name"`
+	Email             string  `json:"email"`
+	BridgeAccountID   int64   `json:"bridge_account_id"`
+	ReplacedBoundAuth bool    `json:"replaced_bound_auth"`
 }
 
 // cpaReuseAuthNameKey is an internal hand-off from the backend-switch
@@ -117,11 +118,23 @@ type openAICPAUploadResponse struct {
 }
 
 // CPA versions may ignore the name query and return the whole pool. Always
-// select the exact file locally, including quota reads after a second import.
+// select the exact native file locally, including quota reads after a second
+// import. Plugin-derived auths can share its name but have a different provider.
 func matchingCPAAuth(files []openAIQuotaBridgeAuthFile, name string) (openAIQuotaBridgeAuthFile, error) {
+	return matchingCPAProviderAuth(files, name, "codex")
+}
+
+func matchingCPAProviderAuth(files []openAIQuotaBridgeAuthFile, name, expectedProvider string) (openAIQuotaBridgeAuthFile, error) {
 	var match openAIQuotaBridgeAuthFile
 	count := 0
 	for _, file := range files {
+		provider := strings.TrimSpace(file.Provider)
+		if provider == "" {
+			provider = strings.TrimSpace(file.Type)
+		}
+		if provider != "" && !strings.EqualFold(provider, expectedProvider) {
+			continue
+		}
 		if file.Name == name || file.ID == name {
 			match, count = file, count+1
 		}
@@ -207,10 +220,14 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 		input := *runtime
 		input.Name = openAICPAAuthFileName(email, accountID)
 		fields, fieldErr := s.cpaRuntimeFields(ctx, input)
-		if fieldErr != nil { return nil, fieldErr }
+		if fieldErr != nil {
+			return nil, fieldErr
+		}
 		proxyURL, _ = fields["proxy_url"].(string)
 	}
-	if err := preflightCPAImport(ctx, config, accessToken, accountID, proxyURL); err != nil { return nil, err }
+	if err := preflightCPAImport(ctx, config, accessToken, accountID, proxyURL); err != nil {
+		return nil, err
+	}
 
 	var boundName, boundEmail string
 	var bridgeID int64
@@ -280,6 +297,7 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 	if err := preserveCPAImportRuntime(ctx, config, authName, payload); err != nil {
 		return nil, err
 	}
+	applyCPAUserImportProxyDefault(ctx, payload, runtime)
 
 	if runtime != nil {
 		input := *runtime
@@ -336,7 +354,7 @@ func (s *OpenAIQuotaService) ImportOAuthCredentialsToCPAWithRuntime(ctx context.
 		return nil, infraerrors.New(http.StatusBadGateway, "OPENAI_CPA_IMPORT_VERIFY_FAILED", "CPA imported OAuth identity did not pass verification")
 	}
 
-	if runtime != nil {
+	if runtime != nil || isCPAUserImport(ctx) {
 		if err := verifyCPAImportedRuntime(ctx, config, authName, payload); err != nil {
 			return nil, err
 		}

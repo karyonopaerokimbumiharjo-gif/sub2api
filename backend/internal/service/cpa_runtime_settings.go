@@ -22,6 +22,8 @@ type CPACredentialSettings struct {
 	Name              string  `json:"name"`
 	BusinessAccountID int64   `json:"business_account_id,omitempty"`
 	BusinessStatus    string  `json:"business_status,omitempty"`
+	BusinessBackend   string  `json:"business_backend,omitempty"`
+	CPARoutingEnabled bool    `json:"cpa_routing_enabled"`
 	Schedulable       bool    `json:"schedulable"`
 	GroupIDs          []int64 `json:"group_ids,omitempty"`
 	AuthID            string  `json:"auth_id"`

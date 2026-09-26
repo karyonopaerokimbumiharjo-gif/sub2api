@@ -13,6 +13,16 @@
         </div>
       </header>
 
+      <section class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 dark:border-dark-600 dark:bg-dark-800" data-test="audit-entry">
+        <div>
+          <p class="font-medium">{{ serverConfig?.native_audit_enabled ? nativeAuditCopy.active : nativeAuditCopy.title }}</p>
+          <p class="mt-1 text-sm text-gray-600 dark:text-dark-200">{{ nativeAuditCopy.entryHint }}</p>
+          <p v-if="appStore.cachedPublicSettings?.risk_control_enabled === false" class="mt-2 text-sm text-amber-700" data-test="audit-feature-disabled">{{ nativeAuditCopy.featureDisabled }}</p>
+        </div>
+        <button v-if="appStore.cachedPublicSettings?.risk_control_enabled === false" type="button" class="btn btn-primary" :disabled="enablingFeature" data-test="enable-audit-feature" @click="enableAuditFeature">{{ nativeAuditCopy.enableFeature }}</button>
+        <button type="button" class="btn btn-secondary" data-test="open-native-audit" @click="activeTab = 'native'">{{ nativeAuditCopy.open }}</button>
+      </section>
+
       <div v-if="loadErrors.config && !draft" role="alert" class="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900 dark:bg-red-950/30">
         <p class="text-sm text-red-700 dark:text-red-300">{{ loadErrors.config }}</p>
         <button type="button" class="btn btn-secondary btn-sm mt-3" @click="loadConfig">{{ t('admin.promptAudit.actions.retry') }}</button>
@@ -80,7 +90,7 @@
 
           <div v-show="activeTab === 'events'" data-test="tab-panel-events">
             <div
-              v-if="draft?.enabled && !draft.store_pass_events"
+              v-if="draft?.enabled && !draft.native_audit_enabled && !draft.store_pass_events"
               data-test="pass-events-disabled-notice"
               role="status"
               class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
@@ -132,7 +142,7 @@
       </template>
     </div>
 
-    <div v-if="draft && activeTab === 'config'" class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-12px_35px_rgba(15,23,42,0.08)] backdrop-blur dark:border-dark-700/80 dark:bg-dark-900/95 dark:shadow-[0_-12px_35px_rgba(0,0,0,0.35)] lg:left-64">
+    <div v-if="draft && activeTab === 'config'" data-test="audit-save-bar" class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-12px_35px_rgba(15,23,42,0.08)] backdrop-blur dark:border-dark-700/80 dark:bg-dark-900/95 dark:shadow-[0_-12px_35px_rgba(0,0,0,0.35)]" :class="appStore.sidebarCollapsed ? 'lg:left-[72px]' : 'lg:left-64'">
       <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
           <SaveToggle :label="t('admin.promptAudit.saveBar.enabled')" :model-value="draft.enabled" data-test="enabled-toggle" @update:model-value="setEnabled" />
@@ -232,8 +242,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, defineComponent, h, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { updateSettings } from '@/api/admin/settings'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import RiskControlView from '@/views/admin/RiskControlView.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -281,15 +293,32 @@ onBeforeUnmount(() => {
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events' | 'adaptive' | 'native'
 const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
+ active: '当前使用原生 Sub2API 审计', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: '风控总开关已关闭，当前不会执行审核；配置仍可查看和编辑。', enableFeature: '启用风控总开关',
  title: '原生 Sub2API 审计', toggle: '使用原生审计替代自定义模型审计',
  description: '仅使用下方原生 OpenAI / TypeSafe AI 审计，并保留本地破甲库与明确绕过规则；不再重复运行自定义 Jev、后台或输出模型审计。',
  warning: '请先配置并启用下方原生审计，再保存此开关。配置不可用时请求会被拒绝；关闭开关可恢复原自定义配置。'
 } : {
+ active: 'Native Sub2API auditing is selected', open: 'Open native audit settings', entryHint: 'Native enablement, engine, audit records and recording passed requests are in the Native Sub2API Audit tab.', featureDisabled: 'The risk-control switch is off. Auditing is disabled; configuration remains accessible.', enableFeature: 'Enable risk control',
  title: 'Native Sub2API Audit', toggle: 'Replace custom model audits with native auditing',
  description: 'Use native OpenAI / TypeSafe AI auditing plus local repository and explicit-bypass rules, without duplicate custom, background or output model audits.',
  warning: 'Configure and enable native auditing below before saving this switch. Unavailable audit configuration rejects requests. Turn this off to restore custom settings.'
 })
+const route = useRoute()
 const activeTab = ref<PromptAuditPageTab>('events')
+watch(() => route?.query.tab, (tab) => {
+  if (tab === 'native' || tab === 'config' || tab === 'events' || tab === 'adaptive') activeTab.value = tab
+}, { immediate: true })
+const enablingFeature = ref(false)
+async function enableAuditFeature() {
+  enablingFeature.value = true
+  try {
+    await updateSettings({ risk_control_enabled: true })
+    await appStore.fetchPublicSettings(true)
+    await loadRuntime()
+    appStore.showSuccess(t('admin.promptAudit.messages.saved'))
+  } catch (error) { appStore.showError(errorMessage(error, 'admin.promptAudit.errors.saveConfig')) }
+  finally { enablingFeature.value = false }
+}
 const pageTabs = computed(() => [
   { id: 'events' as const, label: t('admin.promptAudit.tabs.events') },
   { id: 'adaptive' as const, label: t('admin.promptAudit.tabs.adaptive') },

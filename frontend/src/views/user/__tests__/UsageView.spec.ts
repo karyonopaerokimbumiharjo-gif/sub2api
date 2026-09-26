@@ -149,7 +149,7 @@ const usageLog = {
   native_compaction_v2: false,
 }
 
-function mountUsageView() {
+function mountUsageView(realUsageTable = false) {
   return mount(UsageView, {
     global: {
       stubs: {
@@ -159,7 +159,7 @@ function mountUsageView() {
         DateRangePicker: true,
         Icon: true,
         UsageStatsCards: chartStub,
-        UsageTable: chartStub,
+        UsageTable: realUsageTable ? false : chartStub,
         UserErrorRequestsTable: chartStub,
         ModelDistributionChart: chartStub,
         GroupDistributionChart: chartStub,
@@ -214,6 +214,24 @@ describe('user UsageView', () => {
     listMyErrorRequests.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     list.mockResolvedValue({ items: [{ id: 1, name: 'demo-key' }], total: 1, page: 1, page_size: 100, pages: 1 })
     getAvailable.mockResolvedValue([{ id: 1, name: 'default' }])
+  })
+
+  it('never exposes audit results or an audit column option in the user view', async () => {
+    query.mockResolvedValue({
+      items: [{ ...usageLog, audit: { source: 'native', status: 'audited', result: 'allow', model: 'private-audit-model' } }],
+      total: 1,
+      pages: 1,
+    })
+    const wrapper = mountUsageView(true)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="usage-audit"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('private-audit-model')
+    const columnsButton = wrapper.findAll('button').find((button) => button.text().includes('Columns'))
+    expect(columnsButton).toBeDefined()
+    await columnsButton!.trigger('click')
+    expect(wrapper.find('[data-testid="usage-column-toggle-model"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="usage-column-toggle-audit"]').exists()).toBe(false)
   })
 
   it('loads logs, stats, model stats, and snapshot on first render', async () => {
@@ -398,8 +416,8 @@ describe('user UsageView', () => {
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
     expect(csvContent.slice(1)).toBe([
-      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms),TPS (tok/s)',
-      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345,292.8',
+      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms),Average TPS (tok/s)',
+      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,-,,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345,292.8',
     ].join('\n'))
     expect(csvContent).toContain('IP Address')
     expect(csvContent).toContain('203.0.113.10')
@@ -413,6 +431,39 @@ describe('user UsageView', () => {
     window.URL.revokeObjectURL = originalRevokeObjectURL
     vi.unstubAllGlobals()
     clickSpy.mockRestore()
+  })
+
+  it('keeps formula-injection protection for dangerous exported values', async () => {
+    query.mockResolvedValue({
+      items: [{ ...usageLog, api_key: { name: '-1+1' } }],
+      total: 1,
+      pages: 1,
+    })
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    let csvContent = ''
+    const OriginalBlob = globalThis.Blob
+    vi.stubGlobal('Blob', vi.fn((parts: BlobPart[], options?: BlobPropertyBag) => {
+      csvContent = parts.map((part) => String(part)).join('')
+      return new OriginalBlob(parts, options)
+    }))
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn(() => 'blob:usage-export') as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    await (wrapper.vm as any).exportToCSV()
+
+    expect(csvContent).toContain(',"\'-1+1",gpt-5.4,-,')
+    expect(showSuccess).toHaveBeenCalled()
+
+    window.URL.createObjectURL = originalCreateObjectURL
+    window.URL.revokeObjectURL = originalRevokeObjectURL
+    vi.unstubAllGlobals()
+    clickSpy.mockRestore()
+    wrapper.unmount()
   })
 
   it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {

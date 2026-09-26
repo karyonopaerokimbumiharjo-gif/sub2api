@@ -58,6 +58,7 @@ func (s *OpenAIQuotaService) ImportCPAAuthFileWithRuntime(ctx context.Context, r
 	if err := preserveCPAImportRuntime(ctx, config, name, payload); err != nil {
 		return nil, err
 	}
+	applyCPAUserImportProxyDefault(ctx, payload, runtime)
 	if runtime != nil {
 		input := *runtime
 		input.Name = name
@@ -87,7 +88,7 @@ func (s *OpenAIQuotaService) ImportCPAAuthFileWithRuntime(ctx context.Context, r
 	if err := callOpenAIQuotaBridgeManagement(ctx, config, http.MethodGet, endpoint, nil, &files); err != nil {
 		return nil, err
 	}
-	auth, err := matchingCPAAuth(files.Files, name)
+	auth, err := matchingCPAProviderAuth(files.Files, name, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +96,7 @@ func (s *OpenAIQuotaService) ImportCPAAuthFileWithRuntime(ctx context.Context, r
 	if auth.Disabled != expectedDisabled || (!expectedDisabled && (auth.Unavailable || auth.Status != "active")) || !strings.EqualFold(auth.Email, email) {
 		return nil, infraerrors.New(http.StatusBadGateway, "CPA_IMPORT_VERIFY_FAILED", "CPA 文件已上传，但账号未通过可用性校验，请重新授权后重试")
 	}
-	if runtime != nil {
+	if runtime != nil || isCPAUserImport(ctx) {
 		if err := verifyCPAImportedRuntime(ctx, config, name, payload); err != nil {
 			return nil, err
 		}

@@ -20,6 +20,14 @@ var client = func() *http.Client {
 	return &http.Client{Transport: transport, Timeout: 130 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }()
 
+// Streaming response lifetime belongs to the gateway context and its configured
+// header/idle limits. A total http.Client timeout also kills healthy long turns.
+var streamingClient = func() *http.Client {
+	streaming := *client
+	streaming.Timeout = 0
+	return &streaming
+}()
+
 func Do(ctx context.Context, path string, payload any) (*http.Response, error) {
 	base := strings.TrimRight(os.Getenv("PI_RUNTIME_URL"), "/")
 	parsed, err := url.Parse(base)
@@ -52,6 +60,9 @@ func Do(ctx context.Context, path string, payload any) (*http.Response, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("Content-Type", "application/json")
+	if path == "/responses" {
+		return streamingClient.Do(req)
+	}
 	return client.Do(req)
 }
 func JSON(ctx context.Context, path string, payload, target any) error {

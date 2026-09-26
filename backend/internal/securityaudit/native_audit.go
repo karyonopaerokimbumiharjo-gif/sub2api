@@ -73,5 +73,6 @@ func (s *PromptService) EvaluateNativeHardRules(ctx context.Context, req Request
 	if result == nil {
 		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
+	snapshot.Stage = "native_hard_rules"
 	return s.evaluator.finishEvaluation(ctx, cfg, snapshot, result, true, start, snapshotLogFields(snapshot))
 }

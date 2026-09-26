@@ -14,12 +14,9 @@
           <AccountTableActions
             :loading="loading"
             @refresh="handleManualRefresh"
-            @create="openAccountImport('cpa')"
+            @create="openAccountImport()"
           >
             <template #after>
-              <button type="button" class="btn btn-secondary" data-testid="basispoints-authorize" @click="openAccountImport('basispoints')">
-                {{ locale.startsWith('zh') ? 'Excel / Basis Points 授权导入' : 'Authorize Excel / Basis Points' }}
-              </button>
 
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
@@ -439,7 +436,7 @@
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
               <button v-if="getOpenAIExecutionBackend(row)" type="button" class="btn btn-secondary text-xs" :disabled="executionEnabling === row.id" @click="handleExecutionEnabled(row)">{{ row.status === 'active' ? '停用账号' : '启用账号' }}</button>
-              <button v-if="row.extra?.cpa_identity" class="btn btn-secondary text-xs" @click="selectedCPAAuth = String(row.extra.openai_quota_bridge_auth_name || ''); showCPA = true">授权 / 出口</button>
+              <button v-if="row.extra?.cpa_identity" class="btn btn-secondary text-xs" @click="selectedCPAAuth = String(row.extra.openai_quota_bridge_auth_name || ''); showCPA = true">{{ getOpenAIExecutionBackend(row) === 'pi' ? text('保存的 CPA 配置', 'Saved CPA settings') : text('授权 / CPA 出口', 'Authorization / CPA egress') }}</button>
               <button v-else-if="getOpenAIExecutionBackend(row) === 'pi'" class="btn btn-secondary text-xs" @click="handleReAuth(row)">{{ text('重新授权', 'Reauthorize') }}</button>
               <button
                 type="button"
@@ -478,7 +475,7 @@
       </template>
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
-    <CreateAccountModal :show="showCreate" :initial-backend="createBackend" :proxies="proxies" :groups="groups" :current-user-id="authStore.user?.id" @close="showCreate = false" @created="reload()" />
+    <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload()" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated($event)" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" :pelican-test="pelicanTest" @close="closeTestModal" />
@@ -486,7 +483,7 @@
     <CPACredentialsModal :auth-name="selectedCPAAuth" :show="showCPA" @close="showCPA = false" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" @switch-backend="handleSwitchBackend" />
-    <CreateAccountModal :show="showImportData" :groups="groups" :current-user-id="authStore.user?.id" @close="showImportData = false" @created="reload()" />
+    <CreateAccountModal :show="showImportData" :proxies="proxies" :groups="groups" @close="showImportData = false" @created="reload()" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -619,9 +616,7 @@ const selTypes = computed<AccountType[]>(() => {
   return [...types]
 })
 const showCreate = ref(false)
-const createBackend = ref<'cpa' | 'basispoints'>('cpa')
-function openAccountImport(backend: 'cpa' | 'basispoints') {
-  createBackend.value = backend
+function openAccountImport() {
   showCreate.value = true
 }
 const showCPA = ref(false)
@@ -2596,7 +2591,7 @@ const handleClickOutside = (event: MouseEvent) => {
 
 onMounted(async () => {
   if (new URLSearchParams(window.location.search).get('import') === 'basispoints') {
-    openAccountImport('basispoints')
+    openAccountImport()
   }
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)

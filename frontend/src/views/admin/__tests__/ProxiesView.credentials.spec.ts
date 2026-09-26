@@ -13,7 +13,7 @@ const mountView = () => shallowMount(ProxiesView, {
   global: { stubs: {
     AppLayout: { template: '<div><slot /></div>' },
     TablePageLayout: { template: '<div><slot name="table" /></div>' },
-    DataTable: { props: ['data'], template: '<div v-for="row in data" :key="row.id"><slot name="cell-actions" :row="row" /></div>' },
+    DataTable: { props: ['data'], template: '<div v-for="row in data" :key="row.id"><slot name="cell-location" :row="row" /><slot name="cell-account_count" :row="row" :value="row.account_count" /><slot name="cell-actions" :row="row" /></div>' },
     BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /><slot name="footer" /></div>' },
   } },
 })
@@ -36,6 +36,15 @@ async function submit() {
 }
 
 describe('proxy credential updates', () => {
+  it('shows the detected exit IP separately from the configured proxy host', async () => {
+    list.mockResolvedValue({ items: [{ id: 9, name: 'proxy', protocol: 'http', host: 'proxy.example', port: 8080, status: 'active', ip_address: '203.0.113.9', country: 'Brazil', city: 'Sao Paulo' }], total: 1, pages: 1 })
+    wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="proxy-exit-ip"]').text()).toBe('203.0.113.9')
+    expect(wrapper.get('[data-testid=proxy-test-source]').text()).toBe('admin.proxies.testExitLabel')
+    expect(wrapper.get('[data-testid=proxy-evidence-hint]').text()).toBe('admin.proxies.egressEvidenceHint')
+  })
+
   it('sends an explicit empty username when cleared', async () => {
     await edit()
     const username = wrapper.findAll<HTMLInputElement>('#edit-proxy-form input').find(input => input.element.value === 'old-user')!

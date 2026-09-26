@@ -200,6 +200,31 @@ func TestUsageLogFromService_KeepsUserBillingAndIPWithoutAdminCostFields(t *test
 	require.NotContains(t, string(userJSON), "account_cost")
 }
 
+func TestUsageLogFromService_KeepsAuditAdminOnly(t *testing.T) {
+	t.Parallel()
+
+	latency := 180
+	log := &service.UsageLog{
+		ID: 1,
+		Audit: &service.UsageAudit{
+			Source: "native", Status: "audited", Result: "allow",
+			Engine: "typesafe", Model: "private-audit-model", LatencyMS: &latency,
+		},
+		PromptAuditLatencyMs: &latency,
+	}
+	userJSON, err := json.Marshal(UsageLogFromService(log))
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), "audit")
+	require.NotContains(t, string(userJSON), "private-audit-model")
+
+	adminJSON, err := json.Marshal(UsageLogFromServiceAdmin(log))
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"audit":{"source":"native"`)
+	require.Contains(t, string(adminJSON), `"model":"private-audit-model"`)
+	require.Contains(t, string(adminJSON), `"prompt_audit_latency_ms":180`)
+	require.Equal(t, "allow", log.Audit.Result)
+}
+
 func TestUsageLogFromService_UsersSeeRequestedReasoningEffortOnly(t *testing.T) {
 	t.Parallel()
 

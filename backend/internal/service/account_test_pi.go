@@ -29,24 +29,36 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 	if s.openaiGatewayService == nil || s.openaiGatewayService.openAITokenProvider == nil {
 		return s.sendErrorAndEnd(c, "Pi token provider unavailable")
 	}
-	if model == "" { model = openai.DefaultTestModel }
+	if model == "" {
+		model = openai.DefaultTestModel
+	}
 	model = account.GetMappedModel(model)
 	token, err := s.openaiGatewayService.openAITokenProvider.GetAccessToken(c.Request.Context(), runtimeAccount)
-	if err != nil { return s.sendErrorAndEnd(c, "Pi credential unavailable; reauthorize this account") }
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Pi credential unavailable; reauthorize this account")
+	}
 	owner, _ := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 	if mode == AccountTestModeCompact {
 		return s.testNativePiCompactAccount(c, account, model, token, owner)
 	}
 	transport := account.GetCredential("pi_transport")
-	if transport == "" { transport = "sse" }
+	if transport == "" {
+		transport = "sse"
+	}
+	headerTimeoutMS, idleTimeoutMS := s.openaiGatewayService.nativePiRuntimeTimeouts()
 	resp, err := piruntime.Do(c.Request.Context(), "/responses", map[string]any{
 		"request": createOpenAITestPayload(model, true, prompt), "access_token": token,
 		"owner_id": owner, "credential_id": runtimeAccount.ID, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
 		"session_id": "admin-test-" + uuid.NewString(), "transport": transport,
+		"response_header_timeout_ms": headerTimeoutMS, "stream_idle_timeout_ms": idleTimeoutMS,
 	})
-	if err != nil { return s.sendErrorAndEnd(c, "Pi runtime unavailable") }
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Pi runtime unavailable")
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return s.sendErrorAndEnd(c, "Pi runtime rejected the test (HTTP " + strconv.Itoa(resp.StatusCode) + ")") }
+	if resp.StatusCode != http.StatusOK {
+		return s.sendErrorAndEnd(c, "Pi runtime rejected the test (HTTP "+strconv.Itoa(resp.StatusCode)+")")
+	}
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: model})
 	return s.processOpenAIStream(c, resp.Body)
 }
@@ -80,9 +92,9 @@ func (s *AccountTestService) testNativePiCompactAccount(c *gin.Context, account 
 	}
 	if s.accountRepo != nil {
 		updates := map[string]any{
-			"openai_compact_supported": true,
+			"openai_compact_supported":   true,
 			"openai_compact_last_status": http.StatusOK,
-			"openai_compact_checked_at": time.Now().UTC().Format(time.RFC3339),
+			"openai_compact_checked_at":  time.Now().UTC().Format(time.RFC3339),
 		}
 		_ = s.accountRepo.UpdateExtra(c.Request.Context(), account.ID, updates)
 		mergeAccountExtra(account, updates)

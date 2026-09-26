@@ -963,9 +963,10 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
-			false,           // native_compaction_v2
-			sql.NullInt64{}, // prompt_audit_latency_ms
-			sql.NullInt64{}, // vps_latency_ms
+			false,            // native_compaction_v2
+			sql.NullInt64{},  // prompt_audit_latency_ms
+			sql.NullInt64{},  // vps_latency_ms
+			sql.NullString{}, // audit_summary
 			now,
 		}})
 		require.NoError(t, err)

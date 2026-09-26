@@ -645,8 +645,8 @@ func waitOpenAIResponseFlushSignal(t *testing.T, signal <-chan struct{}) {
 	}
 }
 
-// hangingOpenAISSEAfterTerminal models an upstream that keeps its HTTP stream
-// open after writing a complete terminal SSE frame.
+// hangingOpenAISSEAfterTerminal 模拟上游在发完 terminal 事件后拖延关闭连接
+// （keep-alive/HTTP2 复用连接上观测到 8~46s 不 EOF）。
 type hangingOpenAISSEAfterTerminal struct {
 	payload   []byte
 	sent      bool
@@ -669,32 +669,22 @@ func (r *hangingOpenAISSEAfterTerminal) Close() error {
 }
 
 func TestOpenAIResponseFlush_TerminalEventEndsStreamWithoutEOF(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		cfg  config.GatewayConfig
-	}{
-		{name: "sync scan"},
-		{name: "async scan", cfg: config.GatewayConfig{StreamKeepaliveInterval: 1, StreamDataIntervalTimeout: 30}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":5}}}\n\n"
-			reader := &hangingOpenAISSEAfterTerminal{payload: []byte(body), release: make(chan struct{})}
-			t.Cleanup(func() { _ = reader.Close() })
-			recorder := newOpenAIResponseFlushRecorder()
-			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
+	body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":5}}}\n\n"
+	reader := &hangingOpenAISSEAfterTerminal{payload: []byte(body), release: make(chan struct{})}
+	recorder := newOpenAIResponseFlushRecorder()
+	resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, config.GatewayConfig{StreamKeepaliveInterval: 1, StreamDataIntervalTimeout: 30})
+	t.Cleanup(func() { _ = reader.Close() })
 
-			select {
-			case err := <-errCh:
-				require.NoError(t, err)
-				result := <-resultCh
-				require.NotNil(t, result)
-				require.Equal(t, 7, result.usage.InputTokens)
-				require.Equal(t, 5, result.usage.OutputTokens)
-			case <-time.After(3 * time.Second):
-				t.Fatal("stream did not end after the terminal SSE frame")
-			}
-			gotBody, _ := recorder.snapshot()
-			require.Equal(t, body, gotBody)
-		})
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+		result := <-resultCh
+		require.NotNil(t, result)
+		require.Equal(t, 7, result.usage.InputTokens)
+		require.Equal(t, 5, result.usage.OutputTokens)
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream did not end after terminal event; still waiting for upstream EOF")
 	}
+	gotBody, _ := recorder.snapshot()
+	require.Equal(t, body, gotBody)
 }

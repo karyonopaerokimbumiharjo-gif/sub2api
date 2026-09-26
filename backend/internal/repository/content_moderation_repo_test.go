@@ -17,7 +17,7 @@ func TestContentModerationRepositoryEngineMetaInsert(t *testing.T) {
 	for _, meta := range []*service.ContentModerationEngineMeta{nil, {Engine: "typesafe", Model: "jev-fixed", RulesVersion: "rules-v1", SkippedImages: 1}} {
 		db, mock, err := sqlmock.New()
 		require.NoError(t, err)
-		args := make([]driver.Value, 26)
+		args := make([]driver.Value, 30)
 		for i := range args {
 			args[i] = sqlmock.AnyArg()
 		}
@@ -26,8 +26,12 @@ func TestContentModerationRepositoryEngineMetaInsert(t *testing.T) {
 		} else {
 			args[25] = `{"engine":"typesafe","model":"jev-fixed","rules_version":"rules-v1","skipped_images":1}`
 		}
+		args[26], args[27], args[28], args[29] = "bounded request evidence", "actual audited text", "evidence-hash", true
 		mock.ExpectQuery("INSERT INTO content_moderation_logs").WithArgs(args...).WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(1, time.Now()))
-		err = NewContentModerationRepository(db).CreateLog(context.Background(), &service.ContentModerationLog{EngineMeta: meta})
+		err = NewContentModerationRepository(db).CreateLog(context.Background(), &service.ContentModerationLog{
+			EngineMeta: meta, FullPrompt: "bounded request evidence", AuditedPrompt: "actual audited text",
+			PromptHash: "evidence-hash", ContentTruncated: true,
+		})
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 		mock.ExpectClose()

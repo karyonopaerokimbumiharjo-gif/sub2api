@@ -957,7 +957,7 @@ export interface Proxy {
   password?: string | null
   status: 'active' | 'inactive' | 'expired'
   account_count?: number // Number of accounts using this proxy
-  cpa_credential_count?: number // Number of CPA credentials using this proxy; absent when CPA is unavailable
+  cpa_credential_count?: number // Saved CPA credential bindings, not observed runtime traffic; absent when CPA is unavailable
   cpa_credential_names?: string[]
   latency_ms?: number
   latency_status?: 'success' | 'failed'
@@ -1173,6 +1173,46 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export type OpenCodeGoUsageStatus = 'ok' | 'unauthorized' | 'failed'
+
+export interface OpenCodeGoUsageWindow {
+  status?: string
+  percent: number
+  resets_at?: string
+}
+
+export interface OpenCodeGoUsageData {
+  rolling?: OpenCodeGoUsageWindow
+  weekly?: OpenCodeGoUsageWindow
+  monthly?: OpenCodeGoUsageWindow
+}
+
+export interface OpenCodeGoUsageSnapshot {
+  status: OpenCodeGoUsageStatus
+  data?: OpenCodeGoUsageData
+  fetched_at?: string
+  last_attempt_at?: string
+  next_refresh_at?: string
+  failure_count?: number
+  http_status?: number
+  last_error?: string
+}
+
+export interface OpenCodeGoUsageState {
+  account_id: number
+  eligible: boolean
+  auto_refresh_enabled: boolean
+  snapshot?: OpenCodeGoUsageSnapshot
+}
+
+export interface OpenCodeGoUsageSettings {
+  enabled: boolean
+  /** Max wait while model requests keep arriving (minutes). */
+  interval_minutes: number
+  /** Trailing quiet period after the latest model request (minutes). */
+  debounce_minutes: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -1186,6 +1226,7 @@ export interface Account {
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
+  opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
@@ -1197,6 +1238,11 @@ export interface Account {
       available_count?: number
       credits?: { expires_at?: string }[]
     }
+    codex_credits_snapshot?: {
+      credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
+      fetched_at: number
+    }
+    codex_referral_snapshot?: import('./openaiReferrals').OpenAIReferralEligibility | null
     auto_reset_credit_enabled?: boolean
     auto_reset_credit_5h_threshold?: number
     auto_reset_credit_7d_threshold?: number
@@ -1688,7 +1734,8 @@ export interface CodexSessionImportMessage {
 export interface CodexSessionImportItem {
   index: number
   name?: string
-  action: 'created' | 'updated' | 'skipped' | 'failed'
+  auth_name?: string
+  action: 'created' | 'updated' | 'skipped' | 'failed' | 'imported_cpa'
   account_id?: number
   message?: string
 }
@@ -1749,7 +1796,6 @@ export interface UsageLog {
   native_compaction_v2: boolean
   duration_ms: number | null
   first_token_ms: number | null
-  prompt_audit_latency_ms?: number | null
   vps_latency_ms?: number | null
 
   // 图片生成字段
@@ -1788,6 +1834,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+  audit?: { source: string; status: string; result: string; engine?: string; model?: string; latency_ms?: number | null } | null
+  prompt_audit_latency_ms?: number | null
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null

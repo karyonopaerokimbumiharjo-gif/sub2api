@@ -51,7 +51,7 @@ func TestSyncCPAAccountsHandlerCreatesVisibleButInactiveBusinessAccount(t *testi
 	t.Setenv("OPENAI_QUOTA_BRIDGE_MANAGEMENT_PASSWORD_FILE", secret)
 
 	repo := &cpaSyncHandlerAccountRepo{}
-	handler := &OpenAIOAuthHandler{cpaRuntimeService: service.NewOpenAIQuotaService(repo, nil, nil, nil)}
+	handler := &OpenAIOAuthHandler{cpaRuntimeService: service.NewOpenAIQuotaService(repo, nil, nil, nil, nil)}
 	router := gin.New()
 	router.POST("/admin/openai/cpa/sync-accounts", handler.SyncCPAAccounts)
 	request := httptest.NewRequest(http.MethodPost, "/admin/openai/cpa/sync-accounts", strings.NewReader(`{"auth_names":["one.json"]}`))

@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from '../client'
+import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
 import type {
   Account,
   AccountListItem,
@@ -28,7 +29,9 @@ import type {
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState
+  GrokMediaEligibilityState,
+  OpenCodeGoUsageSettings,
+  OpenCodeGoUsageState
 } from '@/types'
 
 /**
@@ -482,6 +485,7 @@ export async function exchangeCode(
 }
 
 export interface OpenAICPAImportResult {
+	account_ids?: number[]
   auth_name: string
   email: string
   bridge_account_id: number
@@ -489,11 +493,10 @@ export interface OpenAICPAImportResult {
 }
 
 /**
- * Persist an OpenAI OAuth identity in the private CPA pool. No direct Sub2
- * account is created; requests and billing continue through the CPA bridge.
+ * Import authorization and, when groups are supplied, complete account setup.
  */
-export async function importCPAAuthFiles(contents: string[], runtime?: CPACredentialUpdate): Promise<CodexSessionImportResult> {
-  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/openai/import-cpa-files', { contents, runtime }, { timeout: 180000 })
+export async function importCPAAuthFiles(contents: string[], runtime?: CPACredentialUpdate, groupIDs?: number[]): Promise<CodexSessionImportResult> {
+  const { data } = await apiClient.post<CodexSessionImportResult>('/admin/openai/import-cpa-files', { contents, runtime, group_ids: groupIDs }, { timeout: 180000 })
   return data
 }
 
@@ -515,11 +518,13 @@ export async function ensureCPAQuotaBridge(authName: string, groupIDs: number[])
 
 export async function importOpenAIOAuthToCPA(
   credentials: Record<string, unknown>,
-  runtime?: CPACredentialUpdate
+  runtime?: CPACredentialUpdate,
+  groupIDs?: number[]
 ): Promise<OpenAICPAImportResult> {
   const { data } = await apiClient.post<OpenAICPAImportResult>(
     '/admin/openai/import-to-cpa',
-    { credentials, runtime }
+    { credentials, runtime, group_ids: groupIDs },
+    { timeout: 180000 }
   )
   return data
 }
@@ -533,6 +538,8 @@ export interface CPACredentialUpdate {
   request_retry: number
 }
 export interface CPACredentialSettings extends CPACredentialUpdate {
+  business_backend?: 'cpa' | 'pi' | ''
+  cpa_routing_enabled?: boolean
   business_account_id?: number
   business_status?: string
   schedulable?: boolean
@@ -990,7 +997,14 @@ export interface OpenAIQuotaUsage {
   rate_limit?: OpenAIRateLimit | null
   additional_rate_limits?: OpenAIAdditionalRateLimit[]
   rate_limit_reset_credits?: OpenAIRateLimitResetCredits | null
+  credits?: OpenAICredits | null
   fetched_at: number
+}
+
+export interface OpenAICredits {
+  has_credits: boolean
+  unlimited: boolean
+  balance: string | null
 }
 
 export interface OpenAIQuotaResetCredit {
@@ -1020,6 +1034,7 @@ export interface OpenAIQuotaResetResult {
 /** Usage payload plus whether the reset-credit snapshot was persisted. */
 export interface OpenAIQuotaRefreshResult extends OpenAIQuotaUsage {
   cache_persisted: boolean
+  credits_cache_persisted?: boolean
 }
 
 export interface OpenAIQuotaAutoResetSettings {
@@ -1053,6 +1068,23 @@ export async function switchOpenAIExecutionBackend(
 export async function refreshOpenAIQuota(id: number): Promise<OpenAIQuotaRefreshResult> {
   const { data } = await apiClient.post<OpenAIQuotaRefreshResult>(
     `/admin/openai/accounts/${id}/quota/refresh`
+  )
+  return data
+}
+
+export async function refreshOpenAIReferrals(id: number): Promise<OpenAIReferralRefreshResult> {
+  const { data } = await apiClient.post<OpenAIReferralRefreshResult>(
+    `/admin/openai/accounts/${id}/referrals/refresh`
+  )
+  return data
+}
+
+export async function sendOpenAIReferralInvite(
+  id: number,
+  input: { email: string; program_id: string; confirmed: boolean }
+): Promise<OpenAIReferralSendResult> {
+  const { data } = await apiClient.post<OpenAIReferralSendResult>(
+    `/admin/openai/accounts/${id}/referrals/invite`, input, { timeout: 90_000 }
   )
   return data
 }
@@ -1173,6 +1205,38 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export async function getOpenCodeGoUsageSettings(): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.get<OpenCodeGoUsageSettings>('/admin/accounts/opencode-go-usage/settings')
+  return data
+}
+
+export async function updateOpenCodeGoUsageSettings(
+  settings: OpenCodeGoUsageSettings
+): Promise<OpenCodeGoUsageSettings> {
+  const { data } = await apiClient.put<OpenCodeGoUsageSettings>(
+    '/admin/accounts/opencode-go-usage/settings',
+    settings
+  )
+  return data
+}
+
+export async function getOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.get<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage`)
+  return data
+}
+
+export async function setOpenCodeGoUsageAutoRefresh(id: number, enabled: boolean): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.put<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/auto-refresh`, {
+    enabled
+  })
+  return data
+}
+
+export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsageState> {
+  const { data } = await apiClient.post<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/refresh`)
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
@@ -1243,7 +1307,12 @@ export const accountsAPI = {
   saveOllamaCloudUsageSession,
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
-  refreshOllamaCloudUsage
+  refreshOllamaCloudUsage,
+  getOpenCodeGoUsageSettings,
+  updateOpenCodeGoUsageSettings,
+  getOpenCodeGoUsage,
+  setOpenCodeGoUsageAutoRefresh,
+  refreshOpenCodeGoUsage
 }
 
 export default accountsAPI

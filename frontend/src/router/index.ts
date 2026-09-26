@@ -929,6 +929,7 @@ router.beforeEach(async (to, _from, next) => {
 
   if (
     to.meta.requiresRiskControl &&
+    !authStore.isAdmin &&
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.risk_control_enabled === false
   ) {

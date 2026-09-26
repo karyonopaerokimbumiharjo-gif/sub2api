@@ -17,6 +17,13 @@
 
     <form class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5" @submit.prevent="applyFilters">
       <label class="text-xs text-gray-600 dark:text-dark-200">
+        <span>{{ t('admin.promptAudit.events.auditSource') }}</span>
+        <select v-model="localFilters.audit_source" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.auditSource')" data-test="audit-source-filter" @change="filtersChanged">
+          <option value="">{{ t('common.all') }}</option>
+          <option v-for="source in auditSources" :key="source" :value="source">{{ t(`admin.promptAudit.events.auditSources.${source}`) }}</option>
+        </select>
+      </label>
+      <label class="text-xs text-gray-600 dark:text-dark-200">
         <span>{{ t('admin.promptAudit.events.decision') }}</span>
         <select v-model="localFilters.decision" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.decision')" @change="filtersChanged">
           <option value="">{{ t('common.all') }}</option>
@@ -55,20 +62,22 @@
       </label>
       <label class="flex items-end gap-2 pb-2 text-xs text-gray-600 dark:text-dark-200">
         <input v-model="localFilters.aggregate" type="checkbox" @change="filtersChanged" />
-        <span>{{ t('admin.promptAudit.events.aggregateTasks') }}</span>
+        <span :title="t('admin.promptAudit.events.aggregateHint')">{{ t('admin.promptAudit.events.aggregateTasks') }}</span>
       </label>
       <div class="flex items-end gap-2 sm:col-span-2">
         <button type="submit" class="btn btn-primary btn-sm">{{ t('common.search') }}</button>
         <button type="button" class="btn btn-ghost btn-sm" @click="resetFilters">{{ t('common.reset') }}</button>
       </div>
     </form>
+    <p class="mt-3 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.aggregateHint') }}</p>
     <div v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}</div>
     <div class="mt-5 overflow-x-auto rounded-xl border border-gray-200 dark:border-dark-700/60">
       <table class="min-w-[1120px] w-full text-left text-sm">
         <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500 dark:bg-dark-900/70 dark:text-dark-400">
           <tr>
-            <th class="w-10 px-3 py-3"><input type="checkbox" :checked="allSelected" :aria-label="t('admin.promptAudit.events.selectAll')" @change="toggleAll" /></th>
+            <th class="w-10 px-3 py-3"><input type="checkbox" :checked="allSelected" :disabled="selectableEvents.length === 0" :aria-label="t('admin.promptAudit.events.selectAll')" @change="toggleAll" /></th>
             <th class="px-3 py-3 font-medium">{{ t('admin.promptAudit.events.time') }}</th>
+            <th class="px-3 py-3 font-medium">{{ t('admin.promptAudit.events.auditSource') }}</th>
             <th class="px-3 py-3 font-medium">{{ t('admin.promptAudit.events.identity') }}</th>
             <th class="px-3 py-3 font-medium">{{ t('admin.promptAudit.events.group') }}</th>
             <th class="px-3 py-3 font-medium">{{ t('admin.promptAudit.events.route') }}</th>
@@ -78,11 +87,15 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-transparent">
-          <tr v-if="loading"><td colspan="8" class="px-4 py-12 text-center text-gray-500" aria-busy="true">{{ t('common.loading') }}</td></tr>
-          <tr v-else-if="events.length === 0"><td colspan="8" class="px-4 py-12 text-center text-gray-500">{{ t('admin.promptAudit.events.empty') }}</td></tr>
-          <tr v-for="event in events" v-else :key="event.id" :data-test="`event-${event.id}`" class="align-top hover:bg-gray-50/70 dark:hover:bg-dark-800/70">
-            <td class="px-3 py-3"><input type="checkbox" :checked="selectedIds.includes(event.id)" :aria-label="t('admin.promptAudit.events.selectEvent', { id: event.id })" @change="toggleOne(event.id)" /></td>
+          <tr v-if="loading"><td colspan="9" class="px-4 py-12 text-center text-gray-500" aria-busy="true">{{ t('common.loading') }}</td></tr>
+          <tr v-else-if="events.length === 0"><td colspan="9" class="px-4 py-12 text-center text-gray-500">{{ t('admin.promptAudit.events.empty') }}</td></tr>
+          <tr v-for="event in events" v-else :key="event.event_key || event.id" :data-test="`event-${event.id}`" class="align-top hover:bg-gray-50/70 dark:hover:bg-dark-800/70">
+            <td class="px-3 py-3"><input type="checkbox" :checked="selectedIds.includes(event.id)" :disabled="isNativeLog(event)" :title="isNativeLog(event) ? t('admin.promptAudit.events.nativeReadOnly') : undefined" :aria-label="t('admin.promptAudit.events.selectEvent', { id: event.id })" @change="toggleOne(event.id)" /></td>
             <td class="whitespace-nowrap px-3 py-3 text-xs text-gray-600 dark:text-dark-300">{{ formatDate(event.created_at) }}</td>
+            <td class="px-3 py-3">
+              <span class="inline-flex whitespace-nowrap rounded-full px-2 py-1 text-xs font-medium" :class="auditSource(event) === 'native' ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-200' : 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200'" data-test="event-audit-source">{{ t(`admin.promptAudit.events.auditSources.${auditSource(event)}`) }}</span>
+              <p v-if="event.scanner_backend" class="mt-1 max-w-40 break-words text-xs text-gray-500">{{ event.scanner_backend }}</p>
+            </td>
             <td class="px-3 py-3">
               <CopyLine :label="t('admin.promptAudit.events.user')" :value="event.snapshot.username" />
               <CopyLine :label="t('admin.promptAudit.events.email')" :value="event.snapshot.user_email" />
@@ -94,20 +107,20 @@
               <p class="mt-1 text-xs text-gray-500">{{ event.snapshot.model }} · {{ event.snapshot.protocol }} · {{ event.snapshot.stage || 'http' }}</p>
             </td>
             <td class="px-3 py-3">
-              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : event.audit_status === 'review_required' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200' : decisionClass(event.decision)">
-                {{ event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionRisk(event.decision, event.risk_level) }}
+              <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="event.audit_status === 'error' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200' : event.audit_status === 'gap' ? 'bg-slate-100 text-slate-700 dark:bg-dark-700 dark:text-dark-200' : event.audit_status === 'bypass' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200' : event.audit_status === 'review_required' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200' : decisionClass(event.decision)">
+                {{ event.audit_status === 'error' ? t('admin.promptAudit.events.auditFailed') : event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionRisk(event.decision, event.risk_level) }}
               </span>
               <span v-if="(event.duplicate_count || 0) > 1" class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-dark-700 dark:text-dark-200">
                 {{ t('admin.promptAudit.events.duplicateCount', { count: event.duplicate_count }) }}
               </span>
-              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required'" class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.intent_categories || event.categories)">{{ t('admin.promptAudit.events.intentShort') }} · {{ formatCategories(event.intent_categories || event.categories) }}</p>
-              <p v-if="event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required' && event.content_categories?.length" class="mt-1 max-w-48 truncate text-xs text-gray-500" :title="formatContentCategories(event.content_categories)">{{ t('admin.promptAudit.events.contentShort') }} · {{ formatContentCategories(event.content_categories) }}</p>
+              <p v-if="event.audit_status !== 'error' && event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required'" class="mt-2 max-w-48 truncate text-xs text-gray-500" :title="formatCategories(event.intent_categories || event.categories)">{{ t('admin.promptAudit.events.intentShort') }} · {{ formatCategories(event.intent_categories || event.categories) }}</p>
+              <p v-if="event.audit_status !== 'error' && event.audit_status !== 'gap' && event.audit_status !== 'bypass' && event.audit_status !== 'review_required' && event.content_categories?.length" class="mt-1 max-w-48 truncate text-xs text-gray-500" :title="formatContentCategories(event.content_categories)">{{ t('admin.promptAudit.events.contentShort') }} · {{ formatContentCategories(event.content_categories) }}</p>
               <p class="mt-1 text-xs text-gray-400">{{ policySourceLabel(event.policy_source) }}</p>
             </td>
             <td class="max-w-xs px-3 py-3"><p class="line-clamp-2 break-words text-gray-600 dark:text-dark-300">{{ event.snapshot.redacted_preview || '—' }}</p></td>
             <td class="whitespace-nowrap px-3 py-3 text-right">
               <button type="button" class="btn btn-ghost btn-sm" @click="$emit('view', event.id)">{{ t('common.view') }}</button>
-              <button type="button" class="btn btn-ghost btn-sm text-red-600" @click="$emit('delete', event.id)">{{ t('common.delete') }}</button>
+              <button v-if="!isNativeLog(event)" type="button" class="btn btn-ghost btn-sm text-red-600" @click="$emit('delete', event.id)">{{ t('common.delete') }}</button>
             </td>
           </tr>
         </tbody>
@@ -122,7 +135,7 @@ import { computed, defineComponent, h, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Pagination from '@/components/common/Pagination.vue'
 import type { PromptAuditEvent, PromptEventFilters } from '../types'
-import { cloneData, CONTENT_CATEGORY_CATALOG, emptyEventFilters, SCANNER_CATALOG } from '../viewModel'
+import { auditSource, isNativeLog, cloneData, CONTENT_CATEGORY_CATALOG, emptyEventFilters, SCANNER_CATALOG } from '../viewModel'
 
 const props = defineProps<{
   events: PromptAuditEvent[]; total: number; page: number; pageSize: number
@@ -142,7 +155,9 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 const localFilters = reactive<PromptEventFilters>(cloneData(props.filters))
 watch(() => props.filters, (value) => Object.assign(localFilters, cloneData(value)), { deep: true })
-const allSelected = computed(() => props.events.length > 0 && props.events.every((event) => props.selectedIds.includes(event.id)))
+const auditSources = ['legacy', 'native', 'audit_gap', 'upstream'] as const
+const selectableEvents = computed(() => props.events.filter((event) => !isNativeLog(event)))
+const allSelected = computed(() => selectableEvents.value.length > 0 && selectableEvents.value.every((event) => props.selectedIds.includes(event.id)))
 
 const FilterInput = defineComponent({
   props: { modelValue: { type: String, required: true }, label: { type: String, required: true }, type: { type: String, default: 'text' } },
@@ -186,13 +201,14 @@ function resetFilters() {
   applyFilters()
 }
 function toggleOne(id: number) {
+  if (!selectableEvents.value.some((event) => event.id === id)) return
   const selected = new Set(props.selectedIds)
   if (selected.has(id)) selected.delete(id)
   else selected.add(id)
   emit('selection', [...selected])
 }
 function toggleAll() {
-  emit('selection', allSelected.value ? [] : props.events.map((event) => event.id))
+  emit('selection', allSelected.value ? [] : selectableEvents.value.map((event) => event.id))
 }
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value))

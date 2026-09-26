@@ -188,7 +188,7 @@ func invalidateSecurityAuditContext(c *gin.Context, reqLog *zap.Logger, gatewayS
 }
 
 func applySecurityAuditSideEffects(c *gin.Context, coordinator *securityaudit.Coordinator, request securityaudit.Request, decision securityaudit.Decision, auditStarted time.Time) {
-	if decision.Prompt != nil && decision.Prompt.Result != nil {
+	if (decision.Prompt != nil && decision.Prompt.Result != nil) || (decision.Legacy != nil && decision.Legacy.AuditLatencyMS != nil) {
 		c.Request = c.Request.WithContext(service.WithPromptAuditLatency(c.Request.Context(), int(time.Since(auditStarted).Milliseconds())))
 	}
 	if decision.Prompt != nil && decision.Prompt.Snapshot != nil {

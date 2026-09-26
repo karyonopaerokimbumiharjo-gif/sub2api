@@ -150,11 +150,13 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 			t.Error("wrong private runtime route")
 		}
 		var payload struct {
-			OwnerID      int64          `json:"owner_id"`
-			CredentialID int64          `json:"credential_id"`
-			AccessToken  string         `json:"access_token"`
-			SessionID    string         `json:"session_id"`
-			Request      map[string]any `json:"request"`
+			OwnerID         int64          `json:"owner_id"`
+			CredentialID    int64          `json:"credential_id"`
+			AccessToken     string         `json:"access_token"`
+			SessionID       string         `json:"session_id"`
+			Request         map[string]any `json:"request"`
+			HeaderTimeoutMS int64          `json:"response_header_timeout_ms"`
+			IdleTimeoutMS   int64          `json:"stream_idle_timeout_ms"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Error(err)
@@ -162,16 +164,16 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 		if payload.OwnerID != 42 || payload.CredentialID != 7 || payload.AccessToken != "fixture-access" || payload.Request["model"] != "gpt-6-astra" {
 			t.Error("binding not forwarded")
 		}
+		if payload.HeaderTimeoutMS != 45000 || payload.IdleTimeoutMS != 180000 {
+			t.Errorf("gateway timeout policy not forwarded: header=%d idle=%d", payload.HeaderTimeoutMS, payload.IdleTimeoutMS)
+		}
 		if payload.SessionID != "42:11:fixture-session" && !strings.HasPrefix(payload.SessionID, "42:11:one-shot:") {
 			t.Errorf("unexpected Pi session binding: %q", payload.SessionID)
 		}
-		for _, field := range []string{"previous_response_id", "client_metadata"} {
+		for _, field := range append([]string{"previous_response_id", "client_metadata"}, openAICodexOAuthUnsupportedFields...) {
 			if _, present := payload.Request[field]; present {
 				t.Errorf("backend-owned %s must not reach Pi runtime", field)
 			}
-		}
-		if limit, ok := payload.Request["max_output_tokens"].(float64); ok && limit != 12 {
-			t.Errorf("max_output_tokens changed in Pi request: %v", limit)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		if _, hasTools := payload.Request["tools"]; hasTools {
@@ -198,9 +200,12 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 		if streaming {
 			c.Request.Header.Set("session-id", "fixture-session")
 		}
-		svc := &OpenAIGatewayService{cfg: &config.Config{}, toolCorrector: NewCodexToolCorrector(), openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
+		svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAIResponseHeaderTimeout: 45, StreamDataIntervalTimeout: 180}}, toolCorrector: NewCodexToolCorrector(), openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
 		request := map[string]any{"model": "gpt-6-astra", "input": "test", "stream": streaming, "max_output_tokens": 12,
-			"previous_response_id": "foreign", "client_metadata": map[string]any{"trace": "fixture"}}
+			"temperature": 0.2, "top_p": 0.9,
+			"previous_response_id": "foreign", "client_metadata": map[string]any{"trace": "fixture"},
+			"metadata": map[string]any{"client": "fixture"}, "user": "fixture-user", "truncation": "auto",
+			"prompt_cache_retention": "24h", "stream_options": map[string]any{"include_usage": true}}
 		if !streaming {
 			request["tools"] = []map[string]any{{"type": "function", "name": "echo", "parameters": map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}}}}
 		}

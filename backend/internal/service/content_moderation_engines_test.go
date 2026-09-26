@@ -119,6 +119,7 @@ func TestContentModerationTypeSafeFailureOpenAndKeyIsolation(t *testing.T) {
 	require.True(t, decision.Allowed)
 	require.False(t, decision.Flagged)
 	require.Equal(t, int32(1), calls.Load())
+	require.NotNil(t, decision.AuditLatencyMS, "an attempted native call must retain measured latency even on failure")
 	require.Equal(t, "error", repo.logs[0].Action)
 	require.False(t, repo.logs[0].Flagged)
 	require.Equal(t, "business-model", repo.logs[0].Model)

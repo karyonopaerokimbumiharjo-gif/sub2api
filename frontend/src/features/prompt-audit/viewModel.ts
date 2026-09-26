@@ -1,5 +1,7 @@
 import type {
   PromptAuditConfig,
+  PromptAuditEvent,
+  PromptAuditSource,
   PromptAuditDraft,
   PromptAuditEndpointDraft,
   PromptAuditUpdateRequest,
@@ -151,6 +153,7 @@ export function draftFingerprint(draft: PromptAuditDraft | null): string {
 export function emptyEventFilters(): PromptEventFilters {
   return {
     aggregate: true,
+    audit_source: '',
     decision: '',
     risk_level: '',
     endpoint: '',
@@ -165,6 +168,18 @@ export function emptyEventFilters(): PromptEventFilters {
   }
 }
 
+export function auditSource(event: PromptAuditEvent): PromptAuditSource {
+  if (event.audit_source) return event.audit_source
+  if (isNativeLog(event)) return 'native'
+  if (event.audit_status === 'gap' || event.audit_status === 'bypass') return 'audit_gap'
+  if (event.decision === 'upstream_policy_block') return 'upstream'
+  return 'legacy'
+}
+
+export function isNativeLog(event: PromptAuditEvent): boolean {
+  return event.event_origin === 'content_moderation' || event.id < 0
+}
+
 function toISO(value: string): string | undefined {
   if (!value.trim()) return undefined
   const date = new Date(value)
@@ -173,6 +188,7 @@ function toISO(value: string): string | undefined {
 
 export function eventQueryParams(filters: PromptEventFilters): Record<string, string | number | boolean> {
   const result: Record<string, string | number | boolean> = { aggregate: filters.aggregate !== false }
+  if (filters.audit_source) result.audit_source = filters.audit_source
   for (const key of ['decision', 'risk_level', 'endpoint', 'request_id', 'prompt_hash', 'keyword'] as const) {
     const value = filters[key].trim()
     if (value) result[key] = value

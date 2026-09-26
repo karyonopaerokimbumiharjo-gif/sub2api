@@ -83,10 +83,20 @@ func scopedNativePiSession(c *gin.Context, session string) (string, error) {
 	}
 	return strconv.FormatInt(key.UserID, 10) + ":" + strconv.FormatInt(key.ID, 10) + ":" + session, nil
 }
-func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
-	fail := func(status int, message string) (*OpenAIForwardResult, error) {
-		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
-		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
+
+type nativePiRequestError struct {
+	status  int
+	message string
+}
+
+func (e *nativePiRequestError) Error() string { return e.message }
+
+// openNativePiResponse is the shared authenticated transport for Responses,
+// Chat Completions and Messages. Protocol adapters keep their existing output
+// conversion while using the same credential owner and API-key session scope.
+func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.Context, account *Account, body []byte, upstreamModel string) (*http.Response, error) {
+	fail := func(status int, message string) (*http.Response, error) {
+		return nil, &nativePiRequestError{status: status, message: message}
 	}
 	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
 	if resolveErr != nil {
@@ -102,8 +112,15 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if account.ProxyID != nil {
 		return fail(http.StatusBadRequest, "Pi runtime uses its configured network route; per-account proxy is not supported")
 	}
-	if isOpenAIResponsesCompactPath(c) {
-		return s.forwardNativePiCompact(ctx, c, account, body)
+	normalizedBody, _, normalizeErr := normalizeOpenAIResponsesLegacyIngress(body)
+	if normalizeErr != nil {
+		return fail(http.StatusBadRequest, "Invalid Responses request")
+	}
+	body = normalizedBody
+	if sanitized, _, sanitizeErr := sanitizeOpenAIResponsesToolSchemasForPlatform(body, account.Platform); sanitizeErr != nil {
+		return fail(http.StatusBadRequest, "Invalid Responses tool schema")
+	} else {
+		body = sanitized
 	}
 	var request map[string]any
 	if json.Unmarshal(body, &request) != nil {
@@ -116,20 +133,18 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	// state instead of rejecting an otherwise valid request at the gateway.
 	delete(request, "client_metadata")
 	delete(request, "previous_response_id")
-	session := nativePiSession(c, request)
-	// Pi's Codex adapter accepts the standard Responses output limit. Keep a
-	// non-null value so CPA and Pi preserve the same public request semantics;
-	// explicit null remains equivalent to omission.
-	if limit, exists := request["max_output_tokens"]; exists && limit == nil {
-		delete(request, "max_output_tokens")
+	// Match the existing Codex ingress treatment of fields unsupported by
+	// ChatGPT Responses, including output limits and sampling parameters.
+	for _, field := range openAICodexOAuthUnsupportedFields {
+		delete(request, field)
 	}
+	session := nativePiSession(c, request)
 	session, err = scopedNativePiSession(c, session)
 	if err != nil {
 		return fail(http.StatusForbidden, err.Error())
 	}
 	delete(request, "prompt_cache_key")
 	model, _ := request["model"].(string)
-	reqStream, _ := request["stream"].(bool)
 	if model == "" {
 		return fail(http.StatusBadRequest, "Model is required")
 	}
@@ -140,16 +155,19 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
 	}
-	upstreamModel := account.GetMappedModel(model)
+	if upstreamModel == "" {
+		upstreamModel = account.GetMappedModel(model)
+	}
 	request["model"] = upstreamModel
 	SetOpsUpstreamModel(c, upstreamModel)
 	transport := runtimeAccount.GetCredential("pi_transport")
 	if transport == "" {
 		transport = "sse"
 	}
-	started := time.Now()
+	headerTimeoutMS, idleTimeoutMS := s.nativePiRuntimeTimeouts()
 	resp, err := piruntime.Do(ctx, "/responses", map[string]any{"request": request, "access_token": token, "account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
-		"owner_id": owner, "credential_id": runtimeAccount.ID, "session_id": session, "transport": transport})
+		"owner_id": owner, "credential_id": runtimeAccount.ID, "session_id": session, "transport": transport,
+		"response_header_timeout_ms": headerTimeoutMS, "stream_idle_timeout_ms": idleTimeoutMS})
 	if err != nil {
 		var runtimeErr *piruntime.Error
 		if errors.As(err, &runtimeErr) {
@@ -162,12 +180,14 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 				return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 			case "pi_upstream_failed":
 				return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
+			case "pi_upstream_timeout":
+				return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
 			}
 		}
 		return fail(http.StatusBadGateway, "Pi runtime unavailable")
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
 		if resp.StatusCode == 400 || resp.StatusCode == 409 {
 			return fail(resp.StatusCode, "Invalid or concurrent Pi request")
 		}
@@ -176,11 +196,55 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 			return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
 		case http.StatusServiceUnavailable:
 			return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
+		case http.StatusGatewayTimeout:
+			return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
 		case http.StatusUnauthorized, http.StatusForbidden:
 			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
 	}
+	return resp, nil
+}
+
+// The selected executor must not impose a shorter total generation limit.
+// Forward the same OpenAI header and stream-idle policy used by the gateway.
+func (s *OpenAIGatewayService) nativePiRuntimeTimeouts() (headerMS, idleMS int64) {
+	if s == nil || s.cfg == nil {
+		return 0, 180000
+	}
+	return int64(s.cfg.Gateway.OpenAIResponseHeaderTimeout) * 1000, int64(s.cfg.Gateway.StreamDataIntervalTimeout) * 1000
+}
+
+func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	fail := func(status int, message string) (*OpenAIForwardResult, error) {
+		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
+		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
+	}
+	if isOpenAIResponsesCompactPath(c) {
+		if ValidateExecutionAccount(account) != nil {
+			return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+		}
+		return s.forwardNativePiCompact(ctx, c, account, body)
+	}
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return fail(http.StatusBadRequest, "Invalid Responses request")
+	}
+	model, reqStream := request.Model, request.Stream
+	upstreamModel := account.GetMappedModel(model)
+	started := time.Now()
+	resp, err := s.openNativePiResponse(ctx, c, account, body, upstreamModel)
+	if err != nil {
+		var requestErr *nativePiRequestError
+		if errors.As(err, &requestErr) {
+			return fail(requestErr.status, requestErr.message)
+		}
+		return fail(http.StatusBadGateway, "Pi runtime unavailable")
+	}
+	defer resp.Body.Close()
 	SetActualOpenAIUpstreamEndpoint(c, "/backend-api/codex/responses")
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: upstreamModel, Stream: reqStream, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses"}
 	if reqStream {
@@ -254,7 +318,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	resp, err := piruntime.Do(ctx, "/compact", map[string]any{
 		"request": request, "access_token": token,
 		"account_id": runtimeAccount.GetCredential("chatgpt_account_id"),
-		"owner_id": owner, "credential_id": runtimeAccount.ID,
+		"owner_id":   owner, "credential_id": runtimeAccount.ID,
 	})
 	if err != nil {
 		return fail(http.StatusBadGateway, "Pi runtime unavailable")

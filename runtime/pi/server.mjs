@@ -6,6 +6,36 @@ import {pathToFileURL} from 'node:url';
 import {openaiCodexProvider} from '@earendil-works/pi-ai/providers/openai-codex';
 const openaiCodexOAuth=openaiCodexProvider().auth.oauth;
 import {runNative,credentialAccount,closeSessions} from './native.mjs';
+import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
+
+// Keep failure framing bounded and independent of SDK success/error heuristics.
+// Only actual, complete Responses terminal events suppress a fallback terminal.
+class DeliveredResponse extends ResponseObserver {
+ append(byte) {
+  // Terminal responses include accumulated output. Grow on demand to the
+  // gateway's existing SSE line ceiling, rather than dropping normal answers
+  // at the much smaller audit-preview limit and inventing a second terminal.
+  const maxFrameBytes=500*1024*1024;
+  if(!this.overflow&&this.length===this.buffer.length&&this.buffer.length<maxFrameBytes){
+   const next=new Uint8Array(Math.min(this.buffer.length*2,maxFrameBytes));next.set(this.buffer);this.buffer=next;
+  }
+  super.append(byte);
+ }
+ frame(raw) {
+  super.frame(raw);
+  try {
+   const value=JSON.parse(raw.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n'));
+   if(/^resp_[A-Za-z0-9_-]{1,128}$/.test(value.response?.id||''))this.responseId=value.response.id;
+   if(Number.isSafeInteger(value.sequence_number)&&value.sequence_number>=0)this.sequence=Math.max(this.sequence??-1,value.sequence_number);
+  }catch{}
+  if(this.buffer.length>256*1024)this.buffer=new Uint8Array(256*1024);
+ }
+}
+function runtimeTimeout(value,fallback) {
+ if(value===undefined)return fallback;
+ if(!Number.isSafeInteger(value)||value<0||value>2147483647)throw Error('invalid_pi_timeout');
+ return value;
+}
 
 // A read-only upstream request validates the currently usable access token
 // without rotating the refresh token shared with the operator's local auth.json.
@@ -35,7 +65,7 @@ export function nativeFailure(status,result) {
  return {status:502,code:'pi_upstream_failed'};
 }
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch}) {
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,timers={setTimeout,clearTimeout}}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))};
@@ -116,28 +146,55 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     json(res,200,manifest);return;
    }
    if(req.url==='/responses') {
-    const abort=new AbortController();const timeout=setTimeout(()=>abort.abort(),120000);
-    res.on('close',()=>{if(!res.writableFinished)abort.abort()});
+    const headerTimeout=runtimeTimeout(body.response_header_timeout_ms,0);
+    const idleTimeout=runtimeTimeout(body.stream_idle_timeout_ms,180000);
+    const abort=new AbortController();const delivered=new DeliveredResponse();let headerTimer,idleTimer,timeoutPhase;
+    if(headerTimeout>0){headerTimer=timers.setTimeout(()=>{timeoutPhase='headers';abort.abort()},headerTimeout);headerTimer.unref?.()}
+    const resetIdle=()=>{
+     timers.clearTimeout(headerTimer);
+     timers.clearTimeout(idleTimer);
+     if(idleTimeout>0){idleTimer=timers.setTimeout(()=>{timeoutPhase='data';abort.abort()},idleTimeout);idleTimer.unref?.()}
+    };
+    const onClose=()=>{if(!res.writableFinished)abort.abort()};
+    res.on('close',onClose);
     let upstreamStatus=200;const responseHeaders={};
     const headers=()=>{if(!res.headersSent)res.writeHead(upstreamStatus,{...responseHeaders,'content-type':'text/event-stream','cache-control':'no-cache','x-sub2api-runtime':'pi-0.87.1'})};
+    const finishFailure=failure=>{
+     if(res.destroyed||res.writableEnded)return;
+     if(delivered.terminals.size){res.end();return}
+     // Never copy provider exceptions, partial content, or credentials into errors.
+     const event={type:'response.failed',sequence_number:(delivered.sequence??-1)+1,response:{
+      id:delivered.responseId||`resp_${randomUUID()}`,object:'response',status:'failed',output:[],
+      error:{code:timeoutPhase?'pi_upstream_timeout':failure.code,message:timeoutPhase?'The upstream response timed out while waiting for data.':'The upstream response ended before completion.'}}};
+     res.end(`\n\nevent: response.failed\ndata: ${JSON.stringify(event)}\n\n`);
+    };
     try {
      const result=await native({request:body.request,accessToken:body.access_token,accountId:body.account_id,
       ownerId:body.owner_id,credentialId:body.credential_id,sessionId:body.session_id,sessionSecret,
       transport:body.transport||'sse',signal:abort.signal,
-      onHeaders(status,headers){upstreamStatus=status;
+      onHeaders(status,headers){upstreamStatus=status;resetIdle();
        for(const name of ['x-request-id','x-codex-turn-state','x-codex-primary-used-percent','x-codex-primary-reset-after-seconds','x-codex-secondary-used-percent','x-codex-secondary-reset-after-seconds']){
         const value=headers?.get(name);if(value)responseHeaders[name]=value;
        }
       },
-      async onBytes(bytes){headers();if(!res.write(bytes))await once(res,'drain',{signal:abort.signal})}});
-     const failure=result.evidence.terminal_status==='completed'?null:nativeFailure(upstreamStatus,result.result);
+      async onBytes(bytes){resetIdle();headers();delivered.feed(bytes);if(!res.write(bytes))await once(res,'drain',{signal:abort.signal})}});
+     const completed=result.evidence.terminal_status==='completed'||(delivered.terminals.size===1&&delivered.terminals.has('completed'));
+     const failure=completed?null:timeoutPhase?{status:504,code:'pi_upstream_timeout'}:nativeFailure(upstreamStatus,result.result);
      console.log(JSON.stringify({event:'pi_upstream_audit',owner_id:body.owner_id,credential_id:body.credential_id,
       transport:result.transport,outbound:result.outbound,observation:result.evidence,continuation:result.continuation,
       upstream_status:upstreamStatus,failure_code:failure?.code,
       turn_state_present:!!responseHeaders['x-codex-turn-state'],turn_state_length:responseHeaders['x-codex-turn-state']?.length||0}));
      if(!res.headersSent&&failure){json(res,failure.status,{error:failure.code});return}
+     // A terminal can contain the whole answer and exceed the passive observer's
+     // bounded frame size. Pi sets rawStopReason only when parsing a terminal.
+     const sdkTerminal=/^(completed|failed|incomplete)(\.|$)/.test(result.result?.rawStopReason||'');
+     if(res.headersSent&&!delivered.terminals.size&&!sdkTerminal){finishFailure(failure||nativeFailure(upstreamStatus,result.result));return}
      headers();res.end();
-    }finally{clearTimeout(timeout)}
+    }catch(error){
+     if(!res.headersSent&&timeoutPhase){json(res,504,{error:'pi_upstream_timeout'});return}
+     if(!res.headersSent)throw error;
+     finishFailure(nativeFailure(upstreamStatus));
+    }finally{timers.clearTimeout(headerTimer);timers.clearTimeout(idleTimer);res.removeListener('close',onClose)}
     return;
    }
    if(req.url==='/compact') {

@@ -24,6 +24,7 @@ type OpenAIOAuthHandler struct {
 	openaiOAuthService *service.OpenAIOAuthService
 	adminService       service.AdminService
 	quotaService       openAIQuotaService
+	referralService    openAIReferralService
 	cpaImportService   openAICPAImportService
 	cpaRuntimeService  *service.OpenAIQuotaService
 	cpaBridgeService   cpaBridgeProvisioner
@@ -33,6 +34,7 @@ type OpenAIOAuthHandler struct {
 type openAIQuotaService interface {
 	QueryUsage(ctx context.Context, accountID int64) (*service.OpenAIQuotaUsage, error)
 	CacheResetCreditsSnapshot(ctx context.Context, accountID int64, credits *service.OpenAIRateLimitResetCredits) error
+	CacheCreditsSnapshot(ctx context.Context, accountID int64, usage *service.OpenAIQuotaUsage) error
 	CachePostResetSnapshot(ctx context.Context, accountID int64, usage *service.OpenAIQuotaUsage) error
 	ResetCredit(ctx context.Context, accountID int64) (*service.OpenAIQuotaResetResult, error)
 	SetAutoReset(ctx context.Context, accountID int64, enabled bool) (*service.OpenAIQuotaAutoResetSettings, error)
@@ -69,7 +71,8 @@ type openAIQuotaResetResponse struct {
 // failed display-cache write must never discard a successful upstream read.
 type openAIQuotaRefreshResponse struct {
 	service.OpenAIQuotaUsage
-	CachePersisted bool `json:"cache_persisted"`
+	CachePersisted        bool `json:"cache_persisted"`
+	CreditsCachePersisted bool `json:"credits_cache_persisted"`
 }
 
 // openAIQuotaResetPostProcessContext detaches the post-reset bookkeeping from the
@@ -104,6 +107,7 @@ func NewOpenAIOAuthHandler(
 	// `== nil` capability guards below and panic instead of returning 400.
 	if quotaService != nil {
 		h.quotaService = quotaService
+		h.referralService = quotaService
 		h.cpaImportService = quotaService
 		h.cpaRuntimeService = quotaService
 		h.cpaBridgeService = quotaService
@@ -117,12 +121,12 @@ func NewOpenAIOAuthHandler(
 type openAICPAImportRequest struct {
 	Credentials map[string]any               `json:"credentials" binding:"required"`
 	Runtime     *service.CPACredentialUpdate `json:"runtime,omitempty"`
+	GroupIDs    []int64                      `json:"group_ids,omitempty"`
 }
 
-// ImportOAuthToCPA persists a completed OpenAI OAuth authorization in the
-// private CPA auth store. It intentionally does not create a second schedulable
-// Sub2 account: production routing and billing continue through the existing
-// CPA bridge account.
+// ImportOAuthToCPA persists OAuth and, when groups are supplied, finishes the
+// account binding and scheduling before returning success. Legacy callers may
+// omit groups to keep their credential-only import behavior.
 // POST /api/v1/admin/openai/import-to-cpa
 func (h *OpenAIOAuthHandler) ImportOAuthToCPA(c *gin.Context) {
 	if h.cpaImportService == nil {
@@ -136,15 +140,25 @@ func (h *OpenAIOAuthHandler) ImportOAuthToCPA(c *gin.Context) {
 	}
 	var result *service.OpenAICPAImportResult
 	var err error
+	importCtx := service.WithCPAUserImport(c.Request.Context())
+	if err := h.validateImportGroups(importCtx, req.GroupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	if req.Runtime != nil {
 		if h.cpaRuntimeService == nil {
 			response.BadRequest(c, "CPA settings service is unavailable")
 			return
 		}
-		result, err = h.cpaRuntimeService.ImportOAuthCredentialsToCPAWithRuntime(c.Request.Context(), req.Credentials, req.Runtime)
+		result, err = h.cpaRuntimeService.ImportOAuthCredentialsToCPAWithRuntime(importCtx, req.Credentials, req.Runtime)
 	} else {
-		result, err = h.cpaImportService.ImportOAuthCredentialsToCPA(c.Request.Context(), req.Credentials)
+		result, err = h.cpaImportService.ImportOAuthCredentialsToCPA(importCtx, req.Credentials)
 	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	result.AccountIDs, err = h.completeAccountImport(importCtx, result.AuthName, req.GroupIDs, req.Runtime)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -653,10 +667,14 @@ func (h *OpenAIOAuthHandler) RefreshQuota(c *gin.Context) {
 	// which would leave the card without a credit count at all.
 	if err := h.quotaService.CacheResetCreditsSnapshot(c.Request.Context(), accountID, usage.RateLimitResetCredits); err != nil {
 		slog.Warn("openai_quota_reset_credit_cache_persist_failed", "account_id", accountID, "error", err)
-		response.Success(c, refreshResponse)
-		return
+	} else {
+		refreshResponse.CachePersisted = true
 	}
-	refreshResponse.CachePersisted = true
+	if err := h.quotaService.CacheCreditsSnapshot(c.Request.Context(), accountID, usage); err != nil {
+		slog.Warn("openai_quota_credits_cache_persist_failed", "account_id", accountID, "error", err)
+	} else {
+		refreshResponse.CreditsCachePersisted = true
+	}
 	response.Success(c, refreshResponse)
 }
 

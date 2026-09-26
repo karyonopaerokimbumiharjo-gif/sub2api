@@ -2,6 +2,10 @@
   <BaseDialog :show="show" :title="t('admin.promptAudit.events.detailTitle')" width="extra-wide" @close="$emit('close')">
     <div v-if="loading" class="py-12 text-center text-sm text-gray-500" aria-busy="true">{{ t('common.loading') }}</div>
     <div v-else-if="event" class="flex flex-col">
+      <p class="mb-3 flex flex-wrap items-center gap-2 text-sm" data-test="detail-audit-source">
+        <span class="rounded-full bg-primary-50 px-3 py-1 font-medium text-primary-800 dark:bg-primary-950/30 dark:text-primary-200">{{ t(`admin.promptAudit.events.auditSources.${auditSource(event)}`) }}</span>
+        <span class="text-gray-500">{{ event.scanner_backend || '—' }}</span>
+      </p>
       <p v-if="event.scanner_evidence?.bio_tier" class="mb-3 rounded-lg bg-primary-50 p-3 text-sm dark:bg-primary-950/30">Bio {{ event.scanner_evidence.bio_tier }} · {{ event.scanner_evidence.bio_policy_version }}<span v-if="event.scanner_evidence.research_profile_id"> · Research #{{ event.scanner_evidence.research_profile_id }}</span></p>
       <div class="flex flex-wrap gap-2 border-b border-gray-200 pb-3 dark:border-dark-700" role="tablist">
         <button v-for="tab in tabs" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab" class="rounded-md px-3 py-1.5 text-sm" :class="activeTab === tab ? 'bg-primary-50 text-primary-700 dark:bg-primary-950/40 dark:text-primary-300' : 'text-gray-600 dark:text-dark-300'" @click="activeTab = tab">
@@ -11,6 +15,9 @@
 
       <!-- Fixed panel height so switching tabs does not resize the dialog -->
       <div class="mt-5 h-[min(62vh,36rem)] overflow-y-auto" data-test="event-detail-tab-panel">
+        <p v-if="contentAvailability !== 'full'" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200" data-test="content-availability">{{ t(`admin.promptAudit.events.contentAvailability.${contentAvailability}`) }}</p>
+        <p v-if="isNativeLog(event)" class="mb-4 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.nativeReadOnly') }}</p>
+        <div v-if="event.audit_status === 'error'" class="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900 dark:bg-orange-950/30 dark:text-orange-200" data-test="audit-failed">{{ t('admin.promptAudit.events.auditFailedHint') }}</div>
         <div v-if="event.audit_status === 'gap'" class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-dark-700 dark:bg-dark-800">
           <p class="text-sm font-medium text-slate-800 dark:text-dark-100">{{ t('admin.promptAudit.events.auditGap') }}</p>
           <p class="mt-1 text-xs text-slate-600 dark:text-dark-300">{{ t('admin.promptAudit.events.auditGapHint') }}</p>
@@ -28,7 +35,7 @@
           <p>{{ event.snapshot.output_capture.output_complete ? '完整输出的事后审计' : '部分输出审计：不能视为全文通过' }}</p>
           <p>已捕获 {{ event.snapshot.output_capture.captured_bytes }} / {{ event.snapshot.output_capture.observed_bytes }} 字节 · 结束状态：{{ event.snapshot.output_capture.terminal }} · {{ event.snapshot.output_capture.capture_truncated ? '已截断' : '未截断' }}</p>
         </div>
-        <section v-if="event.decision === 'upstream_policy_block'" class="mb-4 space-y-2 rounded-lg border p-4" data-test="policy-review">
+        <section v-if="event.decision === 'upstream_policy_block' && !isNativeLog(event)" class="mb-4 space-y-2 rounded-lg border p-4" data-test="policy-review">
           <p v-if="event.policy_review" class="text-sm">上次复核：{{ event.policy_review.action === 'cleared' ? '已解除本地缓存' : '确认拦截' }} · {{ event.policy_review.reason }}</p>
           <label for="policy-review-reason" class="block text-sm font-medium">复核理由</label>
           <textarea id="policy-review-reason" v-model="reviewReason" :disabled="reviewing" maxlength="1000" class="input w-full" rows="2" />
@@ -36,23 +43,23 @@
             <button class="btn btn-secondary" :disabled="reviewing || !reviewReason.trim()" @click="$emit('policy-review', 'confirmed', reviewReason.trim())">确认拦截</button>
             <button class="btn btn-secondary" :disabled="reviewing || !reviewReason.trim()" @click="$emit('policy-review', 'cleared', reviewReason.trim())">解除本地缓存</button>
           </div>
-          <p class="text-xs text-gray-500">仅解除该用户、模型和策略版本的重复请求缓存。后续请求仍需经过安全审查，上游仍可拒绝；不会解除 CTE 或 GPT 破甲库规则。</p>
+          <p class="text-xs text-gray-500">{{ t('admin.promptAudit.events.policyReviewScope') }}</p>
         </section>
         <div v-show="activeTab === 'summary'" class="grid gap-5 lg:grid-cols-2" role="tabpanel">
           <div>
             <section>
-              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.requestPromptFull') }}</h4>
-              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.requestPromptFullHint') }}</p>
+              <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t(isNativeLog(event) ? 'admin.promptAudit.events.nativeRequestContent' : 'admin.promptAudit.events.requestPromptFull') }}</h4>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t(isNativeLog(event) ? 'admin.promptAudit.events.nativeContentHint' : 'admin.promptAudit.events.requestPromptFullHint') }}</p>
               <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="summary-prompt-full">{{ displayFullRequest(event) }}</pre>
             </section>
             <section v-if="!isNotAudited(event)" class="mt-4">
               <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.auditedPrompt') }}</h4>
-              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.auditedPromptHint') }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t(isNativeLog(event) ? 'admin.promptAudit.events.nativeAuditedPromptHint' : 'admin.promptAudit.events.auditedPromptHint') }}</p>
               <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="summary-audited-prompt">{{ displayAuditedPrompt(event) }}</pre>
             </section>
           </div>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionAction(event.decision, event.action) }}</dd>
+            <dt class="text-gray-500">{{ t('admin.promptAudit.events.decision') }}</dt><dd class="font-medium text-gray-900 dark:text-white">{{ event.audit_status === 'error' ? t('admin.promptAudit.events.auditFailed') : event.audit_status === 'partial' ? '部分审计，未确认全文' : event.audit_status === 'gap' ? t('admin.promptAudit.events.auditGap') : event.audit_status === 'bypass' ? t('admin.promptAudit.events.whitelistBypass') : event.audit_status === 'review_required' ? t('admin.promptAudit.events.reviewRequired') : formatDecisionAction(event.decision, event.action) }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.user') }}</dt><dd>{{ event.snapshot.username || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.email') }}</dt><dd>{{ event.snapshot.user_email || '—' }}</dd>
             <dt class="text-gray-500">{{ t('admin.promptAudit.events.apiKey') }}</dt><dd>{{ event.snapshot.api_key_name || '—' }}</dd>
@@ -72,7 +79,7 @@
           <div class="grid gap-4 lg:grid-cols-2">
             <section data-test="risk-prompt-preview">
               <h4 class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.promptAudit.events.auditedPrompt') }}</h4>
-              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.auditedPromptHint') }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t(isNativeLog(event) ? 'admin.promptAudit.events.nativeAuditedPromptHint' : 'admin.promptAudit.events.auditedPromptHint') }}</p>
               <pre class="mt-2 h-[min(46vh,26rem)] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-4 text-sm text-gray-700 dark:bg-dark-900 dark:text-dark-200" data-test="risk-prompt-full">{{ displayAuditedPrompt(event) }}</pre>
             </section>
             <section data-test="risk-guard-return">
@@ -120,11 +127,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PromptAuditEvent, PromptIssueSummary } from '../types'
-import { CONTENT_CATEGORY_CATALOG, SCANNER_CATALOG } from '../viewModel'
+import { auditSource, isNativeLog, CONTENT_CATEGORY_CATALOG, SCANNER_CATALOG } from '../viewModel'
 
 const props = defineProps<{ show: boolean; event: PromptAuditEvent | null; loading: boolean; reviewing?: boolean }>()
 defineEmits<{ (event: 'close'): void; (event: 'policy-review', action: 'confirmed' | 'cleared', reason: string): void }>()
@@ -133,16 +140,24 @@ const { t } = useI18n()
 const tabs = ['summary', 'risks', 'technical'] as const
 const activeTab = ref<(typeof tabs)[number]>('summary')
 watch(() => props.event?.id, () => { activeTab.value = 'summary'; reviewReason.value = '' })
+const contentAvailability = computed(() => {
+  const event = props.event
+  if (!event) return 'unavailable'
+  if (event.content_availability) return event.content_availability
+  return event.snapshot.full_prompt || event.snapshot.audited_prompt ? 'full' : event.snapshot.redacted_preview ? 'excerpt_only' : 'unavailable'
+})
 
 const DECISIONS = new Set(['pass', 'flag', 'critical', 'review_required', 'upstream_policy_block'])
 const ACTIONS = new Set(['Allow', 'Warn', 'Block'])
 const RISK_LEVELS = new Set(['low', 'medium', 'high', 'critical', 'unknown'])
 
 function displayFullRequest(event: PromptAuditEvent): string {
-  return event.snapshot.full_prompt || event.snapshot.redacted_preview || '—'
+  return event.snapshot.full_prompt || event.snapshot.redacted_preview || t('admin.promptAudit.events.contentNotStored')
 }
 
 function displayAuditedPrompt(event: PromptAuditEvent): string {
+  if (isNotAudited(event)) return t('admin.promptAudit.events.noAuditPerformed')
+  if (isNativeLog(event)) return event.snapshot.audited_prompt || t('admin.promptAudit.events.auditedContentNotStored')
   return event.snapshot.audited_prompt || event.snapshot.full_prompt || event.snapshot.redacted_preview || '—'
 }
 
@@ -186,12 +201,14 @@ function translateEvidence(value: string): string {
   return value
 }
 function formatGuardReturn(event: PromptAuditEvent): string {
+  if (isNotAudited(event)) return t('admin.promptAudit.events.noAuditPerformed')
   const evidence: Record<string, string> = {}
   for (const [key, value] of Object.entries(event.scanner_evidence || {})) {
     evidence[key] = translateEvidence(value)
   }
   return JSON.stringify({
-    decision: DECISIONS.has(event.decision) ? t(`admin.promptAudit.decisions.${event.decision}`) : event.decision,
+    audit_source: t(`admin.promptAudit.events.auditSources.${auditSource(event)}`),
+    decision: event.audit_status === 'error' ? t('admin.promptAudit.events.auditFailed') : DECISIONS.has(event.decision) ? t(`admin.promptAudit.decisions.${event.decision}`) : event.decision,
     risk_level: RISK_LEVELS.has(event.risk_level) ? t(`admin.promptAudit.riskLevels.${event.risk_level}`) : event.risk_level,
     action: ACTIONS.has(event.action) ? t(`admin.promptAudit.actions.${event.action}`) : event.action,
     categories: event.categories.map(translateCategory),
@@ -205,6 +222,11 @@ function formatGuardReturn(event: PromptAuditEvent): string {
     guard_endpoint_id: event.guard_endpoint_id,
     chunk_total: event.chunk_total,
     latency_ms: event.latency_ms,
+    ...(isNativeLog(event) ? {
+      native_action: event.native_action,
+      native_error: event.native_error || undefined,
+      native_engine_meta: event.native_engine_meta,
+    } : {}),
   }, null, 2)
 }
 function issueTitle(issue: PromptIssueSummary): string {

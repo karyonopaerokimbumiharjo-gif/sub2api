@@ -45,6 +45,15 @@ func (r *cpaAccountSyncRepo) UpdateExtra(_ context.Context, id int64, updates ma
 	return nil
 }
 
+func (r *cpaAccountSyncRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	return r.accounts[id], nil
+}
+
+func (r *cpaAccountSyncRepo) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
+	r.accounts[id].Credentials = shallowCopyMap(credentials)
+	return nil
+}
+
 func cpaAccountSyncTestServer(t *testing.T, authID, accountID *string) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +66,7 @@ func cpaAccountSyncTestServer(t *testing.T, authID, accountID *string) *httptest
 			}}})
 		case "/v0/management/auth-files/download":
 			require.Equal(t, "one.json", r.URL.Query().Get("name"))
-			_, _ = w.Write([]byte(`{"account_id":"` + *accountID + `"}`))
+			_, _ = w.Write([]byte(`{"account_id":"` + *accountID + `","access_token":"updated-access","refresh_token":"updated-refresh","expired":"2100-01-01T00:00:00Z","proxy_url":"http://cpa-only.invalid:1234"}`))
 		case "/v0/management/api-keys":
 			_, _ = w.Write([]byte(`{"api-keys":["test-cpa-key"]}`))
 		default:
@@ -83,6 +92,7 @@ func TestSyncCPAAccountsCreatesDisabledAccountAndReusesExactBinding(t *testing.T
 	require.Equal(t, &CPAAccountSyncResult{Created: 1, Identities: 1, AccountIDs: []int64{101}}, first)
 	require.Len(t, repo.accounts, 1)
 	account := repo.accounts[101]
+	require.Equal(t, 5, account.Concurrency, "new CPA imports default to five concurrent requests")
 	require.Equal(t, StatusDisabled, account.Status)
 	require.False(t, account.Schedulable)
 	require.Empty(t, account.GroupIDs)
@@ -119,12 +129,14 @@ func TestSyncCPAAccountsRebindsSameIdentityWithoutChangingAccountSettings(t *tes
 	require.NoError(t, err)
 	account := repo.accounts[101]
 	account.GroupIDs = []int64{42}
+	account.Concurrency = 12
 	account.Schedulable = true
 	authID = "auth-2" // CPA replaced the file but retained the workspace.
 	result, err := svc.SyncCPAAccounts(context.Background(), []string{"one.json"})
 	require.NoError(t, err)
 	require.Equal(t, &CPAAccountSyncResult{Updated: 1, Identities: 1, AccountIDs: []int64{101}}, result)
 	require.Equal(t, "auth-2", account.GetExtraString("cpa_auth_id"))
+	require.Equal(t, 12, account.Concurrency, "reimport preserves an existing capacity override")
 	require.Equal(t, StatusDisabled, account.Status)
 	require.True(t, account.Schedulable)
 	require.Equal(t, []int64{42}, account.GroupIDs)

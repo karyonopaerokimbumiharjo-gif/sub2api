@@ -1882,7 +1882,8 @@ func (a *Account) GetOpenAISessionID() string {
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
 	if a.UsesNativePiRuntime() {
-		return capability == "" || capability == OpenAIEndpointCapabilityResponses || capability == OpenAIEndpointCapabilityResponsesText
+		return capability == "" || capability == OpenAIEndpointCapabilityResponses ||
+			capability == OpenAIEndpointCapabilityResponsesText || capability == OpenAIEndpointCapabilityChatCompletions
 	}
 	if a == nil {
 		return false
@@ -2085,6 +2086,8 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return false
 	}
 	switch capability {
+	case OpenAIImagesCapabilityAPIKey:
+		return a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
 	default:

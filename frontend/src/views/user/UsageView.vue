@@ -628,6 +628,7 @@ const escapeCSVValue = (value: unknown): string => {
   if (value == null) return ''
   const str = String(value)
   const escaped = str.replace(/"/g, '""')
+  if (str === '-') return str
   if (/^[=+\-@\t\r]/.test(str)) return `"\'${escaped}"`
   if (/[,"\n\r]/.test(str)) return `"${escaped}"`
   return str
@@ -671,7 +672,7 @@ const exportToCSV = async () => {
       'Original Cost',
       'First Token (ms)',
       'Duration (ms)',
-      'TPS (tok/s)',
+      'Average TPS (tok/s)',
     ]
     const rows = allLogs.map((log) => [
       log.created_at,

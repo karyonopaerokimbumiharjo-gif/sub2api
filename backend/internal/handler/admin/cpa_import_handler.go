@@ -144,7 +144,8 @@ func (h *OpenAIOAuthHandler) EnsureCPAQuotaBridge(c *gin.Context) {
 func DirectAccountBackendRemoved(c *gin.Context) { response.ErrorFrom(c, cpapolicy.Required()) }
 
 // ImportCPAAccounts is also the destination for legacy Codex/data imports.
-// It never invokes Sub2 CreateAccount/UpdateAccount, including on partial errors.
+// Supplying groups completes OpenAI account setup in the same request; legacy
+// callers without groups only import credentials.
 func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 	if h.cpaImportService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "CPA import is unavailable")
@@ -152,6 +153,7 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 	var req struct {
+		GroupIDs    []int64                      `json:"group_ids,omitempty"`
 		Runtime     *service.CPACredentialUpdate `json:"runtime,omitempty"`
 		Content     string                       `json:"content"`
 		Contents    []string                     `json:"contents"`
@@ -188,6 +190,11 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 		return
 	}
 	result := CodexSessionImportResult{Total: len(entries), Items: make([]CodexSessionImportItem, 0, len(entries))}
+	importCtx := service.WithCPAUserImport(c.Request.Context())
+	if err := h.validateImportGroups(importCtx, req.GroupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	for _, entry := range entries {
 		if raw, ok := entry.Value.(map[string]any); ok {
 			if creds, ok := raw["credentials"].(map[string]any); ok {
@@ -196,23 +203,30 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 		}
 		var message string
 		var accountID int64
- var authName string
+		var authName string
 		var name string
 		if raw, ok := entry.Value.(map[string]any); ok && isProviderCPAFile(raw) {
+			if len(req.GroupIDs) > 0 {
+				message = "此入口用于导入 OpenAI 账号，请提供 OpenAI/Codex 授权文件"
+				result.Failed++
+				result.Items = append(result.Items, CodexSessionImportItem{Index: entry.Index, Action: "failed", Message: message})
+				result.Errors = append(result.Errors, CodexSessionImportMessage{Index: entry.Index, Message: message})
+				continue
+			}
 			var imported *service.OpenAICPAImportResult
 			var importErr error
 			if req.Runtime != nil && h.cpaRuntimeService != nil {
-				imported, importErr = h.cpaRuntimeService.ImportCPAAuthFileWithRuntime(c.Request.Context(), raw, req.Runtime)
+				imported, importErr = h.cpaRuntimeService.ImportCPAAuthFileWithRuntime(importCtx, raw, req.Runtime)
 			} else if req.Runtime != nil {
 				importErr = cpapolicy.Required()
 			} else {
-				imported, importErr = h.cpaImportService.ImportCPAAuthFile(c.Request.Context(), raw)
+				imported, importErr = h.cpaImportService.ImportCPAAuthFile(importCtx, raw)
 			}
 			if importErr != nil {
 				message = infraerrors.Message(importErr)
 			} else {
 				name, accountID = imported.Email, imported.BridgeAccountID
- authName = imported.AuthName
+				authName = imported.AuthName
 			}
 		} else {
 			// CPA Codex files use expired; auth.json uses tokens + JWT claims.
@@ -226,18 +240,26 @@ func (h *OpenAIOAuthHandler) ImportCPAAccounts(c *gin.Context) {
 				var imported *service.OpenAICPAImportResult
 				var importErr error
 				if req.Runtime != nil && h.cpaRuntimeService != nil {
-					imported, importErr = h.cpaRuntimeService.ImportOAuthCredentialsToCPAWithRuntime(c.Request.Context(), item.Credentials, req.Runtime)
+					imported, importErr = h.cpaRuntimeService.ImportOAuthCredentialsToCPAWithRuntime(importCtx, item.Credentials, req.Runtime)
 				} else if req.Runtime != nil {
 					importErr = cpapolicy.Required()
 				} else {
-					imported, importErr = h.cpaImportService.ImportOAuthCredentialsToCPA(c.Request.Context(), item.Credentials)
+					imported, importErr = h.cpaImportService.ImportOAuthCredentialsToCPA(importCtx, item.Credentials)
 				}
 				if importErr != nil {
 					message = infraerrors.Message(importErr)
 				} else {
 					name, accountID = imported.Email, imported.BridgeAccountID
- authName = imported.AuthName
+					authName = imported.AuthName
 				}
+			}
+		}
+		if message == "" && len(req.GroupIDs) > 0 {
+			ids, completeErr := h.completeAccountImport(importCtx, authName, req.GroupIDs, req.Runtime)
+			if completeErr != nil {
+				message = infraerrors.Message(completeErr)
+			} else {
+				accountID = ids[0]
 			}
 		}
 		if message != "" {
