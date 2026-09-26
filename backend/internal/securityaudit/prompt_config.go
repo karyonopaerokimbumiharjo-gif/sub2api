@@ -767,6 +767,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		})
 	}
 	active := ActiveConfig{
+		NativeAuditEnabled:  cfg.NativeAuditEnabled,
 		RiskControlEnabled:  riskControlEnabled,
 		Enabled:             cfg.Enabled,
 		BlockingEnabled:     cfg.BlockingEnabled,

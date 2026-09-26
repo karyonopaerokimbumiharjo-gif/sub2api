@@ -72,3 +72,18 @@ func TestEmailFilterCanonicalizationAndDeletionHash(t *testing.T) {
 	require.Equal(t, canonicalEventFilter(f), canonicalEventFilter(EventFilter{UserEmail: "person@example.test"}))
 	require.NotEqual(t, canonicalEventFilter(f), canonicalEventFilter(EventFilter{}))
 }
+
+func TestNativeSelectionReportsDormantCustomAudit(t *testing.T) {
+	stored := DefaultStorageConfig()
+	stored.NativeAuditEnabled = true
+	stored.Enabled = true
+	stored.BlockingEnabled = true
+	require.Equal(t, ModeOff, PublicFromStorage(stored, true, nil).EffectiveMode)
+	manager := &ConfigManager{}
+	manager.expectedBlocking.Store(true)
+	manager.snapshot.Store(&activeConfigSnapshot{active: ActiveConfig{NativeAuditEnabled: true, RiskControlEnabled: true, Enabled: true, BlockingEnabled: true}})
+	require.False(t, manager.BlockingActivationDegraded())
+	require.Equal(t, ModeOff, manager.EffectiveMode())
+	manager.configUntrusted.Store(true)
+	require.True(t, manager.BlockingActivationDegraded(), "invalid activation must still fail closed")
+}

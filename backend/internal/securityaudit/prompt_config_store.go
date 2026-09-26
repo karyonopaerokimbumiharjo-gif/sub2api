@@ -216,7 +216,7 @@ func (m *ConfigManager) BlockingActivationDegraded() bool {
 	}
 	// A still-active weaker snapshot after a failed blocking activation must not
 	// keep serving allow decisions under the old off/async mode.
-	return active.EffectiveMode() != ModeBlocking
+	return !active.NativeAuditEnabled && active.EffectiveMode() != ModeBlocking
 }
 
 func (m *ConfigManager) EffectiveMode() Mode {
