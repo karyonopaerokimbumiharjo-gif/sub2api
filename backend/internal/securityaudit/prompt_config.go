@@ -85,11 +85,12 @@ type StorageEndpoint struct {
 }
 
 type storageConfig struct {
-	NativeAuditEnabled  bool   `json:"native_audit_enabled"`
-	Enabled             bool   `json:"enabled"`
-	BlockingEnabled     bool   `json:"blocking_enabled"`
-	BlockingAuditMode   string `json:"blocking_audit_mode"`
-	BackgroundAuditMode string `json:"background_audit_mode"`
+	OperatorPolicyEnabled *bool  `json:"operator_policy_enabled"`
+	NativeAuditEnabled    bool   `json:"native_audit_enabled"`
+	Enabled               bool   `json:"enabled"`
+	BlockingEnabled       bool   `json:"blocking_enabled"`
+	BlockingAuditMode     string `json:"blocking_audit_mode"`
+	BackgroundAuditMode   string `json:"background_audit_mode"`
 	// BlockingLatestTurnOnly is retained for compatibility with old policy
 	// snapshots and admin clients. New code uses BlockingAuditMode.
 	BlockingLatestTurnOnly      bool     `json:"blocking_latest_turn_only"`
@@ -140,6 +141,7 @@ type ActiveEndpoint struct {
 }
 
 type ActiveConfig struct {
+	OperatorPolicyEnabled       bool `json:"operator_policy_enabled"`
 	NativeAuditEnabled          bool `json:"native_audit_enabled"`
 	RiskControlEnabled          bool
 	Enabled                     bool
@@ -187,6 +189,7 @@ type PublicEndpoint struct {
 }
 
 type PublicConfig struct {
+	OperatorPolicyEnabled       bool             `json:"operator_policy_enabled"`
 	NativeAuditEnabled          bool             `json:"native_audit_enabled"`
 	Enabled                     bool             `json:"enabled"`
 	BlockingEnabled             bool             `json:"blocking_enabled"`
@@ -249,6 +252,7 @@ type UpdateEndpoint struct {
 }
 
 type UpdateConfigRequest struct {
+	OperatorPolicyEnabled       *bool            `json:"operator_policy_enabled"`
 	NativeAuditEnabled          bool             `json:"native_audit_enabled"`
 	ExpectedConfigVersion       int64            `json:"expected_config_version" binding:"required"`
 	Enabled                     bool             `json:"enabled"`
@@ -775,7 +779,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly, StorePassEvents: cfg.StorePassEvents,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
-		NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
+		OperatorPolicyEnabled: operatorPolicyEnabled(cfg.OperatorPolicyEnabled), NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		EffectiveMode: active.EffectiveMode(), Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
@@ -792,7 +796,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 		StorePassEvents: cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		AdaptiveEnabled: cfg.AdaptiveEnabled, AdaptiveCollectWhenDisabled: cfg.AdaptiveCollectWhenDisabled,
 		AdaptiveAllowSampleRate: cfg.AdaptiveAllowSampleRate, AdaptiveRiskSampleRate: cfg.AdaptiveRiskSampleRate,
-		NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
+		OperatorPolicyEnabled: operatorPolicyEnabled(cfg.OperatorPolicyEnabled), NativeAuditEnabled: cfg.NativeAuditEnabled, JevSafetyEnabled: cfg.JevSafetyEnabled,
 		OutputAuditEnabled: cfg.OutputAuditEnabled, OutputAllowSampleRate: cfg.OutputAllowSampleRate, OutputRiskSampleRate: cfg.OutputRiskSampleRate,
 		PromptChunkConcurrency: cfg.PromptChunkConcurrency,
 		QueueCapacity:          cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,

@@ -394,7 +394,7 @@ func eventFilterFromQuery(c *gin.Context) (EventFilter, error) {
 		AuditSource: c.Query("audit_source"),
 		Decision:    c.Query("decision"), RiskLevel: c.Query("risk_level"), Endpoint: c.Query("endpoint"),
 		GroupID: groupID, UserID: userID, APIKeyID: apiKeyID, RequestID: c.Query("request_id"),
-		PromptHash: c.Query("prompt_hash"), Keyword: c.Query("keyword"),
+		PromptHash: c.Query("prompt_hash"), Keyword: c.Query("keyword"), UserEmail: c.Query("user_email"),
 	}
 	if err := validateEventSource(filter.AuditSource); err != nil {
 		return EventFilter{}, infraerrors.BadRequest("prompt_audit_invalid_source", "审核来源无效")

@@ -11,6 +11,7 @@ import (
 )
 
 type PromptService struct {
+	hitRecorder  func(context.Context, PromptSnapshot, *NormalizedResult)
 	config       ConfigStore
 	repo         *PostgreSQLRepository
 	payload      *RedisPayloadStore
@@ -443,6 +444,9 @@ func (s *PromptService) rememberBlocked(ctx context.Context, req Request, cfg Ac
 }
 
 func (s *PromptService) onBackgroundAuditComplete(cfg ActiveConfig, snapshot PromptSnapshot, decision *PromptDecision) {
+	if s != nil && s.hitRecorder != nil && decision != nil && decision.Result != nil && (decision.Kind == DecisionBlock || decision.Kind == DecisionFlag) {
+		s.hitRecorder(context.Background(), snapshot, decision.Result)
+	}
 	if s == nil || decision == nil {
 		return
 	}

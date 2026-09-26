@@ -97,12 +97,14 @@ type OutputCapture struct {
 }
 
 type Request struct {
-	OutputCapture *OutputCapture
-	RequireJev    bool
-	RequestID     string
-	UserID        int64
-	Username      string
-	UserEmail     string
+	NativeScanners        []string
+	OperatorPolicyEnabled bool
+	OutputCapture         *OutputCapture
+	RequireJev            bool
+	RequestID             string
+	UserID                int64
+	Username              string
+	UserEmail             string
 	// PromptAuditBypass comes only from the authenticated server-side user
 	// snapshot. Clients cannot opt themselves out of auditing.
 	PromptAuditBypass bool
@@ -211,6 +213,7 @@ type PromptDecision struct {
 }
 
 type LegacyDecision struct {
+	BioTier        string `json:"bio_tier,omitempty"`
 	AuditLatencyMS *int   `json:"audit_latency_ms,omitempty"`
 	Allowed        bool   `json:"allowed"`
 	Blocked        bool   `json:"blocked"`

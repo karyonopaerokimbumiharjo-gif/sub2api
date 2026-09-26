@@ -1,22 +1,14 @@
 package securityaudit
 
+import "github.com/Wei-Shaw/sub2api/internal/pkg/auditpolicy"
+
 // These tiers classify the assistance requested/provided, never the presence
 // of biology words or a user's unsupported claim of research authorization.
 const BioPolicyVersion = "pegasus-bio-v1"
 
-type BioPolicy struct {
-	Tier        string `json:"tier"`
-	Description string `json:"description"`
-	Action      string `json:"action"`
-}
+type BioPolicy = auditpolicy.BioPolicy
 
-var BioPolicyCatalog = []BioPolicy{
-	{"B0", "Benign biology, public health, provenance, citation, safety and non-operational research", "allow"},
-	{"B1", "General dual-use concepts; high-level explanation without operational capability uplift", "allow_limited"},
-	{"B2", "Concrete operational capability uplift with materially unclear intent or authorization", "review_required"},
-	{"B3", "Actionable assistance materially enabling harmful biological or chemical activity", "block"},
-	{"B4", "Real-world acquisition, weaponization, deployment, target selection or execution of biological or chemical harm", "hard_block"},
-}
+var BioPolicyCatalog = auditpolicy.BioTiers
 
 func applyBioTier(result *NormalizedResult, tier string) {
 	if result.ScannerEvidence == nil {

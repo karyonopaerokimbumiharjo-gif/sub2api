@@ -83,6 +83,7 @@ INSERT INTO content_moderation_logs (
 
 func (r *contentModerationRepository) ListLogs(ctx context.Context, filter service.ContentModerationLogFilter) ([]service.ContentModerationLog, *pagination.PaginationResult, error) {
 	where, args := buildContentModerationLogWhere(filter)
+	where = append(where, "COALESCE(l.engine_meta->>'event_role','')<>'notification'")
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
 
 	var total int64

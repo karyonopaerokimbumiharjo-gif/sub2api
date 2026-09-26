@@ -1092,7 +1092,7 @@
           <div class="text-sm break-words" data-test="audit-engine-meta">
             <span class="font-medium">{{ t('admin.riskControl.auditSource') }}: </span>
             <template v-if="inputDetailRow.engine_meta">
-              {{ engineLabel(inputDetailRow.engine_meta.engine) }} · {{ inputDetailRow.engine_meta.model || '-' }} · {{ inputDetailRow.engine_meta.rules_version || '-' }}
+              {{ engineLabel(inputDetailRow.engine_meta.engine) }} · {{ inputDetailRow.engine_meta.model || '-' }} · {{ inputDetailRow.engine_meta.rules_version || '-' }}<span v-if="inputDetailRow.engine_meta.bio_tier"> · 生物风险 {{ inputDetailRow.engine_meta.bio_tier }}</span>
               <span v-if="inputDetailRow.engine_meta.skipped_images"> · {{ t('admin.riskControl.skippedImages', { count: inputDetailRow.engine_meta.skipped_images }) }}</span>
             </template>
             <template v-else>{{ ['cyber_policy', 'keyword_block', 'hash_block'].includes(inputDetailRow.action) ? '-' : t('admin.riskControl.legacyAuditSource') }}</template>
@@ -1136,7 +1136,13 @@
                 {{ inputDetailRow.group_name }}
               </span>
             </div>
+            <p v-if="inputDetailLoading" class="mt-3 text-sm" role="status">{{ t('common.loading') }}</p>
+            <p v-else-if="inputDetailError" class="mt-3 text-sm text-amber-700">完整内容加载失败，当前显示列表摘要。<button class="ml-2 underline" @click="openInputDetail(inputDetailRow)">重试</button></p>
+            <p v-else class="mt-3 text-sm text-gray-500" data-test="native-content-availability">{{ t(`admin.promptAudit.events.contentAvailability.${inputDetailEvent?.content_availability || 'excerpt_only'}`) }}</p>
+            <p class="mt-4 font-medium">已保存的请求内容（脱敏）</p>
             <pre class="mt-4 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm leading-6 text-gray-100 shadow-inner dark:bg-black/50">{{ inputDetailText }}</pre>
+            <p class="mt-4 font-medium">实际送审内容（原生引擎审核最新用户输入）</p>
+            <pre class="mt-2 max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-4 text-sm text-gray-100" data-test="native-audited-content">{{ inputDetailEvent?.snapshot.audited_prompt || '此历史记录未保存送审全文' }}</pre>
           </div>
         </div>
 
@@ -1151,6 +1157,8 @@
 </template>
 
 <script setup lang="ts">
+import { getEvent as getAuditEvent } from '@/features/prompt-audit/api'
+import type { PromptAuditEvent } from '@/features/prompt-audit/types'
 import { computed, onMounted, onUnmounted, reactive, ref, toRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -1257,6 +1265,9 @@ const moderationTestPrompt = ref('')
 const moderationTestImages = ref<string[]>([])
 const moderationTestResult = ref<ContentModerationTestAuditResult | null>(null)
 const inputDetailRow = ref<ContentModerationLog | null>(null)
+const inputDetailEvent = ref<PromptAuditEvent | null>(null)
+const inputDetailLoading = ref(false)
+const inputDetailError = ref(false)
 const savedEngine = ref<ModerationEngine>('openai')
 const engineOptions: SelectOption[] = [{ value: 'openai', label: 'OpenAI' }, { value: 'typesafe', label: 'TypeSafe AI' }]
 const engineLabel = (engine: ModerationEngine) => engine === 'typesafe' ? 'TypeSafe AI' : 'OpenAI'
@@ -1673,7 +1684,7 @@ const riskThresholdRows = computed<RiskThresholdRow[]>(() => (
 
 const inputDetailText = computed(() => {
   if (!inputDetailRow.value) return '-'
-  return inputDetailRow.value.input_excerpt || inputDetailRow.value.error || '-'
+  return inputDetailEvent.value?.snapshot.full_prompt || inputDetailRow.value.input_excerpt || inputDetailRow.value.error || '-'
 })
 
 const queueUsagePercent = computed(() => `${Math.min(100, Math.max(0, status.value?.queue_usage_percent ?? 0)).toFixed(1)}%`)
@@ -1983,12 +1994,24 @@ function inputSummaryText(row: ContentModerationLog): string {
   return row.input_excerpt || row.error || '-'
 }
 
-function openInputDetail(row: ContentModerationLog) {
+async function openInputDetail(row: ContentModerationLog) {
   inputDetailRow.value = row
+  inputDetailEvent.value = null
+  inputDetailError.value = false
+  inputDetailLoading.value = true
+  try {
+    const event = await getAuditEvent(-row.id)
+    if (inputDetailRow.value?.id === row.id) inputDetailEvent.value = event
+  } catch {
+    if (inputDetailRow.value?.id === row.id) inputDetailError.value = true
+  } finally {
+    if (inputDetailRow.value?.id === row.id) inputDetailLoading.value = false
+  }
 }
 
 function closeInputDetail() {
   inputDetailRow.value = null
+  inputDetailEvent.value = null
 }
 
 async function unbanUser(row: ContentModerationLog) {
@@ -2236,6 +2259,8 @@ function modeDescription(mode: ModerationMode): string {
 }
 
 function resultLabel(row: ContentModerationLog): string {
+  if (row.action === 'review_required') return '待复核（未放行）'
+  if (row.action === 'skipped') return '未送审（已记录）'
   if (row.action === 'cyber_policy') return t('admin.riskControl.action.cyberPolicy')
   if (row.action === 'keyword_block') return t('admin.riskControl.action.keywordBlock')
   if (row.action === 'block') return t('admin.riskControl.action.block')
@@ -2246,7 +2271,7 @@ function resultLabel(row: ContentModerationLog): string {
 
 function resultBadgeClass(row: ContentModerationLog): string {
   if (row.action === 'block' || row.action === 'keyword_block' || row.action === 'cyber_policy') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-  if (row.action === 'error' || row.error) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  if (['error', 'review_required', 'skipped'].includes(row.action) || row.error) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
   if (row.flagged) return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300'
   return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
 }

@@ -140,12 +140,14 @@ func ContentModerationCategories() []string {
 }
 
 type ContentModerationConfig struct {
-	Engine   string                         `json:"engine,omitempty"`
-	TypeSafe *ContentModerationEngineConfig `json:"typesafe,omitempty"`
-	Enabled  bool                           `json:"enabled"`
-	Mode     string                         `json:"mode"`
-	BaseURL  string                         `json:"base_url"`
-	Model    string                         `json:"model"`
+	PolicyScanners        []string                       `json:"-"`
+	OperatorPolicyEnabled bool                           `json:"-"`
+	Engine                string                         `json:"engine,omitempty"`
+	TypeSafe              *ContentModerationEngineConfig `json:"typesafe,omitempty"`
+	Enabled               bool                           `json:"enabled"`
+	Mode                  string                         `json:"mode"`
+	BaseURL               string                         `json:"base_url"`
+	Model                 string                         `json:"model"`
 	// ProxyID 指定审计请求使用的代理服务器（IP管理-代理服务器），nil 表示直连。
 	ProxyID              *int64                       `json:"proxy_id,omitempty"`
 	APIKey               string                       `json:"api_key,omitempty"`
@@ -317,18 +319,22 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
-	RequestID  string
-	UserID     int64
-	UserEmail  string
-	APIKeyID   int64
-	APIKeyName string
-	GroupID    *int64
-	GroupName  string
-	Endpoint   string
-	Provider   string
-	Model      string
-	Protocol   string
-	Body       []byte
+	PolicyScanners        []string
+	OperatorPolicyEnabled bool
+	Strict                bool
+	AuditSubject          string
+	RequestID             string
+	UserID                int64
+	UserEmail             string
+	APIKeyID              int64
+	APIKeyName            string
+	GroupID               *int64
+	GroupName             string
+	Endpoint              string
+	Provider              string
+	Model                 string
+	Protocol              string
+	Body                  []byte
 }
 
 type ContentModerationInput struct {
@@ -383,6 +389,7 @@ func (in ContentModerationInput) Hash() string {
 }
 
 type ContentModerationDecision struct {
+	BioTier         string             `json:"bio_tier,omitempty"`
 	AuditLatencyMS  *int               `json:"-"`
 	Allowed         bool               `json:"allowed"`
 	Blocked         bool               `json:"blocked"`
@@ -516,6 +523,8 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
+	localHitMu               sync.Mutex
+	localHits                map[string]time.Time
 	settingRepo              SettingRepository
 	repo                     ContentModerationRepository
 	hashCache                ContentModerationHashCache
@@ -828,6 +837,9 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 	}
 	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
 	if err != nil {
+		if input.Strict {
+			return nil, err
+		}
 		slog.Warn("content_moderation.skip_config_load_failed",
 			"user_id", input.UserID,
 			"api_key_id", input.APIKeyID,
@@ -846,7 +858,17 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"protocol", input.Protocol)
 		return allow, nil
 	}
-	cfg := runtimeSnapshot.config
+	cfg := cloneContentModerationConfig(runtimeSnapshot.config)
+	cfg.PolicyScanners = append([]string(nil), input.PolicyScanners...)
+	cfg.OperatorPolicyEnabled = input.OperatorPolicyEnabled
+	for _, id := range cfg.PolicyScanners {
+		cfg.Thresholds["intent_"+id] = 0.90
+	}
+	if cfg.OperatorPolicyEnabled {
+		cfg.Thresholds["operator_ctf"] = 0.90
+		cfg.Thresholds["operator_repository"] = 0.90
+	}
+	cfg.Thresholds["intent_biological_risk"] = 0.90
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -889,6 +911,12 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	if !inGroupScope {
+		if cfg.RecordNonHits {
+			content := ExtractContentModerationInput(input.Protocol, input.Body)
+			log := s.buildLog(input, cfg, "skipped", false, "", 0, nil, "", nil, nil, "group_out_of_scope")
+			log.EngineMeta = moderationAttemptMeta(cfg, content)
+			s.enqueueRecord(input, cfg, log, "", false, false)
+		}
 		slog.Info("content_moderation.skip_group_out_of_scope",
 			"user_id", input.UserID,
 			"api_key_id", input.APIKeyID,
@@ -901,6 +929,12 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	if !inModelScope {
+		if cfg.RecordNonHits {
+			content := ExtractContentModerationInput(input.Protocol, input.Body)
+			log := s.buildLog(input, cfg, "skipped", false, "", 0, nil, "", nil, nil, "model_out_of_scope")
+			log.EngineMeta = moderationAttemptMeta(cfg, content)
+			s.enqueueRecord(input, cfg, log, "", false, false)
+		}
 		slog.Info("content_moderation.skip_model_out_of_scope",
 			"user_id", input.UserID,
 			"api_key_id", input.APIKeyID,
@@ -915,6 +949,11 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 	}
 	content := ExtractContentModerationInput(input.Protocol, input.Body)
 	if content.IsEmpty() {
+		if cfg.RecordNonHits {
+			log := s.buildLog(input, cfg, "skipped", false, "", 0, nil, "", nil, nil, "no_auditable_input")
+			log.EngineMeta = moderationAttemptMeta(cfg, content)
+			s.enqueueRecord(input, cfg, log, "", false, false)
+		}
 		slog.Info("content_moderation.skip_empty_input",
 			"user_id", input.UserID,
 			"api_key_id", input.APIKeyID,
@@ -964,6 +1003,11 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			}
 		}
 		if cfg.KeywordBlockingMode == ContentModerationKeywordModeKeywordOnly {
+			if cfg.RecordNonHits {
+				log := s.buildLog(input, cfg, "allow", false, "", 0, nil, content.Text, nil, nil, "")
+				log.EngineMeta = &ContentModerationEngineMeta{Engine: "native-keyword", RulesVersion: "literal-keywords-v1"}
+				s.enqueueRecord(input, cfg, log, "", false, false)
+			}
 			s.recordPreBlockSyncMetric(0, ContentModerationActionAllow)
 			slog.Info("content_moderation.skip_api_keyword_only",
 				"user_id", input.UserID,
@@ -1009,6 +1053,12 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		}
 	}
 	if !cfg.shouldSample(hashText) {
+		if cfg.RecordNonHits {
+			content := ExtractContentModerationInput(input.Protocol, input.Body)
+			log := s.buildLog(input, cfg, "skipped", false, "", 0, nil, "", nil, nil, "not_sampled")
+			log.EngineMeta = moderationAttemptMeta(cfg, content)
+			s.enqueueRecord(input, cfg, log, "", false, false)
+		}
 		if cfg.Mode == ContentModerationModePreBlock {
 			s.recordPreBlockSyncMetric(0, ContentModerationActionAllow)
 		}
@@ -1078,20 +1128,36 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		if queueDelay != nil {
 			s.asyncErrors.Add(1)
 		}
-		if cfg.RecordNonHits {
+		{
 			log := s.buildLog(input, cfg, ContentModerationActionError, false, "", 0, nil, content.ExcerptText(), &latency, queueDelay, err.Error())
 			log.EngineMeta = moderationAttemptMeta(cfg, content)
 			_ = s.repo.CreateLog(ctx, log)
 		}
+		if input.Strict {
+			return &ContentModerationDecision{Blocked: true, StatusCode: 503, Message: "安全审核暂时不可用，请稍后重试", Action: ContentModerationActionError}
+		}
 		return allow
 	}
 
+	if result.EngineMeta != nil {
+		result.EngineMeta.AuditSubject = input.AuditSubject
+	}
 	flagged, highestCategory, highestScore := evaluateModerationScores(result.CategoryScores, cfg.Thresholds)
+	bioTier := ""
+	if result.EngineMeta != nil {
+		bioTier = result.EngineMeta.BioTier
+	}
 	action := ContentModerationActionAllow
 	blocked := false
 	if allowBlock && flagged && cfg.Mode == ContentModerationModePreBlock {
 		action = ContentModerationActionBlock
 		blocked = true
+	}
+	if bioTier == "B2" && !blocked {
+		log := s.buildLog(input, cfg, "review_required", false, "biological_risk", 0, result.CategoryScores, content.ExcerptText(), &latency, queueDelay, "")
+		log.EngineMeta = result.EngineMeta
+		s.enqueueRecord(input, cfg, log, "", false, false)
+		return &ContentModerationDecision{BioTier: bioTier, Blocked: true, StatusCode: 403, Message: "生物风险尚需复核，本次未放行；这不代表已确认违规", Action: "review_required"}
 	}
 	if trackPreBlock {
 		s.recordPreBlockSyncMetric(latency, action)
@@ -1123,7 +1189,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 	}
 	if blocked {
 		return &ContentModerationDecision{
-			AuditLatencyMS:  &latency,
+			BioTier: bioTier, AuditLatencyMS: &latency,
 			Allowed:         false,
 			Blocked:         true,
 			Flagged:         true,
@@ -1136,7 +1202,7 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		}
 	}
 	return &ContentModerationDecision{
-		AuditLatencyMS:  &latency,
+		BioTier: bioTier, AuditLatencyMS: &latency,
 		Allowed:         true,
 		Flagged:         flagged,
 		Message:         "",
@@ -1195,7 +1261,16 @@ func (s *ContentModerationService) enqueueAsync(input ContentModerationCheckInpu
 }
 
 func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInput, cfg *ContentModerationConfig, log *ContentModerationLog, inputHash string, recordHash bool, applySideEffects bool) {
-	if s == nil || s.asyncQueue == nil || log == nil {
+	if s == nil || log == nil {
+		return
+	}
+	fallback := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		s.persistContentModerationLog(ctx, cfg, log, inputHash, recordHash, applySideEffects)
+	}
+	if s.asyncQueue == nil {
+		fallback()
 		return
 	}
 	queueSize := defaultContentModerationQueueSize
@@ -1208,7 +1283,7 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 			"endpoint", input.Endpoint,
 			"action", log.Action,
 			"queue_size", queueSize)
-		s.asyncDropped.Add(1)
+		fallback()
 		return
 	}
 	task := contentModerationTask{
@@ -1228,7 +1303,7 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 			"user_id", input.UserID,
 			"endpoint", input.Endpoint,
 			"action", log.Action)
-		s.asyncDropped.Add(1)
+		fallback()
 	}
 }
 
@@ -2739,6 +2814,9 @@ func evaluateModerationScores(scores map[string]float64, thresholds map[string]f
 		}
 	}
 	for category, score := range scores {
+		if threshold, ok := thresholds[category]; ok && score >= threshold {
+			flagged = true
+		}
 		if score > highestScore || highestCategory == "" {
 			highestScore = score
 			highestCategory = category
@@ -3173,5 +3251,5 @@ func (s *ContentModerationService) NativeAuditReady(ctx context.Context) bool {
 		return false
 	}
 	cfg = cfg.effectiveEngine(cfg.Engine)
-	return cfg.Enabled && cfg.Mode != ContentModerationModeOff && len(cfg.apiKeys()) > 0 && validateNativeModerationDestination(cfg) == nil
+	return cfg.Enabled && cfg.Mode != ContentModerationModeOff && ((cfg.Mode == ContentModerationModePreBlock && cfg.KeywordBlockingMode == ContentModerationKeywordModeKeywordOnly) || (len(cfg.apiKeys()) > 0 && validateNativeModerationDestination(cfg) == nil))
 }

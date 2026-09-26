@@ -3,6 +3,9 @@ import { apiClient } from '../client'
 export type ModerationMode = 'off' | 'observe' | 'pre_block'
 export type ModerationEngine = 'openai' | 'typesafe'
 export interface ModerationEngineMeta {
+  bio_tier?: string
+  audit_source?: string
+  event_role?: string
   engine: ModerationEngine
   model: string
   rules_version: string

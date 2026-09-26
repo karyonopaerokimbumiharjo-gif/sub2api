@@ -7,6 +7,7 @@ import RiskControlView from '../RiskControlView.vue'
 import type { ContentModerationAPIKeyStatus, ContentModerationConfig, UpdateContentModerationConfig } from '@/api/admin/riskControl'
 
 const {
+  getAuditEvent,
   getConfig,
   updateConfig,
   getStatus,
@@ -17,6 +18,7 @@ const {
   showError,
   showSuccess,
 } = vi.hoisted(() => ({
+  getAuditEvent: vi.fn(),
   getConfig: vi.fn(),
   updateConfig: vi.fn(),
   getStatus: vi.fn(),
@@ -27,6 +29,8 @@ const {
   showError: vi.fn(),
   showSuccess: vi.fn(),
 }))
+
+vi.mock('@/features/prompt-audit/api', () => ({ getEvent: getAuditEvent }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -218,6 +222,19 @@ describe('admin RiskControlView', () => {
       api_key_masks: [],
       api_key_statuses: [],
     }))
+  })
+
+  it('loads saved native request and audited text instead of presenting the preview as full content', async () => {
+    listLogs.mockResolvedValue({ items: [{ id: 9, action: 'allow', input_excerpt: 'short preview', user_email: 'person@example.test', category_scores: {}, created_at: '2026-09-27T00:00:00Z' }], total: 1, page: 1, page_size: 20 })
+    getAuditEvent.mockResolvedValue({ content_availability: 'full', snapshot: { full_prompt: 'FULL REQUEST END', audited_prompt: 'ACTUAL AUDIT END' } })
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+    await findButtonByText(wrapper, 'short preview').trigger('click')
+    await flushPromises()
+    expect(getAuditEvent).toHaveBeenCalledWith(-9)
+    expect(wrapper.text()).toContain('FULL REQUEST END')
+    expect(wrapper.get('[data-test="native-audited-content"]').text()).toBe('ACTUAL AUDIT END')
+    wrapper.unmount()
   })
 
   it.each([false, true])('renders exactly the required page layout when embedded is %s', async (embedded) => {

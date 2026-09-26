@@ -27,8 +27,8 @@ func nativeModerationEvidence(body []byte, auditedText string) (full, audited, h
 	}
 	audited = redactContentModerationSecrets(auditedText)
 	truncated = utf8.RuneCountInString(full) > maxNativeAuditEvidenceRunes || utf8.RuneCountInString(audited) > maxNativeAuditEvidenceRunes
-	full = trimRunes(full, maxNativeAuditEvidenceRunes)
-	audited = trimRunes(audited, maxNativeAuditEvidenceRunes)
+	full = boundNativeEvidence(full)
+	audited = boundNativeEvidence(audited)
 	if auditedText != "" {
 		digest := sha256.Sum256([]byte(auditedText))
 		hash = hex.EncodeToString(digest[:])
@@ -76,4 +76,21 @@ func redactNativeAuditValue(value any) {
 			redactNativeAuditValue(child)
 		}
 	}
+}
+
+func boundNativeEvidence(text string) string {
+	runes := []rune(text)
+	if len(runes) <= maxNativeAuditEvidenceRunes {
+		return text
+	}
+	marker := "\n[middle omitted; beginning and latest tail retained]\n"
+	remain := maxNativeAuditEvidenceRunes - len([]rune(marker))
+	head := remain / 2
+	return string(runes[:head]) + marker + string(runes[len(runes)-(remain-head):])
+}
+
+// AuditRequestEvidence exposes only the bounded, redacted administrator copy.
+func AuditRequestEvidence(body []byte) string {
+	full, _, _, _ := nativeModerationEvidence(body, "")
+	return full
 }

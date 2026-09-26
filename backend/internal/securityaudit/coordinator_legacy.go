@@ -19,6 +19,7 @@ func (a *LegacyModerationAdapter) Check(ctx context.Context, req Request) (*Lega
 		return nil, nil
 	}
 	decision, err := a.service.Check(ctx, service.ContentModerationCheckInput{
+		AuditSubject: req.Stage, Strict: true, PolicyScanners: req.NativeScanners, OperatorPolicyEnabled: req.OperatorPolicyEnabled,
 		RequestID: req.RequestID, UserID: req.UserID, UserEmail: req.UserEmail,
 		APIKeyID: req.APIKeyID, APIKeyName: req.APIKeyName, GroupID: cloneInt64Ptr(req.GroupID),
 		GroupName: req.GroupName, Endpoint: req.Endpoint, Provider: req.Provider,
@@ -28,8 +29,8 @@ func (a *LegacyModerationAdapter) Check(ctx context.Context, req Request) (*Lega
 		return nil, err
 	}
 	return &LegacyDecision{
-		AuditLatencyMS: decision.AuditLatencyMS,
-		Allowed:        decision.Allowed, Blocked: decision.Blocked, Flagged: decision.Flagged,
+		BioTier: decision.BioTier, AuditLatencyMS: decision.AuditLatencyMS,
+		Allowed: decision.Allowed, Blocked: decision.Blocked, Flagged: decision.Flagged,
 		Message: decision.Message, StatusCode: decision.StatusCode,
 		ErrorCode: "content_policy_violation", Action: decision.Action,
 	}, nil

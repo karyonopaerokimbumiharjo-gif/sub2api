@@ -266,3 +266,23 @@ func TestUnifiedAuditUpstreamCyberPolicyIsNotANativeVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestUnifiedAuditEmailQueryAcrossSources(t *testing.T) {
+	db := openPromptAuditIntegrationDB(t)
+	repo := NewPostgreSQLRepository(db)
+	ctx := context.Background()
+	snap := integrationSnapshot("email-legacy")
+	snap.UserEmailSnapshot = "Person@Example.Test"
+	_, err := repo.RecordBlocking(ctx, snap, 1, integrationResult(EventPass), true)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO content_moderation_logs(request_id,user_email,action,input_excerpt) VALUES ('email-native','person@example.test','allow','test'),('email-other','other@example.test','allow','test')`)
+	require.NoError(t, err)
+	for _, aggregate := range []bool{false, true} {
+		page, err := repo.ListEvents(ctx, EventFilter{UserEmail: " PERSON@example.test ", Aggregate: aggregate}, 1, 20)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), page.Total)
+		for _, event := range page.Items {
+			require.Equal(t, "person@example.test", strings.ToLower(event.Snapshot.UserEmailSnapshot))
+		}
+	}
+}

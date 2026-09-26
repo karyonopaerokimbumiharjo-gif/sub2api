@@ -16,6 +16,22 @@ type BlockingOutputEngine interface {
 }
 
 func (c *Coordinator) GateOutput(ctx context.Context, req Request, body []byte, stream bool) Decision {
+	if c != nil && c.nativeAuditSelected() {
+		text := ExtractAssistantOutput(body, stream) + extractOutputToolText(body, stream)
+		if len(body) > 1<<20 || strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > DefaultFullPromptMaxRunes {
+			return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
+		}
+		req.Body, _ = json.Marshal(map[string]string{"input": text})
+		req.Protocol = "openai_responses"
+		req.Stage = "native_output"
+		d := c.Check(ctx, req)
+		// B1 output contains only high-level assistance. B2+ never releases.
+		if d.Legacy != nil && d.Legacy.BioTier == "B1" && !d.Legacy.Blocked {
+			return allowDecision(d.Legacy, nil)
+		}
+		return d
+	}
+
 	if c != nil && c.prompt != nil {
 		if gate, ok := c.prompt.(BlockingOutputEngine); ok {
 			return gate.GateOutput(ctx, req, body, stream)

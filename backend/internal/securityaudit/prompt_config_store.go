@@ -503,7 +503,8 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		currentByID[endpoint.ID] = endpoint
 	}
 	next := storageConfig{
-		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled,
+		OperatorPolicyEnabled: current.OperatorPolicyEnabled,
+		Enabled:               req.Enabled, BlockingEnabled: req.BlockingEnabled,
 		BlockingAuditMode:      normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly),
 		BackgroundAuditMode:    requestedBackgroundAuditMode(req),
 		BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
@@ -517,6 +518,9 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		WhitelistEmails: append([]string(nil), current.WhitelistEmails...),
 		ConfigVersion:   current.ConfigVersion, UpdatedBy: actorID,
 		Endpoints: make([]StorageEndpoint, 0, len(req.Endpoints)),
+	}
+	if req.OperatorPolicyEnabled != nil {
+		next.OperatorPolicyEnabled = req.OperatorPolicyEnabled
 	}
 	if req.WhitelistEmails != nil {
 		next.WhitelistEmails = append([]string(nil), (*req.WhitelistEmails)...)

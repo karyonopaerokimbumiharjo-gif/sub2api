@@ -14,8 +14,9 @@ import (
 )
 
 type Question struct {
-	Type         string `json:"type"`
-	Instructions string `json:"instructions"`
+	Type         string            `json:"type"`
+	Instructions any               `json:"instructions"`
+	Criteria     map[string]string `json:"criteria,omitempty"`
 }
 
 type Request struct {
@@ -24,10 +25,19 @@ type Request struct {
 	Questions map[string]Question `json:"questions"`
 }
 
+type ChoiceAnswer struct {
+	Type          string              `json:"type"`
+	Choice        string              `json:"choice"`
+	Confidence    *float64            `json:"confidence"`
+	Probabilities map[string]*float64 `json:"probabilities"`
+	Noul          *float64            `json:"noul"`
+}
+
 type Result struct {
-	Model  string
-	Scores map[string]float64
-	Usage  Usage
+	Choices map[string]ChoiceAnswer
+	Model   string
+	Scores  map[string]float64
+	Usage   Usage
 }
 
 type Usage struct {
@@ -64,23 +74,48 @@ func Evaluate(ctx context.Context, client *http.Client, baseURL, key string, inp
 		return nil, resp.StatusCode, fmt.Errorf("typesafe API status %d", resp.StatusCode)
 	}
 	var out struct {
-		Model   string `json:"model"`
-		Usage   Usage  `json:"usage"`
-		Answers map[string]struct {
-			Type string   `json:"type"`
-			Noul *float64 `json:"noul"`
-		} `json:"answers"`
+		Model   string                  `json:"model"`
+		Usage   Usage                   `json:"usage"`
+		Answers map[string]ChoiceAnswer `json:"answers"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil || strings.TrimSpace(out.Model) == "" {
 		return nil, resp.StatusCode, errors.New("typesafe invalid response")
 	}
-	result := &Result{Model: out.Model, Usage: out.Usage, Scores: make(map[string]float64, len(input.Questions))}
+	result := &Result{Choices: map[string]ChoiceAnswer{}, Model: out.Model, Usage: out.Usage, Scores: make(map[string]float64, len(input.Questions))}
 	for id := range input.Questions {
 		answer, ok := out.Answers[id]
+		question := input.Questions[id]
+		if question.Type == "choice" {
+			if !ok || !validChoice(answer, question.Criteria) {
+				return nil, resp.StatusCode, fmt.Errorf("typesafe invalid choice for %s", id)
+			}
+			result.Choices[id] = answer
+			continue
+		}
 		if !ok || answer.Type != "noul" || answer.Noul == nil || math.IsNaN(*answer.Noul) || math.IsInf(*answer.Noul, 0) || *answer.Noul < 0 || *answer.Noul > 1 {
 			return nil, resp.StatusCode, fmt.Errorf("typesafe invalid answer for %s", id)
 		}
 		result.Scores[id] = *answer.Noul
 	}
 	return result, resp.StatusCode, nil
+}
+
+func validChoice(a ChoiceAnswer, criteria map[string]string) bool {
+	finite := func(p *float64) bool { return p != nil && !math.IsNaN(*p) && !math.IsInf(*p, 0) && *p >= 0 && *p <= 1 }
+	if a.Type != "choice" || !finite(a.Confidence) || len(a.Probabilities) != len(criteria) {
+		return false
+	}
+	selected := a.Probabilities[a.Choice]
+	if _, ok := criteria[a.Choice]; !ok || !finite(selected) {
+		return false
+	}
+	sum := 0.0
+	for key := range criteria {
+		p := a.Probabilities[key]
+		if !finite(p) || *p > *selected+0.000001 {
+			return false
+		}
+		sum += *p
+	}
+	return math.Abs(sum-1) < 0.00001
 }

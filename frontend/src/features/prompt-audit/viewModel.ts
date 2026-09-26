@@ -54,7 +54,8 @@ export function configToDraft(config: PromptAuditConfig): PromptAuditDraft {
 	adaptive_collect_when_disabled: config.adaptive_collect_when_disabled ?? true,
 	adaptive_allow_sample_rate: Number.isFinite(Number(config.adaptive_allow_sample_rate)) ? Number(config.adaptive_allow_sample_rate) : DEFAULT_ADAPTIVE_ALLOW_SAMPLE_RATE,
 	adaptive_risk_sample_rate: Number.isFinite(Number(config.adaptive_risk_sample_rate)) ? Number(config.adaptive_risk_sample_rate) : DEFAULT_ADAPTIVE_RISK_SAMPLE_RATE,
-	native_audit_enabled: config.native_audit_enabled ?? false,
+	operator_policy_enabled: config.operator_policy_enabled ?? true,
+ native_audit_enabled: config.native_audit_enabled ?? false,
   jev_safety_enabled: config.jev_safety_enabled ?? false,
 	output_audit_enabled: config.output_audit_enabled ?? false,
 	output_allow_sample_rate: Number.isFinite(Number(config.output_allow_sample_rate)) ? Number(config.output_allow_sample_rate) : DEFAULT_OUTPUT_ALLOW_SAMPLE_RATE,
@@ -109,7 +110,8 @@ export function buildUpdateRequest(draft: PromptAuditDraft): PromptAuditUpdateRe
 	adaptive_collect_when_disabled: draft.adaptive_collect_when_disabled,
 	adaptive_allow_sample_rate: Number(draft.adaptive_allow_sample_rate),
 	adaptive_risk_sample_rate: Number(draft.adaptive_risk_sample_rate),
-	native_audit_enabled: draft.native_audit_enabled ?? false,
+	operator_policy_enabled: draft.operator_policy_enabled ?? true,
+ native_audit_enabled: draft.native_audit_enabled ?? false,
   jev_safety_enabled: draft.jev_safety_enabled ?? false,
 	output_audit_enabled: draft.output_audit_enabled,
 	output_allow_sample_rate: Number(draft.output_allow_sample_rate),
@@ -159,6 +161,7 @@ export function emptyEventFilters(): PromptEventFilters {
     endpoint: '',
     group_id: '',
     user_id: '',
+    user_email: '',
     api_key_id: '',
     request_id: '',
     prompt_hash: '',
@@ -189,8 +192,8 @@ function toISO(value: string): string | undefined {
 export function eventQueryParams(filters: PromptEventFilters): Record<string, string | number | boolean> {
   const result: Record<string, string | number | boolean> = { aggregate: filters.aggregate !== false }
   if (filters.audit_source) result.audit_source = filters.audit_source
-  for (const key of ['decision', 'risk_level', 'endpoint', 'request_id', 'prompt_hash', 'keyword'] as const) {
-    const value = filters[key].trim()
+  for (const key of ['decision', 'risk_level', 'endpoint', 'request_id', 'prompt_hash', 'keyword', 'user_email'] as const) {
+    const value = (filters[key] ?? '').trim()
     if (value) result[key] = value
   }
   for (const key of ['group_id', 'user_id', 'api_key_id'] as const) {

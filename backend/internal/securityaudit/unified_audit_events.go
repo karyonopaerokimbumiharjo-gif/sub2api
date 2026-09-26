@@ -29,7 +29,7 @@ func validateEventSource(source string) error {
 // from silently broadening a destructive operation.
 func auditSourceSQL(alias string) string {
 	return fmt.Sprintf(`CASE
-		WHEN %[1]s.stage IN ('native_moderation','native_hard_rules') THEN 'native'
+		WHEN %[1]s.stage IN ('native_moderation','native_hard_rules','native_output') THEN 'native'
 		WHEN %[1]s.stage='audit_gap' THEN 'audit_gap'
 		WHEN %[1]s.stage='upstream_feedback' THEN 'upstream'
 		ELSE 'legacy' END`, alias)
@@ -39,7 +39,7 @@ func decorateAuditEventSource(event *Event) {
 	event.EventOrigin = "prompt_audit"
 	event.AuditSource = AuditSourceLegacy
 	switch event.Snapshot.Stage {
-	case "native_moderation", "native_hard_rules":
+	case "native_moderation", "native_hard_rules", "native_output":
 		event.AuditSource = AuditSourceNative
 	case "audit_gap":
 		event.AuditSource = AuditSourceGap
@@ -140,21 +140,22 @@ func nativeAuditEventSelect(withFullPrompt bool) string {
 			WHEN l.endpoint LIKE '%/chat/completions' THEN 'openai_chat'
 			WHEN l.endpoint LIKE '%/messages' THEN 'anthropic_messages' ELSE l.provider END AS protocol,
 		l.model,l.prompt_hash,''::text AS task_fingerprint,
-		CASE WHEN l.action='cyber_policy' THEN 'upstream_feedback' ELSE 'input' END AS audit_subject,l.input_excerpt AS redacted_preview,
-		CASE WHEN l.action='cyber_policy' THEN 'upstream_feedback' ELSE 'native_moderation' END AS stage,
-		CASE WHEN l.action='error' THEN 'error' ELSE 'completed' END AS audit_status,
-		CASE WHEN l.action='error' THEN 'review_required'
+		CASE WHEN l.action='cyber_policy' THEN 'upstream_feedback' WHEN l.engine_meta->>'audit_subject'='native_output' THEN 'output' ELSE 'input' END AS audit_subject,l.input_excerpt AS redacted_preview,
+		CASE WHEN l.action='cyber_policy' THEN 'upstream_feedback' WHEN l.engine_meta->>'audit_subject'='native_output' THEN 'native_output' WHEN l.engine_meta->>'audit_source'='legacy' THEN 'local_hard_rules' ELSE 'native_moderation' END AS stage,
+		CASE WHEN l.action='error' THEN 'error' WHEN l.action='review_required' THEN 'review_required' WHEN l.action='skipped' THEN 'gap' ELSE 'completed' END AS audit_status,
+		CASE WHEN l.action IN ('error','review_required') THEN 'review_required'
 			WHEN l.action='cyber_policy' THEN 'upstream_policy_block'
 			WHEN l.action IN ('block','hash_block','keyword_block') THEN 'critical'
 			WHEN l.flagged THEN 'flag' ELSE 'pass' END AS decision,
-		CASE WHEN l.action IN ('error','cyber_policy') THEN 'unknown' WHEN l.flagged THEN 'high' ELSE 'low' END AS risk_level,
+		CASE WHEN l.action IN ('error','cyber_policy','review_required','skipped') THEN 'unknown' WHEN l.flagged THEN 'high' ELSE 'low' END AS risk_level,
 		CASE WHEN l.action IN ('block','hash_block','keyword_block','cyber_policy') THEN 'Block'
 			WHEN l.action='error' THEN 'Warn' ELSE 'Allow' END AS action,
 		CASE WHEN l.highest_category<>'' AND l.flagged THEN jsonb_build_array(l.highest_category) ELSE '[]'::jsonb END AS categories,
-		'[]'::jsonb AS intent_categories,'[]'::jsonb AS content_categories,
+		COALESCE((SELECT jsonb_agg(substring(key FROM 8)) FROM jsonb_each_text(CASE WHEN jsonb_typeof(l.category_scores)='object' THEN l.category_scores ELSE '{}'::jsonb END) WHERE key LIKE 'intent\_%' AND value::float>=COALESCE((l.threshold_snapshot->>key)::float,0.9)),'[]'::jsonb) AS intent_categories,
+        COALESCE((SELECT jsonb_agg(replace(key,'/','_')) FROM jsonb_each_text(CASE WHEN jsonb_typeof(l.category_scores)='object' THEN l.category_scores ELSE '{}'::jsonb END) WHERE key NOT LIKE 'intent\_%' AND key NOT LIKE 'operator\_%' AND value::float>=COALESCE((l.threshold_snapshot->>key)::float,1)),'[]'::jsonb) AS content_categories,
 		CASE WHEN l.highest_category<>'' AND l.flagged THEN jsonb_build_array(l.highest_category) ELSE '[]'::jsonb END AS matched_scanners,
 		l.category_scores AS scanner_scores,
-		CASE WHEN l.matched_keyword<>'' THEN jsonb_build_object('keyword',l.matched_keyword) ELSE '{}'::jsonb END AS scanner_evidence,
+		CASE WHEN l.matched_keyword<>'' THEN jsonb_build_object('keyword',l.matched_keyword) ELSE '{}'::jsonb END || CASE WHEN COALESCE(l.engine_meta->>'bio_tier','')<>'' THEN jsonb_build_object('bio_tier',l.engine_meta->>'bio_tier','bio_policy_version','pegasus-bio-v1') ELSE '{}'::jsonb END AS scanner_evidence,
 		CASE WHEN l.action='cyber_policy' THEN 'openai-upstream-feedback'
 			WHEN l.action IN ('hash_block','keyword_block') THEN 'native-'||l.action
 			ELSE COALESCE(NULLIF(l.engine_meta->>'engine',''),'native-moderation') END AS scanner_backend,
@@ -168,5 +169,5 @@ func nativeAuditEventSelect(withFullPrompt bool) string {
 	if withFullPrompt {
 		query += `,l.full_prompt,l.audited_prompt`
 	}
-	return query + ` FROM content_moderation_logs l`
+	return query + ` FROM content_moderation_logs l WHERE COALESCE(l.engine_meta->>'event_role','')<>'notification'`
 }

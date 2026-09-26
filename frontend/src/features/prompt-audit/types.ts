@@ -40,6 +40,7 @@ export interface PromptAuditConfig {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  operator_policy_enabled?: boolean
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
@@ -88,6 +89,7 @@ export interface PromptAuditUpdateRequest {
   adaptive_collect_when_disabled: boolean
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
+  operator_policy_enabled?: boolean
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
@@ -363,6 +365,7 @@ export interface PromptEventFilters {
   endpoint: string
   group_id: string
   user_id: string
+  user_email: string
   api_key_id: string
   request_id: string
   prompt_hash: string

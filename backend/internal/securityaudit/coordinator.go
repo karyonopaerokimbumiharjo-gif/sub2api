@@ -57,6 +57,14 @@ type jevSafetyEngine interface {
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
+	if p, ok := prompt.(*PromptService); ok {
+		if controls, ok := legacy.(*LegacyModerationAdapter); ok {
+			p.hitRecorder = controls.RecordPromptResult
+			if p.evaluator != nil {
+				p.evaluator.hitRecorder = controls.RecordPromptResult
+			}
+		}
+	}
 	return &Coordinator{legacy: legacy, prompt: prompt}
 }
 
@@ -111,6 +119,38 @@ func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecis
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+	if c != nil && c.prompt != nil {
+		if policy, ok := c.prompt.(interface {
+			CheckOperatorPolicy(context.Context, Request) (*PromptDecision, error)
+		}); ok {
+			result, err := policy.CheckOperatorPolicy(ctx, req)
+			if err != nil {
+				return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
+			}
+			if result != nil {
+				return c.localResponse(ctx, prioritize(nil, result))
+			}
+		}
+		if selection, ok := c.prompt.(interface{ AuditSelectionExclusive() bool }); ok && selection.AuditSelectionExclusive() && !c.nativeAuditSelected() {
+			if c.prompt.EffectiveMode() != ModeOff {
+				if rules, ok := c.legacy.(localAuditControls); ok {
+					hit, err := rules.CheckLocalKeywords(ctx, req)
+					if err != nil {
+						return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
+					}
+					if hit != nil && (hit.Blocked || hit.Action == "keyword_only") {
+						return prioritize(hit, nil)
+					}
+				}
+			}
+			local := &Coordinator{prompt: c.prompt}
+			return c.localResponse(ctx, local.checkSelected(ctx, req))
+		}
+	}
+	return c.localResponse(ctx, c.checkSelected(ctx, req))
+}
+
+func (c *Coordinator) checkSelected(ctx context.Context, req Request) Decision {
 	if c != nil && c.prompt != nil {
 		if engine, ok := c.prompt.(nativeAuditPolicyEngine); ok && engine.NativeAuditEnabled() {
 			return c.checkNative(ctx, req, engine)

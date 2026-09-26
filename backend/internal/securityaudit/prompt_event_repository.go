@@ -21,6 +21,7 @@ type EventFilter struct {
 	Endpoint    string     `json:"endpoint,omitempty"`
 	GroupID     *int64     `json:"group_id,omitempty"`
 	UserID      *int64     `json:"user_id,omitempty"`
+	UserEmail   string     `json:"user_email,omitempty"`
 	APIKeyID    *int64     `json:"api_key_id,omitempty"`
 	RequestID   string     `json:"request_id,omitempty"`
 	PromptHash  string     `json:"prompt_hash,omitempty"`
@@ -294,6 +295,7 @@ func canonicalEventFilter(filter EventFilter) EventFilter {
 	filter.RequestID = strings.TrimSpace(filter.RequestID)
 	filter.PromptHash = strings.ToLower(strings.TrimSpace(filter.PromptHash))
 	filter.Keyword = strings.TrimSpace(filter.Keyword)
+	filter.UserEmail = strings.ToLower(strings.TrimSpace(filter.UserEmail))
 	if filter.StartAt != nil {
 		value := filter.StartAt.UTC()
 		filter.StartAt = &value
@@ -330,6 +332,9 @@ func buildEventWhere(filter EventFilter, firstIndex int) (string, []any) {
 	}
 	if filter.UserID != nil {
 		add(" AND e.user_id=$%d", *filter.UserID)
+	}
+	if filter.UserEmail != "" {
+		add(" AND lower(e.user_email_snapshot)=$%d", filter.UserEmail)
 	}
 	if filter.APIKeyID != nil {
 		add(" AND e.api_key_id=$%d", *filter.APIKeyID)

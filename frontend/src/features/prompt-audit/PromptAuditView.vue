@@ -15,7 +15,7 @@
 
       <section class="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 dark:border-dark-600 dark:bg-dark-800" data-test="audit-entry">
         <div>
-          <p class="font-medium">{{ serverConfig?.native_audit_enabled ? nativeAuditCopy.active : nativeAuditCopy.title }}</p>
+          <p class="font-medium">{{ serverConfig?.native_audit_enabled ? nativeAuditCopy.active : '当前使用本地审计' }}</p>
           <p class="mt-1 text-sm text-gray-600 dark:text-dark-200">{{ nativeAuditCopy.entryHint }}</p>
           <p v-if="appStore.cachedPublicSettings?.risk_control_enabled === false" class="mt-2 text-sm text-amber-700" data-test="audit-feature-disabled">{{ nativeAuditCopy.featureDisabled }}</p>
         </div>
@@ -55,6 +55,12 @@
                 {{ nativeAuditCopy.toggle }}
               </label>
               <p class="mt-3 text-sm text-gray-600 dark:text-dark-200">{{ nativeAuditCopy.description }}</p>
+              <label class="mt-4 flex items-center gap-2 font-medium"><input v-model="draft.operator_policy_enabled" type="checkbox" data-test="operator-policy-toggle" />拦截 CTF 与破甲库</label>
+              <p class="mt-2 text-sm text-gray-500">恢复 2026-09-12 的 CTF 规则和 539 项破甲仓库名单，包含已收录的别名、链接与模板特征；启用后适用于全部分组和用户，不受普通审核开关影响。名单并非对未来新仓库的穷尽。</p>
+              <fieldset class="mt-5"><legend class="font-medium">原生 Jev 输入风险分类</legend>
+                <div class="mt-3 grid gap-3 sm:grid-cols-2"><label v-for="scanner in SCANNER_CATALOG" :key="scanner.id" class="flex items-center gap-2"><input v-model="draft.scanners" type="checkbox" :value="scanner.id" />{{ t(`admin.promptAudit.scanners.${scanner.id}`) }}</label></div>
+                <p class="mt-3 text-sm text-gray-500">Jev 在同一次审核中包含这些意图分类及原生 13 类内容风险。生物风险使用 B0–B4：普通知识通过；B1 限制性放行并审核输出；B2 待复核；B3／B4 拦截。OpenAI 审核接口不支持这些扩展分类。</p>
+              </fieldset>
               <p class="mt-2 text-sm text-amber-700 dark:text-amber-300" role="status">{{ nativeAuditCopy.warning }}</p>
               <button type="button" class="btn btn-primary mt-4" :disabled="!dirty || loading.saving" data-test="save-native-audit" @click="saveConfig">{{ loading.saving ? t('common.saving') : t('common.save') }}</button>
             </div>
@@ -64,6 +70,9 @@
             <RuntimeOverview :runtime="runtime" :loading="loading.runtime" :error="loadErrors.runtime" @refresh="loadRuntime" />
 
             <template v-if="draft">
+              <p class="my-4 rounded-lg bg-primary-50 p-3 text-sm">{{ serverConfig?.native_audit_enabled ? '当前使用原生审计。这里保留本地配置，不会同时运行本地审核模型。' : '当前使用本地审计，不会同时调用原生审核模型。' }}</p>
+              <label class="my-4 flex items-center gap-2"><input v-model="draft.operator_policy_enabled" type="checkbox" />拦截 CTF 与破甲库（全局规则，共用开关）</label>
+              <LocalAuditControls />
               <EndpointPool
                 :endpoints="draft.endpoints"
                 :oauth-accounts="oauthAccounts"
@@ -247,6 +256,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { updateSettings } from '@/api/admin/settings'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import LocalAuditControls from './components/LocalAuditControls.vue'
+import { SCANNER_CATALOG } from './viewModel'
 import RiskControlView from '@/views/admin/RiskControlView.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
@@ -293,9 +304,9 @@ onBeforeUnmount(() => {
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events' | 'adaptive' | 'native'
 const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
- active: '当前使用原生 Sub2API 审计', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: '风控总开关已关闭，当前不会执行审核；配置仍可查看和编辑。', enableFeature: '启用风控总开关',
+ active: '当前使用原生 Sub2API 审计', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: '普通风控开关已关闭。已启用的 CTF／破甲全局规则仍会执行。', enableFeature: '启用风控总开关',
  title: '原生 Sub2API 审计', toggle: '使用原生审计替代自定义模型审计',
- description: '仅使用下方原生 OpenAI / TypeSafe AI 审计，并保留本地破甲库与明确绕过规则；不再重复运行自定义 Jev、后台或输出模型审计。',
+ description: '选中后使用原生审核；关闭后使用本地审核，两套输入审核模型不会同时执行。CTF／破甲命中由本地规则提前拦截，记录仍属于当前选中的审核方式。',
  warning: '请先配置并启用下方原生审计，再保存此开关。配置不可用时请求会被拒绝；关闭开关可恢复原自定义配置。'
 } : {
  active: 'Native Sub2API auditing is selected', open: 'Open native audit settings', entryHint: 'Native enablement, engine, audit records and recording passed requests are in the Native Sub2API Audit tab.', featureDisabled: 'The risk-control switch is off. Auditing is disabled; configuration remains accessible.', enableFeature: 'Enable risk control',

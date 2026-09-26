@@ -8,10 +8,11 @@ import (
 )
 
 type GuardEvaluator struct {
-	scanner PromptScanner
-	repo    JobRepository
-	metrics Metrics
-	clock   Clock
+	hitRecorder func(context.Context, PromptSnapshot, *NormalizedResult)
+	scanner     PromptScanner
+	repo        JobRepository
+	metrics     Metrics
+	clock       Clock
 
 	global           chan struct{}
 	perNodeLimit     int
@@ -231,6 +232,8 @@ func (g *GuardEvaluator) finishEvaluation(ctx context.Context, cfg ActiveConfig,
 				"decision": kind, "error_code": "result_record_failed", "stage": snapshot.Stage,
 				"status": "failed",
 			}))
+		} else if g.hitRecorder != nil && (kind == DecisionBlock || kind == DecisionFlag) {
+			g.hitRecorder(ctx, snapshot, result)
 		}
 	}
 	if kind == DecisionBlock {

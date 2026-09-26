@@ -9,6 +9,16 @@ import promptAuditAPI from '../api'
 describe('Prompt Audit API', () => {
   beforeEach(() => Object.values(client).forEach((mock) => mock.mockReset()))
 
+  it('keeps the email restriction for listing and filter deletion', async () => {
+    const filters = { ...emptyEventFilters(), user_email: ' person@example.test ' }
+    client.get.mockResolvedValue({ data: { items: [], total: 0 } })
+    await promptAuditAPI.listEvents(filters, 1, 20)
+    expect(client.get).toHaveBeenCalledWith('/admin/prompt-audit/events', { params: expect.objectContaining({ user_email: 'person@example.test' }) })
+    client.post.mockResolvedValue({ data: { matched_count: 0 } })
+    await promptAuditAPI.previewDelete(filters)
+    expect(client.post).toHaveBeenCalledWith('/admin/prompt-audit/events/delete-preview', expect.objectContaining({ user_email: 'person@example.test' }))
+  })
+
   it('uses the independent admin route namespace', async () => {
     client.get.mockResolvedValue({ data: { config_version: 1 } })
     await promptAuditAPI.getConfig()
