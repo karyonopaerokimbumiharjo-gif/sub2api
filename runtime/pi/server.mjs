@@ -215,8 +215,8 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    json(res,404,{error:'not_found'});
   }catch(error){
    // Deliberately do not echo provider exceptions, callbacks, tokens or payloads.
-   const safe=['oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','unsupported_pi_field:max_output_tokens'];
-   const code=safe.includes(error.message)?error.message:'pi_runtime_error';
+   const safe=['oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','invalid_pi_tools','unsupported_pi_field:max_output_tokens'];
+   const code=safe.includes(error.message)?error.message:String(error.message||'').startsWith('unsupported_pi_field:')?'unsupported_pi_field':'pi_runtime_error';
    if(res.headersSent)res.destroy();else json(res,400,{error:code});
   }
  });

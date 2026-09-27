@@ -189,7 +189,7 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		if resp.StatusCode == 400 || resp.StatusCode == 409 {
-			return fail(resp.StatusCode, "Invalid or concurrent Pi request")
+			return nil, nativePiClientRequestError(resp)
 		}
 		switch resp.StatusCode {
 		case http.StatusTooManyRequests:

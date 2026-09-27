@@ -55,13 +55,16 @@ export function scopedSession(secret,owner,credential,account,model,session) {
 // function. Output limits and sampling options unsupported by the Codex
 // upstream are omitted, matching the gateway's existing OAuth compatibility.
 const ignoredCodexOptions=new Set(['max_output_tokens','max_completion_tokens','temperature','top_p','frequency_penalty','presence_penalty']);
+// Native Responses keeps built-in search declarations; these are not SDK function tools.
+const supportedToolTypes=new Set(['function','web_search','web_search_preview']);
 const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store']);
 export function nativeBody(request,defaults) {
  if(!request||typeof request!=='object'||Array.isArray(request))throw Error('invalid_responses_request');
  for(const key of Object.keys(request))if(!allowed.has(key)&&!ignoredCodexOptions.has(key))throw Error(`unsupported_pi_field:${key}`);
  if(typeof request.model!=='string'||!request.model)throw Error('model_required');
  if(!Array.isArray(request.input)&&typeof request.input!=='string')throw Error('input_required');
- if(request.tools?.some(tool=>tool.type!=='function'))throw Error('unsupported_pi_tool_type');
+ if(request.tools!=null&&!Array.isArray(request.tools))throw Error('invalid_pi_tools');
+ if(request.tools?.some(tool=>!tool||typeof tool!=='object'||Array.isArray(tool)||!supportedToolTypes.has(tool.type)))throw Error('unsupported_pi_tool_type');
  const input=typeof request.input==='string'?[{role:'user',content:[{type:'input_text',text:request.input}]}]:request.input;
  const body={...defaults,...structuredClone(request),input:structuredClone(input),store:false,stream:true,
   instructions:request.instructions||defaults.instructions,

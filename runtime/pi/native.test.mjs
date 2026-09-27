@@ -107,6 +107,29 @@ test('Codex-unsupported output limits and sampling options do not break direct c
  assert.equal(contacted,true);
  assert.equal(result.evidence.terminal_status,'completed');
 });
+test('built-in web search is preserved through the native SDK with function tools',async()=>{
+ for(const type of ['web_search','web_search_preview']) {
+  const tools=[{type:'function',name:'ordinary_fixture',parameters:{type:'object',properties:{}}},{type,search_context_size:'low'}];
+  const original={...request,model:'gpt-5.6-luna',tools,tool_choice:'auto',parallel_tool_calls:true};
+  const before=structuredClone(original);let outbound;const delivered=[];
+  const response={id:'resp_search_fixture',status:'completed',model:'gpt-5.6-luna',output:[
+   {type:'web_search_call',id:'ws_fixture',status:'completed',action:{type:'search',query:'ordinary fixture'}},
+   {type:'message',id:'msg_fixture',role:'assistant',status:'completed',content:[{type:'output_text',text:'SEARCH_FIXTURE_OK',annotations:[]}]}],usage:{input_tokens:5,output_tokens:3,total_tokens:8}};
+  const bytes=Buffer.from(`data: ${JSON.stringify({type:'response.completed',response})}\n\n`);
+  const result=await runNative({...base,request:original,transport:'sse',onBytes:b=>delivered.push(Buffer.from(b)),fetchImpl:async(_url,init)=>{
+   const headers=new Headers(init.headers);
+   outbound=JSON.parse(headers.get('content-encoding')==='zstd'?zstdDecompressSync(init.body).toString():init.body);
+   return new Response(bytes,{headers:{'content-type':'text/event-stream'}});
+  }});
+  assert.deepEqual(outbound.tools,tools);assert.equal(outbound.tool_choice,'auto');assert.equal(outbound.parallel_tool_calls,true);
+  assert.deepEqual(original,before);assert.deepEqual(Buffer.concat(delivered),bytes);
+  assert.equal(result.evidence.terminal_status,'completed');
+ }
+});
+test('invalid tool shapes retain bounded request validation',()=>{
+ assert.throws(()=>nativeBody({...request,tools:{}},{}),/invalid_pi_tools/);
+ for(const tool of [null,[],{type:'unrecognized_tool'}])assert.throws(()=>nativeBody({...request,tools:[tool]},{}),/unsupported_pi_tool_type/);
+});
 test('authenticated readiness probe fails on missing, wrong, or stopped runtime',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'pi-health-'));const secretFile=join(dir,'runtime.secret');
  const secret='a'.repeat(40);writeFileSync(secretFile,secret,{mode:0o600});
