@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditpolicy"
 	"strconv"
 	"strings"
 	"sync"
@@ -503,8 +504,8 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		currentByID[endpoint.ID] = endpoint
 	}
 	next := storageConfig{
-		OperatorPolicyEnabled: current.OperatorPolicyEnabled,
-		Enabled:               req.Enabled, BlockingEnabled: req.BlockingEnabled,
+		NativeRiskCategories: auditpolicy.CloneCategories(current.NativeRiskCategories), OperatorPolicyEnabled: current.OperatorPolicyEnabled,
+		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled,
 		BlockingAuditMode:      normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly),
 		BackgroundAuditMode:    requestedBackgroundAuditMode(req),
 		BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
@@ -519,8 +520,19 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		ConfigVersion:   current.ConfigVersion, UpdatedBy: actorID,
 		Endpoints: make([]StorageEndpoint, 0, len(req.Endpoints)),
 	}
-	if req.OperatorPolicyEnabled != nil {
+	if req.NativeRiskCategories != nil {
+		next.NativeRiskCategories = auditpolicy.ResolveNativeCategories(req.NativeRiskCategories, nil, true)
+		enabled := auditpolicy.HasOperatorCategory(next.NativeRiskCategories)
+		next.OperatorPolicyEnabled = &enabled
+	} else if req.OperatorPolicyEnabled != nil {
 		next.OperatorPolicyEnabled = req.OperatorPolicyEnabled
+		// Older clients only know the shared master switch. Explicitly update
+		// both global selections so it still means what those clients display.
+		selected := auditpolicy.ResolveNativeCategories(current.NativeRiskCategories, current.Scanners, false)
+		if *req.OperatorPolicyEnabled {
+			selected = append(selected, "operator_ctf", "operator_repository")
+		}
+		next.NativeRiskCategories = selected
 	}
 	if req.WhitelistEmails != nil {
 		next.WhitelistEmails = append([]string(nil), (*req.WhitelistEmails)...)
@@ -705,6 +717,7 @@ func (m *ConfigManager) clearLoadError() bool {
 }
 
 func cloneStorageConfig(cfg storageConfig) storageConfig {
+	cfg.NativeRiskCategories = auditpolicy.CloneCategories(cfg.NativeRiskCategories)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	cfg.WhitelistEmails = append([]string(nil), cfg.WhitelistEmails...)
@@ -713,6 +726,7 @@ func cloneStorageConfig(cfg storageConfig) storageConfig {
 }
 
 func cloneActiveConfig(cfg ActiveConfig) ActiveConfig {
+	cfg.NativeRiskCategories = auditpolicy.CloneCategories(cfg.NativeRiskCategories)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	cfg.WhitelistEmails = append([]string(nil), cfg.WhitelistEmails...)

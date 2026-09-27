@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditpolicy"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -99,21 +100,7 @@ const (
 	contentModerationRuntimeRefreshTimeout = 5 * time.Second
 )
 
-var contentModerationCategoryOrder = []string{
-	"harassment",
-	"harassment/threatening",
-	"hate",
-	"hate/threatening",
-	"illicit",
-	"illicit/violent",
-	"self-harm",
-	"self-harm/intent",
-	"self-harm/instructions",
-	"sexual",
-	"sexual/minors",
-	"violence",
-	"violence/graphic",
-}
+var contentModerationCategoryOrder = auditpolicy.ContentCategoryIDs()
 
 func ContentModerationDefaultThresholds() map[string]float64 {
 	return map[string]float64{
@@ -140,6 +127,7 @@ func ContentModerationCategories() []string {
 }
 
 type ContentModerationConfig struct {
+	PolicyCategories      []string                       `json:"-"`
 	PolicyScanners        []string                       `json:"-"`
 	OperatorPolicyEnabled bool                           `json:"-"`
 	Engine                string                         `json:"engine,omitempty"`
@@ -319,6 +307,7 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
+	PolicyCategories      []string
 	PolicyScanners        []string
 	OperatorPolicyEnabled bool
 	Strict                bool
@@ -783,6 +772,11 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 		}
 	}
 	cfg.normalize()
+	if cfg.Engine == ContentModerationEngineTypeSafe {
+		if err := s.applySavedNativePolicyForTest(ctx, cfg); err != nil {
+			return nil, err
+		}
+	}
 	testInput, imageCount, err := buildModerationTestInput(input.Prompt, input.Images)
 	if err != nil {
 		return nil, err
@@ -859,16 +853,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	cfg := cloneContentModerationConfig(runtimeSnapshot.config)
-	cfg.PolicyScanners = append([]string(nil), input.PolicyScanners...)
-	cfg.OperatorPolicyEnabled = input.OperatorPolicyEnabled
-	for _, id := range cfg.PolicyScanners {
-		cfg.Thresholds["intent_"+id] = 0.90
-	}
-	if cfg.OperatorPolicyEnabled {
-		cfg.Thresholds["operator_ctf"] = 0.90
-		cfg.Thresholds["operator_repository"] = 0.90
-	}
-	cfg.Thresholds["intent_biological_risk"] = 0.90
+	applyModerationPolicySelection(cfg, input.PolicyCategories, input.PolicyScanners, input.OperatorPolicyEnabled)
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -2225,6 +2210,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 		return nil
 	}
 	clone := *cfg
+	clone.PolicyCategories = auditpolicy.CloneCategories(cfg.PolicyCategories)
 	if cfg.TypeSafe != nil {
 		clone.TypeSafe = cfg.engineProfile(ContentModerationEngineTypeSafe)
 	}
@@ -2760,6 +2746,15 @@ func buildContentModerationTestAuditResult(result *moderationAPIResult, threshol
 		scores[category] = score
 	}
 	thresholdSnapshot := mergeContentModerationThresholds(ContentModerationDefaultThresholds(), thresholds)
+	for _, category := range auditpolicy.NativeRiskCatalog {
+		id := category.ID
+		if category.Kind == "intent" {
+			id = "intent_" + id
+		}
+		if threshold, ok := thresholds[id]; ok {
+			thresholdSnapshot[id] = threshold
+		}
+	}
 	flagged, highestCategory, highestScore := evaluateModerationScores(scores, thresholdSnapshot)
 	compositeScore := highestScore
 	return &ContentModerationTestAuditResult{
@@ -2804,7 +2799,10 @@ func evaluateModerationScores(scores map[string]float64, thresholds map[string]f
 	highestCategory := ""
 	highestScore := 0.0
 	for _, category := range contentModerationCategoryOrder {
-		score := scores[category]
+		score, present := scores[category]
+		if !present {
+			continue
+		}
 		if score > highestScore || highestCategory == "" {
 			highestScore = score
 			highestCategory = category

@@ -1,3 +1,4 @@
+export interface NativeRiskCategory { id: string; label: string; label_en: string; kind: 'content' | 'intent' | 'operator'; description: string }
 export type PromptAuditMode = 'off' | 'async_audit' | 'blocking'
 export type PromptBlockingAuditMode = 'fast_latest' | 'incremental_full' | 'full'
 export type PromptBackgroundAuditMode = 'off' | PromptBlockingAuditMode
@@ -41,6 +42,8 @@ export interface PromptAuditConfig {
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
   operator_policy_enabled?: boolean
+  native_risk_categories?: string[]
+  native_risk_catalog?: NativeRiskCategory[]
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
@@ -90,6 +93,7 @@ export interface PromptAuditUpdateRequest {
   adaptive_allow_sample_rate: number
   adaptive_risk_sample_rate: number
   operator_policy_enabled?: boolean
+  native_risk_categories?: string[]
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean

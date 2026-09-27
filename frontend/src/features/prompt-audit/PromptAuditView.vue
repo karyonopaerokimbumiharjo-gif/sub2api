@@ -55,12 +55,7 @@
                 {{ nativeAuditCopy.toggle }}
               </label>
               <p class="mt-3 text-sm text-gray-600 dark:text-dark-200">{{ nativeAuditCopy.description }}</p>
-              <label class="mt-4 flex items-center gap-2 font-medium"><input v-model="draft.operator_policy_enabled" type="checkbox" data-test="operator-policy-toggle" />拦截 CTF 与破甲库</label>
-              <p class="mt-2 text-sm text-gray-500">恢复 2026-09-12 的 CTF 规则和 539 项破甲仓库名单，包含已收录的别名、链接与模板特征；启用后适用于全部分组和用户，不受普通审核开关影响。名单并非对未来新仓库的穷尽。</p>
-              <fieldset class="mt-5"><legend class="font-medium">原生 Jev 输入风险分类</legend>
-                <div class="mt-3 grid gap-3 sm:grid-cols-2"><label v-for="scanner in SCANNER_CATALOG" :key="scanner.id" class="flex items-center gap-2"><input v-model="draft.scanners" type="checkbox" :value="scanner.id" />{{ t(`admin.promptAudit.scanners.${scanner.id}`) }}</label></div>
-                <p class="mt-3 text-sm text-gray-500">Jev 在同一次审核中包含这些意图分类及原生 13 类内容风险。生物风险使用 B0–B4：普通知识通过；B1 限制性放行并审核输出；B2 待复核；B3／B4 拦截。OpenAI 审核接口不支持这些扩展分类。</p>
-              </fieldset>
+              <NativeRiskChecklist :draft="draft" @update:draft="replaceDraft" />
               <p class="mt-2 text-sm text-amber-700 dark:text-amber-300" role="status">{{ nativeAuditCopy.warning }}</p>
               <button type="button" class="btn btn-primary mt-4" :disabled="!dirty || loading.saving" data-test="save-native-audit" @click="saveConfig">{{ loading.saving ? t('common.saving') : t('common.save') }}</button>
             </div>
@@ -71,7 +66,7 @@
 
             <template v-if="draft">
               <p class="my-4 rounded-lg bg-primary-50 p-3 text-sm">{{ serverConfig?.native_audit_enabled ? '当前使用原生审计。这里保留本地配置，不会同时运行本地审核模型。' : '当前使用本地审计，不会同时调用原生审核模型。' }}</p>
-              <label class="my-4 flex items-center gap-2"><input v-model="draft.operator_policy_enabled" type="checkbox" />拦截 CTF 与破甲库（全局规则，共用开关）</label>
+              <label class="my-4 flex items-center gap-2"><input :checked="draft.operator_policy_enabled" type="checkbox" @change="setOperatorMaster(($event.target as HTMLInputElement).checked)" />拦截 CTF 与破甲库（全局规则，共用开关）</label>
               <LocalAuditControls />
               <EndpointPool
                 :endpoints="draft.endpoints"
@@ -257,7 +252,7 @@ import { useRoute } from 'vue-router'
 import { updateSettings } from '@/api/admin/settings'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LocalAuditControls from './components/LocalAuditControls.vue'
-import { SCANNER_CATALOG } from './viewModel'
+import NativeRiskChecklist from './components/NativeRiskChecklist.vue'
 import RiskControlView from '@/views/admin/RiskControlView.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
@@ -314,6 +309,15 @@ const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
  description: 'Use native OpenAI / TypeSafe AI auditing plus local repository and explicit-bypass rules, without duplicate custom, background or output model audits.',
  warning: 'Configure and enable native auditing below before saving this switch. Unavailable audit configuration rejects requests. Turn this off to restore custom settings.'
 })
+function setOperatorMaster(enabled: boolean) {
+  if (!draft.value) return
+  const next = cloneData(draft.value)
+  const ordinary = (next.native_risk_categories ?? []).filter(id => !['operator_ctf', 'operator_repository'].includes(id))
+  next.native_risk_categories = enabled ? [...ordinary, 'operator_ctf', 'operator_repository'] : ordinary
+  next.operator_policy_enabled = enabled
+  replaceDraft(next)
+}
+
 const route = useRoute()
 const activeTab = ref<PromptAuditPageTab>('events')
 watch(() => route?.query.tab, (tab) => {

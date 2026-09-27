@@ -37,14 +37,16 @@ type UpdateContentModerationEngineInput struct {
 }
 
 type ContentModerationEngineMeta struct {
-	AuditSource   string `json:"audit_source,omitempty"`
-	EventRole     string `json:"event_role,omitempty"`
-	BioTier       string `json:"bio_tier,omitempty"`
-	AuditSubject  string `json:"audit_subject,omitempty"`
-	Engine        string `json:"engine"`
-	Model         string `json:"model"`
-	RulesVersion  string `json:"rules_version"`
-	SkippedImages int    `json:"skipped_images"`
+	QuestionCount      int      `json:"question_count,omitempty"`
+	SelectedCategories []string `json:"selected_categories,omitempty"`
+	AuditSource        string   `json:"audit_source,omitempty"`
+	EventRole          string   `json:"event_role,omitempty"`
+	BioTier            string   `json:"bio_tier,omitempty"`
+	AuditSubject       string   `json:"audit_subject,omitempty"`
+	Engine             string   `json:"engine"`
+	Model              string   `json:"model"`
+	RulesVersion       string   `json:"rules_version"`
+	SkippedImages      int      `json:"skipped_images"`
 }
 
 func moderationEngine(engine string) string {

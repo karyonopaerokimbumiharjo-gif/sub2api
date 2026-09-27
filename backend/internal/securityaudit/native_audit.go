@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditpolicy"
 )
 
 // Native mode replaces custom model audits, not deterministic local rules.
@@ -39,6 +40,7 @@ func (c *Coordinator) checkNative(ctx context.Context, req Request, engine nativ
 	if provider, ok := engine.(interface{ NativePolicy() ActiveConfig }); ok {
 		policy := provider.NativePolicy()
 		req.NativeScanners = append([]string(nil), policy.Scanners...)
+		req.NativeRiskCategories = auditpolicy.ResolveNativeCategories(policy.NativeRiskCategories, policy.Scanners, policy.OperatorPolicyEnabled)
 		req.OperatorPolicyEnabled = policy.OperatorPolicyEnabled
 	}
 	legacy, err := c.checkLegacy(ctx, req)
@@ -88,6 +90,9 @@ func (s *PromptService) EvaluateNativeHardRules(ctx context.Context, req Request
 	}
 	if err != nil {
 		return nil, err
+	}
+	if cfg.NativeRiskCategories != nil && !auditpolicy.HasCategory(cfg.NativeRiskCategories, "jailbreak") {
+		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
 	start := s.evaluator.clock.Now()
 	result := MatchExplicitBypassSnapshotPolicy(snapshot, AllScannerIDs)

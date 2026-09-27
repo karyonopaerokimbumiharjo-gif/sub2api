@@ -2,6 +2,7 @@ package securityaudit
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/stretchr/testify/require"
 	"net/url"
 	"testing"
@@ -86,4 +87,51 @@ func TestNativeSelectionReportsDormantCustomAudit(t *testing.T) {
 	require.Equal(t, ModeOff, manager.EffectiveMode())
 	manager.configUntrusted.Store(true)
 	require.True(t, manager.BlockingActivationDegraded(), "invalid activation must still fail closed")
+}
+
+func TestNativeCategoryConfigurationRoundTripAndLegacyMaster(t *testing.T) {
+	current := DefaultStorageConfig()
+	public := PublicFromStorage(current, true, nil)
+	require.Len(t, public.NativeRiskCatalog, 21)
+	raw, err := json.Marshal(public)
+	require.NoError(t, err)
+	var req UpdateConfigRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	req.ExpectedConfigVersion = current.ConfigVersion
+	req.NativeAuditEnabled = true
+	req.NativeRiskCategories = []string{"pii", "operator_repository"}
+	enabled := true
+	req.OperatorPolicyEnabled = &enabled
+	manager := &ConfigManager{}
+	next, err := manager.buildNextStorage(current, req, 1)
+	require.NoError(t, err)
+	raw, err = json.Marshal(next)
+	require.NoError(t, err)
+	persisted, err := ParseStorageConfig(string(raw))
+	require.NoError(t, err)
+	require.Equal(t, req.NativeRiskCategories, PublicFromStorage(persisted, true, nil).NativeRiskCategories)
+	cloned := cloneStorageConfig(persisted)
+	cloned.NativeRiskCategories[0] = "hate"
+	require.Equal(t, "pii", persisted.NativeRiskCategories[0])
+	req.NativeRiskCategories = nil
+	enabled = false
+	next, err = manager.buildNextStorage(persisted, req, 1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"pii"}, next.NativeRiskCategories)
+	enabled = true
+	restored, err := manager.buildNextStorage(next, req, 1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"pii", "operator_ctf", "operator_repository"}, restored.NativeRiskCategories)
+	req.NativeRiskCategories = []string{"not-a-category"}
+	_, err = manager.buildNextStorage(restored, req, 1)
+	require.Error(t, err)
+}
+
+func TestSelectedGlobalCategoriesAreIndependent(t *testing.T) {
+	require.Nil(t, matchSelectedGlobalRequestPolicy([]byte(`{"input":"CTF event schedule"}`), false, true))
+	require.NotNil(t, matchSelectedGlobalRequestPolicy([]byte(`{"input":"CTF event schedule"}`), true, false))
+	repo := deniedRepositoryEntries[0].FullName
+	body, _ := json.Marshal(map[string]string{"input": repo})
+	require.NotNil(t, matchSelectedGlobalRequestPolicy(body, false, true))
+	require.Nil(t, matchSelectedGlobalRequestPolicy(body, false, false))
 }

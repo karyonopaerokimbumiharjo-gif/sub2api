@@ -19,7 +19,10 @@ func TestContentModerationNativePolicySingleCallAndBioTiers(t *testing.T) {
 				calls++
 				var request typesafe.Request
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-				require.Len(t, request.Questions, 25)
+				require.Len(t, request.Questions, 21)
+				for _, id := range []string{"intent_violent", "intent_non_violent_illegal_acts", "intent_sexual_content_or_sexual_acts", "intent_suicide_and_self_harm"} {
+					require.NotContains(t, request.Questions, id)
+				}
 				answers := map[string]any{}
 				for id, q := range request.Questions {
 					if q.Type == "choice" {

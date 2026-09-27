@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditpolicy"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/text/unicode/norm"
 )
@@ -81,6 +82,21 @@ func matchGlobalPolicyText(text string) *NormalizedResult {
 // base64 is never searched as text; supported text files are decoded by the
 // bounded plain-text data URL decoding. No remote resource is fetched.
 func matchGlobalRequestPolicy(body []byte) *NormalizedResult {
+	return matchSelectedGlobalRequestPolicy(body, true, true)
+}
+func matchSelectedGlobalRequestPolicy(body []byte, ctf, repository bool) *NormalizedResult {
+	matchText := func(text string) *NormalizedResult {
+		if ctf {
+			if result := MatchCTFPolicy(text); result != nil {
+				return result
+			}
+		}
+		if repository {
+			return matchOperatorRepositoryPolicy(text)
+		}
+		return nil
+	}
+
 	var document any
 	if json.Unmarshal(body, &document) != nil {
 		return nil
@@ -96,13 +112,13 @@ func matchGlobalRequestPolicy(body []byte) *NormalizedResult {
 				if strings.HasPrefix(lower, "data:text/") || strings.HasPrefix(lower, "data:application/json;") {
 					if _, encoded, ok := strings.Cut(node, ";base64,"); ok && len(encoded) <= 2<<20 {
 						if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil && utf8.Valid(decoded) {
-							return matchGlobalPolicyText(string(decoded))
+							return matchText(string(decoded))
 						}
 					}
 				}
 				return nil
 			}
-			return matchGlobalPolicyText(node)
+			return matchText(node)
 		case []any:
 			for _, child := range node {
 				if result := visit(child); result != nil {
@@ -111,7 +127,7 @@ func matchGlobalRequestPolicy(body []byte) *NormalizedResult {
 			}
 		case map[string]any:
 			for key, child := range node {
-				if result := matchGlobalPolicyText(key); result != nil {
+				if result := matchText(key); result != nil {
 					return result
 				}
 				if key == "file_data" {
@@ -152,7 +168,8 @@ func (s *PromptService) CheckOperatorPolicy(ctx context.Context, req Request) (*
 	if !cfg.OperatorPolicyEnabled {
 		return nil, nil
 	}
-	result := matchGlobalRequestPolicy(req.Body)
+	categories := auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, cfg.OperatorPolicyEnabled)
+	result := matchSelectedGlobalRequestPolicy(req.Body, auditpolicy.HasCategory(categories, "operator_ctf"), auditpolicy.HasCategory(categories, "operator_repository"))
 	if result == nil {
 		return nil, nil
 	}

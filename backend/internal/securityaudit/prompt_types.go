@@ -97,6 +97,7 @@ type OutputCapture struct {
 }
 
 type Request struct {
+	NativeRiskCategories  []string
 	NativeScanners        []string
 	OperatorPolicyEnabled bool
 	OutputCapture         *OutputCapture
@@ -121,6 +122,9 @@ type Request struct {
 }
 
 func (r Request) Clone() Request {
+	if r.NativeRiskCategories != nil {
+		r.NativeRiskCategories = append([]string{}, r.NativeRiskCategories...)
+	}
 	r.Body = append([]byte(nil), r.Body...)
 	if r.OutputCapture != nil {
 		value := *r.OutputCapture
