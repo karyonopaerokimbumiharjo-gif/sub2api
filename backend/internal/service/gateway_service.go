@@ -21,6 +21,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/piruntime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -1448,6 +1449,17 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 					supported[model.Slug] = true
 				}
 			}
+			// Codex manifests contain text drivers, not the native Images endpoint
+			// models. Publish the same supported image family as the OAuth picker,
+			// but only after account-bound discovery succeeds with a nonempty list.
+			if len(supported) > 0 && acc.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative) {
+				for _, model := range openai.DefaultModels {
+					if IsGPTImageGenerationModel(model.ID) {
+						supported[model.ID] = true
+					}
+				}
+			}
+
 			if len(mapping) == 0 {
 				for model := range supported {
 					modelSet[model] = struct{}{}

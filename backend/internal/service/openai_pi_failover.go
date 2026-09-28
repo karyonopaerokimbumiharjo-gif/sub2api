@@ -16,6 +16,7 @@ func (s *OpenAIGatewayService) nativePiRateLimitFailover(ctx context.Context, c 
 	const message = "Pi upstream rate limit reached; retry later"
 	var metadata struct {
 		RateLimit struct {
+			Scope           string `json:"scope"`
 			Type            string `json:"type"`
 			ResetsAt        int64  `json:"resets_at"`
 			ResetsInSeconds int64  `json:"resets_in_seconds"`
@@ -31,6 +32,9 @@ func (s *OpenAIGatewayService) nativePiRateLimitFailover(ctx context.Context, c 
 	detail := map[string]any{"type": "rate_limit_exceeded", "message": message}
 	if metadata.RateLimit.Type == "usage_limit_reached" || metadata.RateLimit.Type == "rate_limit_exceeded" {
 		detail["type"] = metadata.RateLimit.Type
+		if metadata.RateLimit.Scope == "image" {
+			detail["param"] = "gpt-image"
+		}
 		if metadata.RateLimit.ResetsAt > 0 {
 			detail["resets_at"] = metadata.RateLimit.ResetsAt
 		}

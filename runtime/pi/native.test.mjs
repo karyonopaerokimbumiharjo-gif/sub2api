@@ -15,6 +15,7 @@ const token=account=>`test.${Buffer.from(JSON.stringify({'https://api.openai.com
 const request={model:'gpt-6-astra',input:[{role:'user',content:[{type:'input_text',text:'fixture'}]}]};
 const base={request,accessToken:token('account-a'),accountId:'account-a',ownerId:1,credentialId:5,sessionId:'s1',sessionSecret:'test-secret',onBytes:()=>{}};
 test('quota metadata is bounded and only accepts explicit reset fields',async()=>{
+ assert.deepEqual(rateLimitMetadata({error:{type:'rate_limit_exceeded',message:'Rate limit for gpt-image',resets_in_seconds:60}}),{type:'rate_limit_exceeded',scope:'image',resets_in_seconds:60});
  assert.deepEqual(rateLimitMetadata({error:{type:'usage_limit_reached',resets_in_seconds:'120',message:'private'}}),{type:'usage_limit_reached',resets_in_seconds:120});
  for(const error of [{type:'unknown',resets_at:1800000000},{type:'usage_limit_reached',resets_in_seconds:-1},{type:'usage_limit_reached',resets_in_seconds:true},{type:'usage_limit_reached',message:'resets_at:1800000000'}])assert.equal(rateLimitMetadata({error}),undefined);
  assert.equal(await readRateLimitMetadata(new Response('not-json',{status:429})),undefined);

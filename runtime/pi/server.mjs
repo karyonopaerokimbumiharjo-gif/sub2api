@@ -8,6 +8,7 @@ const openaiCodexOAuth=openaiCodexProvider().auth.oauth;
 import {runNative,credentialAccount,closeSessions} from './native.mjs';
 import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
 import {schedulingHeaders,readRateLimitMetadata} from './rate-limit.mjs';
+import {forwardImages} from './images.mjs';
 
 // Keep failure framing bounded and independent of SDK success/error heuristics.
 // Only actual, complete Responses terminal events suppress a fallback terminal.
@@ -67,7 +68,7 @@ export function nativeFailure(status,result) {
  return {status:502,code:'pi_upstream_failed'};
 }
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,timers={setTimeout,clearTimeout}}) {
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,imageFetch=fetch,timers={setTimeout,clearTimeout}}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value,headers={})=>{res.writeHead(status,{...headers,'content-type':'application/json'});res.end(JSON.stringify(value))};
@@ -80,8 +81,9 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@0.87.1'});return}
    if(req.method!=='POST'){json(res,404,{error:'not_found'});return}
    const chunks=[];let size=0;
-   for await(const chunk of req){size+=chunk.length;if(size>8*1024*1024)throw Error('request_too_large');chunks.push(chunk)}
+   for await(const chunk of req){size+=chunk.length;if(size>(req.url==='/images'?64:8)*1024*1024)throw Error('request_too_large');chunks.push(chunk)}
    const body=JSON.parse(Buffer.concat(chunks));
+   if(req.url==='/images'){await forwardImages(body,res,imageFetch);return}
    if(req.url==='/oauth/start') {
     if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
     if(loginActive){json(res,409,{error:'oauth_login_in_progress'});return}

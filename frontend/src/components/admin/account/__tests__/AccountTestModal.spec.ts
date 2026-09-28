@@ -90,6 +90,22 @@ function mountModal(account: Record<string, unknown> = {
 }
 
 describe('AccountTestModal', () => {
+  it('PI 生图模型可以选择、提交提示词并显示图片', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-image-2.5-sunburst', display_name: 'GPT Image 2.5 Sunburst' }])
+    const wrapper = mountModal({ id: 50, name: 'Pi images', platform: 'openai', type: 'oauth', status: 'active', credentials: { harness_kind: 'pi' } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const prompt = wrapper.get('textarea.textarea-stub')
+    await prompt.setValue('A blue circle on white.')
+    const start = wrapper.findAll('button').find(button => button.text().includes('admin.accounts.startTest'))
+    await start!.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const [, options] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(options.body)).toEqual({ model_id: 'gpt-image-2.5-sunburst', prompt: 'A blue circle on white.', mode: 'default' })
+    expect(wrapper.get('img[alt="test-image-1"]').attributes('src')).toBe('data:image/png;base64,QUJD')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     getAvailableModels.mockResolvedValue([
       { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },

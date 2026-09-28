@@ -228,7 +228,7 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	// Codex discovery lists Responses drivers, not image_generation tool models.
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
-	if account != nil && account.IsOpenAIOAuthLike() && !account.UsesNativePiRuntime() {
+	if account != nil && account.IsOpenAIOAuthLike() && (!account.UsesNativePiRuntime() || len(gjson.GetBytes(response.Body, "data").Array()) > 0) {
 		passthrough := account.IsOpenAIPassthroughEnabled()
 		seen := make(map[string]bool, len(payload.Data))
 		for _, model := range payload.Data {
@@ -3126,6 +3126,13 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 // OAuth 图片测试与正式转发共用 Codex Images / Responses 分流规则。
 func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Context, account *Account, modelID, prompt string) error {
 	credentialAccount := account
+	if account.UsesNativePiRuntime() {
+		resolved, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+		if err != nil || ValidateExecutionAccount(resolved) != nil {
+			return s.sendErrorAndEnd(c, "Invalid Pi image credential binding")
+		}
+		credentialAccount = resolved
+	}
 	if account.IsShadow() {
 		resolved, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {
@@ -3211,7 +3218,12 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIAccountTestUpstream(req, proxyURL, account, false)
+	var resp *http.Response
+	if account.UsesNativePiRuntime() {
+		resp, err = s.openaiGatewayService.openNativePiMediaResponse(ctx, account, responsesBody, targetURL)
+	} else {
+		resp, err = s.doOpenAIAccountTestUpstream(req, proxyURL, account, false)
+	}
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Image upstream request failed: %s", err.Error()))
 	}

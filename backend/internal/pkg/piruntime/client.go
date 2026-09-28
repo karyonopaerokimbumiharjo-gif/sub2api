@@ -60,7 +60,7 @@ func Do(ctx context.Context, path string, payload any) (*http.Response, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("Content-Type", "application/json")
-	if path == "/responses" {
+	if path == "/responses" || path == "/images" {
 		return streamingClient.Do(req)
 	}
 	return client.Do(req)

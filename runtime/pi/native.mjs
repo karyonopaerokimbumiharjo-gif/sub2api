@@ -57,7 +57,7 @@ export function scopedSession(secret,owner,credential,account,model,session) {
 // upstream are omitted, matching the gateway's existing OAuth compatibility.
 const ignoredCodexOptions=new Set(['max_output_tokens','max_completion_tokens','temperature','top_p','frequency_penalty','presence_penalty']);
 // Native Responses keeps built-in search declarations; these are not SDK function tools.
-const supportedToolTypes=new Set(['function','web_search','web_search_preview']);
+const supportedToolTypes=new Set(['function','web_search','web_search_preview','image_generation']);
 const allowed=new Set(['model','instructions','input','tools','tool_choice','parallel_tool_calls','reasoning','service_tier','text','include','stream','store']);
 export function nativeBody(request,defaults) {
  if(!request||typeof request!=='object'||Array.isArray(request))throw Error('invalid_responses_request');

@@ -2076,9 +2076,6 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
-	if a.UsesNativePiRuntime() && capability != "" {
-		return false
-	}
 	if capability == "" {
 		return true
 	}

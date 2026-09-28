@@ -27,8 +27,9 @@ func TestPiSchedulerHonorsNativeCapabilities(t *testing.T) {
 	for _, endpoint := range []OpenAIEndpointCapability{OpenAIEndpointCapabilityLive, OpenAIEndpointCapabilityAlphaSearch, OpenAIEndpointCapabilityEmbeddings} {
 		require.False(t, a.SupportsOpenAIEndpointCapability(endpoint), string(endpoint))
 	}
-	require.False(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
-	require.False(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+	require.True(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityBasic))
+	require.True(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityNative))
+	require.False(t, a.SupportsOpenAIImageCapability(OpenAIImagesCapabilityAPIKey))
 }
 
 func TestManualPiRefreshDoesNotRotateAChangedCredential(t *testing.T) {

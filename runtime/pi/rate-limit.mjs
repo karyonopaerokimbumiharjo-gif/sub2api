@@ -4,8 +4,14 @@ export const schedulingHeaders=['x-request-id','retry-after','x-codex-primary-us
 
 export function rateLimitMetadata(value) {
  const error=value?.error;
- if(!error||!['usage_limit_reached','rate_limit_exceeded'].includes(error.type))return undefined;
- const result={type:error.type};
+ if(!error||typeof error!=='object')return undefined;
+ const imageScope=/gpt-image|input-images per min/i.test(String(error.message||'')+' '+String(error.code||''));
+ const knownType=['usage_limit_reached','rate_limit_exceeded'].includes(error.type);
+ if(!knownType&&!imageScope)return undefined;
+ const result={type:knownType?error.type:'rate_limit_exceeded'};
+ // Preserve only a bounded scope marker; the original gateway distinguishes
+ // image quota from text quota without forwarding provider error messages.
+ if(imageScope)result.scope='image';
  for(const name of ['resets_at','resets_in_seconds']){
   const raw=error[name];
   const number=typeof raw==='number'?raw:typeof raw==='string'&&/^\d+$/.test(raw)?Number(raw):NaN;

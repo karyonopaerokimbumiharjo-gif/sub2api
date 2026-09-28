@@ -235,6 +235,30 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	}
 	model, reqStream := request.Model, request.Stream
 	upstreamModel := account.GetMappedModel(model)
+	var imageBilling OpenAIResponsesImageBillingConfig
+	if IsImageGenerationIntent(openAIResponsesEndpoint, model, body) || isOpenAIImageGenerationModel(upstreamModel) {
+		key := getAPIKeyFromContext(c)
+		if key == nil || !GroupAllowsImageGeneration(key.Group) {
+			return fail(http.StatusForbidden, ImageGenerationPermissionMessage())
+		}
+		var payload map[string]any
+		if json.Unmarshal(body, &payload) != nil {
+			return fail(http.StatusBadRequest, "Invalid Responses image request")
+		}
+		payload["model"] = upstreamModel
+		normalizeOpenAIResponsesImageGenerationTools(payload)
+		normalizeOpenAIResponsesImageOnlyModel(payload)
+		upstreamModel, _ = payload["model"].(string)
+		if err := validateOpenAIResponsesImageModel(payload, upstreamModel); err != nil {
+			return fail(http.StatusBadRequest, err.Error())
+		}
+		var imageErr error
+		imageBilling, imageErr = resolveOpenAIResponsesImageBillingConfigDetailed(payload, model)
+		if imageErr != nil {
+			return fail(http.StatusBadRequest, imageErr.Error())
+		}
+		body, _ = json.Marshal(payload)
+	}
 	started := time.Now()
 	resp, err := s.openNativePiResponse(ctx, c, account, body, upstreamModel)
 	if err != nil {
@@ -251,33 +275,45 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	defer resp.Body.Close()
 	SetActualOpenAIUpstreamEndpoint(c, "/backend-api/codex/responses")
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: upstreamModel, Stream: reqStream, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses"}
+	var responseErr error
 	if reqStream {
 		streamResult, e := s.handleStreamingResponse(ctx, resp, c, account, started, model, upstreamModel)
-		if e != nil {
+		if e != nil && (streamResult == nil || streamResult.imageCount == 0) {
 			return nil, e
 		}
+		responseErr = e
 		if streamResult.usage != nil {
 			result.Usage = *streamResult.usage
 		}
 		result.FirstTokenMs = streamResult.firstTokenMs
 		result.ResponseID = streamResult.responseID
+		result.ImageCount = streamResult.imageCount
+		result.ImageOutputSizes = streamResult.imageOutputSizes
 	} else {
 		nonstream, e := s.handleNonStreamingResponse(ctx, resp, c, account, model, upstreamModel)
-		if e != nil {
+		if e != nil && (nonstream == nil || nonstream.imageCount == 0) {
 			return nil, e
 		}
+		responseErr = e
 		if nonstream.usage != nil {
 			result.Usage = *nonstream.usage
 		}
 		result.ResponseID = nonstream.responseID
+		result.ImageCount = nonstream.imageCount
+		result.ImageOutputSizes = nonstream.imageOutputSizes
 	}
 	result.UpstreamResponseModel = observedUpstreamResponseModel(c)
 	result.UpstreamResponseModelConflict = observedUpstreamResponseModelConflict(c)
 	result.UpstreamResponseServiceTier = observedUpstreamResponseServiceTier(c)
 	result.BillingModel = model
+	if result.ImageCount > 0 {
+		result.BillingModel = imageBilling.Model
+		result.ImageSize = imageBilling.SizeTier
+		result.ImageInputSize = imageBilling.InputSize
+	}
 	result.RequestID = resp.Header.Get("x-request-id")
 	result.Duration = time.Since(started)
-	return result, nil
+	return result, responseErr
 }
 
 // forwardNativePiCompact uses the account's Codex OAuth credential directly

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNativePiModelsUseBoundRuntimeCatalogWithoutStaticImages(t *testing.T) {
+func TestNativePiModelsIncludeImplementedImagesAfterBoundDiscovery(t *testing.T) {
 	account := nativePiAccount()
 	account.Credentials["access_token"] = "private-fixture-access"
 	account.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
@@ -41,9 +41,11 @@ func TestNativePiModelsUseBoundRuntimeCatalogWithoutStaticImages(t *testing.T) {
 	svc := &AccountTestService{openaiGatewayService: gateway}
 	models, err := svc.FetchOpenAIAccountModels(context.Background(), account)
 	require.NoError(t, err)
-	require.Len(t, models, 1)
+	require.Len(t, models, 7)
 	require.Equal(t, "gpt-5.6-sol", models[0].ID)
 	require.Equal(t, "Sol", models[0].DisplayName)
+	require.Contains(t, pickerModelIDs(models), "gpt-image-2.5-sunburst")
+	require.Contains(t, pickerModelIDs(models), "gpt-image-2.5")
 	models, err = svc.FetchOpenAIAccountModels(context.Background(), account)
 	require.NoError(t, err)
 	require.Empty(t, models, "empty upstream catalogs must remain empty")
@@ -61,7 +63,10 @@ func TestNativePiPublicCatalogueNeverAddsDefaults(t *testing.T) {
 	t.Setenv("PI_RUNTIME_URL", endpoint.URL)
 	t.Setenv("PI_RUNTIME_SECRET_FILE", secret)
 	svc := &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{group: {*account}}}}
-	require.Equal(t, []string{"gpt-5.6-sol"}, svc.GetAvailableModels(context.Background(), &group, PlatformOpenAI))
+	models := svc.GetAvailableModels(context.Background(), &group, PlatformOpenAI)
+	require.Contains(t, models, "gpt-5.6-sol")
+	require.Contains(t, models, "gpt-image-2")
+	require.NotContains(t, models, "gpt-6-astra", "unlisted text models must not be invented")
 	endpoint.Close()
 	require.Empty(t, svc.GetAvailableModels(context.Background(), &group, PlatformOpenAI))
 }

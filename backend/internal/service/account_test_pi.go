@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -23,16 +24,20 @@ func (s *AccountTestService) testNativePiAccount(c *gin.Context, account *Accoun
 	if err := ValidateExecutionAccount(account); err != nil || resolveErr != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 		return s.sendErrorAndEnd(c, "Invalid Pi account binding")
 	}
-	if isOpenAIImageModel(model) {
-		return s.sendErrorAndEnd(c, "Pi account tests support Responses text only")
-	}
 	if s.openaiGatewayService == nil || s.openaiGatewayService.openAITokenProvider == nil {
 		return s.sendErrorAndEnd(c, "Pi token provider unavailable")
 	}
 	if model == "" {
 		model = openai.DefaultTestModel
 	}
+	requestedModel := model
 	model = account.GetMappedModel(model)
+	if isOpenAIImageModel(model) && mode != AccountTestModeCompact {
+		if strings.TrimSpace(prompt) == "" {
+			prompt = defaultOpenAIImageTestPrompt
+		}
+		return s.testOpenAIImageOAuth(c, c.Request.Context(), account, requestedModel, prompt)
+	}
 	token, err := s.openaiGatewayService.openAITokenProvider.GetAccessToken(c.Request.Context(), runtimeAccount)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Pi credential unavailable; reauthorize this account")
