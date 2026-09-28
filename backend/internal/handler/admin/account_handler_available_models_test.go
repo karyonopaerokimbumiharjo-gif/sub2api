@@ -6,8 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -19,6 +22,46 @@ import (
 type availableModelsAdminService struct {
 	*stubAdminService
 	account service.Account
+}
+
+func TestAccountHandlerPiPickerIncludesNativeImageModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/models", r.URL.Path)
+		_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-5.6-sol"}]}`)
+	}))
+	defer runtime.Close()
+	secret := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(secret, []byte(strings.Repeat("s", 40)), 0600))
+	t.Setenv("PI_RUNTIME_URL", runtime.URL)
+	t.Setenv("PI_RUNTIME_SECRET_FILE", secret)
+	svc := &availableModelsAdminService{stubAdminService: newStubAdminService(), account: service.Account{
+		ID: 50, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive,
+		Credentials: map[string]any{"harness_kind": "pi", "pi_owner_user_id": "1", "chatgpt_account_id": "fixture-account", "access_token": "fixture-token", "refresh_token": "fixture-refresh", "expires_at": time.Now().Add(time.Hour).Format(time.RFC3339)},
+	}}
+	gateway := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, nil, &config.Config{}, nil, nil, nil, nil, nil, nil, nil, service.NewOpenAITokenProvider(nil, nil, nil), nil, nil, nil, nil, nil, nil)
+	tester := service.NewAccountTestService(nil, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	tester.SetOpenAIGatewayService(gateway)
+	handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, tester, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/50/models", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	ids := []string{}
+	for _, model := range out.Data {
+		ids = append(ids, model.ID)
+	}
+	require.Contains(t, ids, "gpt-image-2")
+	require.Contains(t, ids, "gpt-image-2.5")
+	require.Contains(t, ids, "gpt-image-2.5-sunburst")
+	require.NotContains(t, ids, "gpt-5.6-spark")
 }
 
 func (s *availableModelsAdminService) GetAccount(_ context.Context, id int64) (*service.Account, error) {

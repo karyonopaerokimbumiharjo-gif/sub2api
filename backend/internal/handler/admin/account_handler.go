@@ -2824,7 +2824,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 			}
 			available := make([]openai.Model, 0, len(models))
 			for _, model := range models {
-				if !service.IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) {
+				if account.IsModelSupported(model.ID) {
 					available = append(available, model)
 				}
 			}
