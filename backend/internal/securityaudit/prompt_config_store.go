@@ -504,6 +504,7 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		currentByID[endpoint.ID] = endpoint
 	}
 	next := storageConfig{
+		NativeAuditProfile:   auditpolicy.NormalizeNativeProfile(current.NativeAuditProfile),
 		NativeRiskCategories: auditpolicy.CloneCategories(current.NativeRiskCategories), OperatorPolicyEnabled: current.OperatorPolicyEnabled,
 		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled,
 		BlockingAuditMode:      normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly),
@@ -519,6 +520,9 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		WhitelistEmails: append([]string(nil), current.WhitelistEmails...),
 		ConfigVersion:   current.ConfigVersion, UpdatedBy: actorID,
 		Endpoints: make([]StorageEndpoint, 0, len(req.Endpoints)),
+	}
+	if req.NativeAuditProfile != "" {
+		next.NativeAuditProfile = req.NativeAuditProfile
 	}
 	if req.NativeRiskCategories != nil {
 		next.NativeRiskCategories = auditpolicy.ResolveNativeCategories(req.NativeRiskCategories, nil, true)

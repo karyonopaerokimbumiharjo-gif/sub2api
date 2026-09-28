@@ -37,6 +37,7 @@ type UpdateContentModerationEngineInput struct {
 }
 
 type ContentModerationEngineMeta struct {
+	NativeAuditProfile string   `json:"native_audit_profile,omitempty"`
 	QuestionCount      int      `json:"question_count,omitempty"`
 	SelectedCategories []string `json:"selected_categories,omitempty"`
 	AuditSource        string   `json:"audit_source,omitempty"`

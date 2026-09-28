@@ -7,6 +7,7 @@ import {openaiCodexProvider} from '@earendil-works/pi-ai/providers/openai-codex'
 const openaiCodexOAuth=openaiCodexProvider().auth.oauth;
 import {runNative,credentialAccount,closeSessions} from './native.mjs';
 import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
+import {schedulingHeaders,readRateLimitMetadata} from './rate-limit.mjs';
 
 // Keep failure framing bounded and independent of SDK success/error heuristics.
 // Only actual, complete Responses terminal events suppress a fallback terminal.
@@ -69,7 +70,7 @@ export function nativeFailure(status,result) {
 export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,timers={setTimeout,clearTimeout}}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
  const sessions=new Map();let loginActive=false;
- const json=(res,status,value)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))};
+ const json=(res,status,value,headers={})=>{res.writeHead(status,{...headers,'content-type':'application/json'});res.end(JSON.stringify(value))};
  const credentials=(value,owner)=>({access_token:value.access,refresh_token:value.refresh,expires_at:Math.floor(value.expires/1000),
   chatgpt_account_id:credentialAccount(value.access),harness_kind:'pi',pi_owner_user_id:String(owner)});
  const server=createServer(async(req,res)=>{
@@ -174,7 +175,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
       ownerId:body.owner_id,credentialId:body.credential_id,sessionId:body.session_id,sessionSecret,
       transport:body.transport||'sse',signal:abort.signal,
       onHeaders(status,headers){upstreamStatus=status;resetIdle();
-       for(const name of ['x-request-id','x-codex-turn-state','x-codex-primary-used-percent','x-codex-primary-reset-after-seconds','x-codex-secondary-used-percent','x-codex-secondary-reset-after-seconds']){
+       for(const name of [...schedulingHeaders,'x-codex-turn-state']){
         const value=headers?.get(name);if(value)responseHeaders[name]=value;
        }
       },
@@ -185,7 +186,10 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
       transport:result.transport,outbound:result.outbound,observation:result.evidence,continuation:result.continuation,
       upstream_status:upstreamStatus,failure_code:failure?.code,
       turn_state_present:!!responseHeaders['x-codex-turn-state'],turn_state_length:responseHeaders['x-codex-turn-state']?.length||0}));
-     if(!res.headersSent&&failure){json(res,failure.status,{error:failure.code});return}
+     if(!res.headersSent&&failure){
+      const safeHeaders=Object.fromEntries(schedulingHeaders.filter(name=>responseHeaders[name]).map(name=>[name,responseHeaders[name]]));
+      json(res,failure.status,{error:failure.code,...(failure.status===429&&result.rateLimit?{rate_limit:result.rateLimit}:{})},safeHeaders);return;
+     }
      // A terminal can contain the whole answer and exceed the passive observer's
      // bounded frame size. Pi sets rawStopReason only when parsing a terminal.
      const sdkTerminal=/^(completed|failed|incomplete)(\.|$)/.test(result.result?.rawStopReason||'');
@@ -208,6 +212,12 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
      headers:{authorization:`Bearer ${body.access_token}`,'chatgpt-account-id':body.account_id,accept:'application/json','content-type':'application/json',originator:'codex_cli_rs','user-agent':'codex_cli_rs/0.144.0',version:'0.144.0'},
      body:JSON.stringify({...request,store:false,stream:false})
     });
+    if(upstream.status===429){
+     const rateLimit=await readRateLimitMetadata(upstream);
+     void upstream.body?.cancel().catch(()=>{});
+     const headers=Object.fromEntries(schedulingHeaders.filter(name=>upstream.headers.has(name)).map(name=>[name,upstream.headers.get(name)]));
+     json(res,429,{error:'pi_upstream_rate_limited',...(rateLimit?{rate_limit:rateLimit}:{})},headers);return;
+    }
     res.writeHead(upstream.status,{ 'content-type':upstream.headers.get('content-type')||'application/json', 'x-request-id':upstream.headers.get('x-request-id')||'' });
     for await(const chunk of upstream.body||[]){res.write(chunk)}
     res.end();return;

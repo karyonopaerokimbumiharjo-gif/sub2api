@@ -165,7 +165,7 @@ func (s *PromptService) CheckOperatorPolicy(ctx context.Context, req Request) (*
 	if !ok {
 		return nil, &GuardError{Code: ErrorCodeUnavailable}
 	}
-	if !cfg.OperatorPolicyEnabled {
+	if !cfg.OperatorPolicyEnabled || cfg.NativeAuditEnabled && cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
 		return nil, nil
 	}
 	categories := auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, cfg.OperatorPolicyEnabled)

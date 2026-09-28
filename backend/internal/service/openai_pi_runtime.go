@@ -175,7 +175,7 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 			case "pi_upstream_busy":
 				return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
 			case "pi_upstream_rate_limited":
-				return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+				return nil, s.nativePiRateLimitFailover(ctx, c, account, &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}, upstreamModel)
 			case "pi_upstream_authorization_rejected":
 				return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
 			case "pi_upstream_failed":
@@ -193,7 +193,7 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		}
 		switch resp.StatusCode {
 		case http.StatusTooManyRequests:
-			return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, upstreamModel)
 		case http.StatusServiceUnavailable:
 			return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
 		case http.StatusGatewayTimeout:
@@ -238,6 +238,10 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 	started := time.Now()
 	resp, err := s.openNativePiResponse(ctx, c, account, body, upstreamModel)
 	if err != nil {
+		var failover *UpstreamFailoverError
+		if errors.As(err, &failover) {
+			return nil, err
+		}
 		var requestErr *nativePiRequestError
 		if errors.As(err, &requestErr) {
 			return fail(requestErr.status, requestErr.message)
@@ -326,7 +330,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
-			return fail(http.StatusTooManyRequests, "Pi upstream rate limit reached; retry later")
+			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, model)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")

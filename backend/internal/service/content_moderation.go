@@ -127,6 +127,7 @@ func ContentModerationCategories() []string {
 }
 
 type ContentModerationConfig struct {
+	NativeAuditProfile    string                         `json:"-"`
 	PolicyCategories      []string                       `json:"-"`
 	PolicyScanners        []string                       `json:"-"`
 	OperatorPolicyEnabled bool                           `json:"-"`
@@ -307,6 +308,7 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
+	NativeAuditProfile    string `json:"-"`
 	PolicyCategories      []string
 	PolicyScanners        []string
 	OperatorPolicyEnabled bool
@@ -853,7 +855,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	cfg := cloneContentModerationConfig(runtimeSnapshot.config)
-	applyModerationPolicySelection(cfg, input.PolicyCategories, input.PolicyScanners, input.OperatorPolicyEnabled)
+	applyModerationPolicySelection(cfg, input.PolicyCategories, input.PolicyScanners, input.OperatorPolicyEnabled, input.NativeAuditProfile)
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -958,6 +960,12 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		"text_runes", len([]rune(content.Text)),
 		"image_count", len(content.Images))
 	hashText := content.Hash()
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		// A verdict from the enhanced policy cannot decide an original-policy
+		// request. Keep its hash cache separate without discarding either cache.
+		hash := sha256.Sum256([]byte("sub2api-0.2.8:" + hashText))
+		hashText = hex.EncodeToString(hash[:])
+	}
 	if cfg.Mode == ContentModerationModePreBlock {
 		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
 			if keyword, hit := runtimeSnapshot.matchBlockedKeyword(content.Text); hit {
@@ -1248,6 +1256,12 @@ func (s *ContentModerationService) enqueueAsync(input ContentModerationCheckInpu
 func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInput, cfg *ContentModerationConfig, log *ContentModerationLog, inputHash string, recordHash bool, applySideEffects bool) {
 	if s == nil || log == nil {
 		return
+	}
+	if input.NativeAuditProfile != "" {
+		if log.EngineMeta == nil {
+			log.EngineMeta = &ContentModerationEngineMeta{Engine: cfg.Engine}
+		}
+		log.EngineMeta.NativeAuditProfile = auditpolicy.NormalizeNativeProfile(input.NativeAuditProfile)
 	}
 	fallback := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

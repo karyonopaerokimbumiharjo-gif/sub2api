@@ -52,6 +52,58 @@ func TestOperatorPolicyToggleAndActualSource(t *testing.T) {
 	}
 }
 
+func TestOriginalNativeProfileSkipsOnlyCustomNativeRules(t *testing.T) {
+	repo := &fakeJobRepository{}
+	cfg := &fakeConfigStore{active: true, cfg: ActiveConfig{NativeAuditEnabled: true, NativeAuditProfile: "upstream", OperatorPolicyEnabled: true, ConfigVersion: 4}}
+	svc := &PromptService{config: cfg, evaluator: newGuardEvaluator(nil, repo, NewAtomicMetrics(), 1, 1)}
+	req := Request{RequestID: "profile-test", Protocol: "openai_responses", Stage: "http", Body: []byte(`{"input":"CTF event schedule"}`)}
+	d, err := svc.CheckOperatorPolicy(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, d)
+	d, err = svc.EvaluateNativeHardRules(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, d.AllowNextStage)
+	require.Zero(t, repo.recordBlockingCalls)
+	// The saved enhanced/local global policy is restored when native is off.
+	cfg.cfg.NativeAuditEnabled = false
+	d, err = svc.CheckOperatorPolicy(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, DecisionBlock, d.Kind)
+}
+
+func TestNativeAuditProfileRoundTripKeepsEnhancedSelections(t *testing.T) {
+	current := DefaultStorageConfig()
+	current.NativeRiskCategories = []string{"pii", "operator_ctf"}
+	public := PublicFromStorage(current, true, nil)
+	require.Equal(t, "enhanced", public.NativeAuditProfile)
+	raw, err := json.Marshal(public)
+	require.NoError(t, err)
+	var req UpdateConfigRequest
+	require.NoError(t, json.Unmarshal(raw, &req))
+	req.NativeAuditEnabled, req.NativeAuditProfile = true, "upstream"
+	manager := &ConfigManager{}
+	next, err := manager.buildNextStorage(current, req, 1)
+	require.NoError(t, err)
+	raw, err = json.Marshal(next)
+	require.NoError(t, err)
+	persisted, err := ParseStorageConfig(string(raw))
+	require.NoError(t, err)
+	require.Equal(t, "upstream", PublicFromStorage(persisted, true, nil).NativeAuditProfile)
+	require.Equal(t, current.NativeRiskCategories, persisted.NativeRiskCategories)
+	req.NativeAuditProfile = "" // a previous client must not silently switch modes
+	next, err = manager.buildNextStorage(persisted, req, 1)
+	require.NoError(t, err)
+	require.Equal(t, "upstream", next.NativeAuditProfile)
+	req.NativeAuditProfile = "enhanced"
+	next, err = manager.buildNextStorage(persisted, req, 1)
+	require.NoError(t, err)
+	require.Equal(t, current.NativeRiskCategories, next.NativeRiskCategories)
+	bad := persisted
+	bad.NativeAuditProfile = "unknown-profile"
+	require.Error(t, validateStorageConfig(bad))
+	require.NotEqual(t, changeSummary(next), changeSummary(persisted))
+}
+
 type exclusiveLocalFake struct{ fakePromptEngine }
 
 func (*exclusiveLocalFake) AuditSelectionExclusive() bool { return true }

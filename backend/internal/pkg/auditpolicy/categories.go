@@ -1,5 +1,19 @@
 package auditpolicy
 
+const NativeProfileEnhanced = "enhanced"
+const NativeProfileUpstream = "upstream"
+
+func ValidNativeProfile(profile string) bool {
+	return profile == "" || profile == NativeProfileEnhanced || profile == NativeProfileUpstream
+}
+
+func NormalizeNativeProfile(profile string) string {
+	if profile == NativeProfileUpstream {
+		return NativeProfileUpstream
+	}
+	return NativeProfileEnhanced
+}
+
 // NativeRiskCatalog is the administrator checklist. Broad legacy duplicates
 // are deliberately absent; the original detailed content categories remain.
 type RiskCategory struct {

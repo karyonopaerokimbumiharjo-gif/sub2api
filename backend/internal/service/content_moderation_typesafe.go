@@ -95,14 +95,15 @@ func (s *ContentModerationService) callTypeSafeModeration(ctx context.Context, c
 		result.Scores["intent_biological_risk"] = score
 	}
 	version := TypeSafeModerationRulesVersion
-	if cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled {
+	if cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream && (cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled) {
 		version = TypeSafePolicyRulesVersion
 	}
 	meta := &ContentModerationEngineMeta{
-		Engine: ContentModerationEngineTypeSafe, Model: result.Model, RulesVersion: version, SkippedImages: skipped, BioTier: tier,
+		NativeAuditProfile: cfg.NativeAuditProfile,
+		Engine:             ContentModerationEngineTypeSafe, Model: result.Model, RulesVersion: version, SkippedImages: skipped, BioTier: tier,
 		QuestionCount: len(questions), SelectedCategories: auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled),
 	}
-	if version == TypeSafeModerationRulesVersion {
+	if version == TypeSafeModerationRulesVersion && cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream {
 		meta.QuestionCount = 0
 		meta.SelectedCategories = nil
 	}
@@ -110,10 +111,14 @@ func (s *ContentModerationService) callTypeSafeModeration(ctx context.Context, c
 }
 
 func moderationAttemptMeta(cfg *ContentModerationConfig, input ContentModerationInput) *ContentModerationEngineMeta {
-	meta := &ContentModerationEngineMeta{Engine: moderationEngine(cfg.Engine)}
+	meta := &ContentModerationEngineMeta{Engine: moderationEngine(cfg.Engine), NativeAuditProfile: cfg.NativeAuditProfile}
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		meta.QuestionCount = 13
+		meta.SelectedCategories = auditpolicy.ContentCategoryIDs()
+	}
 	if cfg.Engine == ContentModerationEngineTypeSafe {
 		meta.RulesVersion = TypeSafeModerationRulesVersion
-		if cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled {
+		if cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream && (cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled) {
 			meta.RulesVersion = TypeSafePolicyRulesVersion
 			meta.QuestionCount = len(typeSafePolicyQuestions(cfg))
 			meta.SelectedCategories = auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled)
@@ -125,6 +130,9 @@ func moderationAttemptMeta(cfg *ContentModerationConfig, input ContentModeration
 }
 
 func typeSafePolicyQuestions(cfg *ContentModerationConfig) map[string]typesafe.Question {
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		return typeSafeModerationQuestions()
+	}
 	categories := auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled)
 	questions := map[string]typesafe.Question{}
 	for _, id := range categories {

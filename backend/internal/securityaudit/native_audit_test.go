@@ -26,6 +26,24 @@ type nativeLegacyFake struct {
 	ready bool
 }
 
+type nativeProfileLegacy struct {
+	nativeLegacyFake
+	profile string
+}
+
+func (l *nativeProfileLegacy) Check(_ context.Context, req Request) (*LegacyDecision, error) {
+	l.profile = req.NativeAuditProfile
+	return &LegacyDecision{Allowed: true, Action: "allow"}, nil
+}
+func TestNativeOriginalProfileReachesModeration(t *testing.T) {
+	cfg := &fakeConfigStore{active: true, cfg: ActiveConfig{RiskControlEnabled: true, NativeAuditEnabled: true, NativeAuditProfile: "upstream", OperatorPolicyEnabled: true}}
+	p := &PromptService{config: cfg, evaluator: newGuardEvaluator(nil, &fakeJobRepository{}, NewAtomicMetrics(), 1, 1)}
+	l := &nativeProfileLegacy{nativeLegacyFake: nativeLegacyFake{ready: true}}
+	d := NewCoordinator(l, p).Check(context.Background(), Request{Protocol: "openai_responses", Stage: "http", Body: []byte(`{"input":"CTF event schedule"}`)})
+	require.Equal(t, DecisionAllow, d.Kind)
+	require.Equal(t, "upstream", l.profile)
+}
+
 func (f *nativeLegacyFake) NativeAuditReady(context.Context) bool { return f.ready }
 func TestNativeAuditIsExclusiveAndFailClosed(t *testing.T) {
 	p := &nativePromptFake{fakePromptEngine: fakePromptEngine{mode: ModeBlocking}}

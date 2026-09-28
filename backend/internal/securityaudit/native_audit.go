@@ -21,6 +21,13 @@ func (c *Coordinator) nativeAuditSelected() bool {
 }
 
 func (c *Coordinator) checkNative(ctx context.Context, req Request, engine nativeAuditPolicyEngine) Decision {
+	if provider, ok := engine.(interface{ NativePolicy() ActiveConfig }); ok {
+		policy := provider.NativePolicy()
+		req.NativeAuditProfile = policy.NativeAuditProfile
+		req.NativeScanners = append([]string(nil), policy.Scanners...)
+		req.NativeRiskCategories = auditpolicy.ResolveNativeCategories(policy.NativeRiskCategories, policy.Scanners, policy.OperatorPolicyEnabled)
+		req.OperatorPolicyEnabled = policy.OperatorPolicyEnabled
+	}
 	rules, err := engine.EvaluateNativeHardRules(ctx, req)
 	if err != nil {
 		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
@@ -37,12 +44,7 @@ func (c *Coordinator) checkNative(ctx context.Context, req Request, engine nativ
 		}
 		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
 	}
-	if provider, ok := engine.(interface{ NativePolicy() ActiveConfig }); ok {
-		policy := provider.NativePolicy()
-		req.NativeScanners = append([]string(nil), policy.Scanners...)
-		req.NativeRiskCategories = auditpolicy.ResolveNativeCategories(policy.NativeRiskCategories, policy.Scanners, policy.OperatorPolicyEnabled)
-		req.OperatorPolicyEnabled = policy.OperatorPolicyEnabled
-	}
+
 	legacy, err := c.checkLegacy(ctx, req)
 	if err != nil {
 		return prioritize(nil, unavailablePromptDecision(ErrorCodeUnavailable))
@@ -83,6 +85,9 @@ func (s *PromptService) EvaluateNativeHardRules(ctx context.Context, req Request
 	cfg, ok := s.config.Active()
 	if !ok {
 		return nil, &GuardError{Code: ErrorCodeUnavailable}
+	}
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		return &PromptDecision{Kind: DecisionAllow, AllowNextStage: true}, nil
 	}
 	snapshot, err := ExtractPromptSnapshot(req)
 	if errors.Is(err, ErrNoPromptText) {

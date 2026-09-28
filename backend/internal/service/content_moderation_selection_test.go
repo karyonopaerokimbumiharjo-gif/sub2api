@@ -67,3 +67,58 @@ func TestNativeAdminTestUsesSavedSelection(t *testing.T) {
 	result := buildContentModerationTestAuditResult(&moderationAPIResult{CategoryScores: map[string]float64{"intent_pii": .99}}, cfg.Thresholds)
 	require.True(t, result.Flagged)
 }
+
+func TestNativeOriginalProfileUsesUnmodifiedThirteenQuestions(t *testing.T) {
+	cfg := defaultContentModerationConfig()
+	svc := &ContentModerationService{settingRepo: &contentModerationTestSettingRepo{values: map[string]string{"prompt_audit_config": `{"native_audit_profile":"upstream","native_risk_categories":["pii","operator_ctf","biological_risk"],"operator_policy_enabled":true,"scanners":["biological_risk"]}`}}}
+	require.NoError(t, svc.applySavedNativePolicyForTest(context.Background(), cfg))
+	require.Equal(t, typeSafeModerationQuestions(), typeSafePolicyQuestions(cfg))
+	require.Len(t, typeSafePolicyQuestions(cfg), 13)
+	require.False(t, cfg.OperatorPolicyEnabled)
+	require.Empty(t, cfg.PolicyScanners)
+	require.NotContains(t, cfg.Thresholds, "intent_biological_risk")
+	cfg.Engine = "typesafe"
+	meta := moderationAttemptMeta(cfg, ContentModerationInput{})
+	require.Equal(t, TypeSafeModerationRulesVersion, meta.RulesVersion)
+	require.Equal(t, "upstream", meta.NativeAuditProfile)
+	require.Equal(t, 13, meta.QuestionCount)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request typesafe.Request
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		require.Equal(t, typeSafeModerationQuestions(), request.Questions)
+		answers := map[string]any{}
+		for id := range request.Questions {
+			answers[id] = map[string]any{"type": "noul", "noul": 0.01}
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"model": "jev-fixture", "answers": answers}))
+	}))
+	defer server.Close()
+	svc.httpClient = nativeAuditTestClient(server)
+	cfg.BaseURL, cfg.Model = "https://api.typesafe.ai", "jev-fixture"
+	status := 0
+	result, err := svc.callTypeSafeModeration(context.Background(), cfg, "fixture-key", "Ordinary format fixture.", &status)
+	require.NoError(t, err)
+	require.Equal(t, 200, status)
+	require.Equal(t, "upstream", result.EngineMeta.NativeAuditProfile)
+	require.Equal(t, TypeSafeModerationRulesVersion, result.EngineMeta.RulesVersion)
+	require.Len(t, result.CategoryScores, 13)
+	// A historical enhanced-policy hit must not preempt the original model.
+	text := "Ordinary format fixture."
+	content := ContentModerationInput{Text: text}
+	content.Normalize()
+	hashes := &contentModerationTestHashCache{hashes: map[string]struct{}{content.Hash(): {}}}
+	cfg.Enabled, cfg.RecordNonHits, cfg.PreHashCheckEnabled = true, true, true
+	cfg.TypeSafe = &ContentModerationEngineConfig{BaseURL: "https://api.typesafe.ai", Model: "jev-fixture", APIKeys: []string{"fixture-key"}, TimeoutMS: 3000, Thresholds: ContentModerationDefaultThresholds()}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	repo := &contentModerationTestRepo{}
+	svc = NewContentModerationService(&contentModerationTestSettingRepo{values: map[string]string{SettingKeyRiskControlEnabled: "true", SettingKeyContentModerationConfig: string(raw)}}, repo, hashes, nil, nil, nil, nil, nil)
+	svc.httpClient = nativeAuditTestClient(server)
+	decision, err := svc.Check(context.Background(), ContentModerationCheckInput{NativeAuditProfile: "upstream", PolicyCategories: []string{"pii"}, OperatorPolicyEnabled: true, Strict: true, Protocol: ContentModerationProtocolOpenAIResponses, Body: []byte(`{"input":"Ordinary format fixture."}`)})
+	require.NoError(t, err)
+	require.True(t, decision.Allowed)
+	require.NotEqual(t, ContentModerationActionHashBlock, decision.Action)
+	logs := requireContentModerationLogCount(t, repo, 1)
+	require.Equal(t, "upstream", logs[0].EngineMeta.NativeAuditProfile)
+	require.Equal(t, 13, logs[0].EngineMeta.QuestionCount)
+}

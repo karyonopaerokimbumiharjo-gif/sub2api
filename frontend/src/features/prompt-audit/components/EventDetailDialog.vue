@@ -17,6 +17,7 @@
       <div class="mt-5 h-[min(62vh,36rem)] overflow-y-auto" data-test="event-detail-tab-panel">
         <p v-if="contentAvailability !== 'full'" class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200" data-test="content-availability">{{ t(`admin.promptAudit.events.contentAvailability.${contentAvailability}`) }}</p>
         <p v-if="isNativeLog(event)" class="mb-4 text-xs text-gray-500 dark:text-dark-400">{{ t('admin.promptAudit.events.nativeReadOnly') }}</p>
+        <p v-if="event.native_engine_meta?.native_audit_profile === 'upstream' || event.native_engine_meta?.native_audit_profile === 'enhanced'" class="mb-4 text-sm text-primary-700 dark:text-primary-300" data-test="event-native-profile">审核版本：{{ event.native_engine_meta.native_audit_profile === 'upstream' ? 'Sub2API 0.2.8 原版' : '增强版' }}</p>
         <div v-if="event.audit_status === 'error'" class="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900 dark:bg-orange-950/30 dark:text-orange-200" data-test="audit-failed">{{ t('admin.promptAudit.events.auditFailedHint') }}</div>
         <div v-if="event.audit_status === 'gap'" class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-dark-700 dark:bg-dark-800">
           <p class="text-sm font-medium text-slate-800 dark:text-dark-100">{{ t('admin.promptAudit.events.auditGap') }}</p>

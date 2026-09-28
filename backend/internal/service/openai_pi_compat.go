@@ -28,6 +28,10 @@ func (s *OpenAIGatewayService) forwardNativePiCompat(ctx context.Context, c *gin
 	}
 	resp, err := s.openNativePiResponse(ctx, c, account, body, upstreamModel)
 	if err != nil {
+		var failover *UpstreamFailoverError
+		if errors.As(err, &failover) {
+			return nil, err
+		}
 		status, message := http.StatusBadGateway, "Pi runtime unavailable"
 		var requestErr *nativePiRequestError
 		if errors.As(err, &requestErr) {

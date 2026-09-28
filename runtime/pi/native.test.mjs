@@ -10,9 +10,16 @@ import {join} from 'node:path';
 import {runNative,nativeBody,scopedSession,closeSessions} from './native.mjs';
 import {createRuntime,nativeFailure} from './server.mjs';
 import {checkRuntimeHealth} from './healthcheck.mjs';
+import {rateLimitMetadata,readRateLimitMetadata} from './rate-limit.mjs';
 const token=account=>`test.${Buffer.from(JSON.stringify({'https://api.openai.com/auth':{chatgpt_account_id:account}})).toString('base64url')}.test`;
 const request={model:'gpt-6-astra',input:[{role:'user',content:[{type:'input_text',text:'fixture'}]}]};
 const base={request,accessToken:token('account-a'),accountId:'account-a',ownerId:1,credentialId:5,sessionId:'s1',sessionSecret:'test-secret',onBytes:()=>{}};
+test('quota metadata is bounded and only accepts explicit reset fields',async()=>{
+ assert.deepEqual(rateLimitMetadata({error:{type:'usage_limit_reached',resets_in_seconds:'120',message:'private'}}),{type:'usage_limit_reached',resets_in_seconds:120});
+ for(const error of [{type:'unknown',resets_at:1800000000},{type:'usage_limit_reached',resets_in_seconds:-1},{type:'usage_limit_reached',resets_in_seconds:true},{type:'usage_limit_reached',message:'resets_at:1800000000'}])assert.equal(rateLimitMetadata({error}),undefined);
+ assert.equal(await readRateLimitMetadata(new Response('not-json',{status:429})),undefined);
+ assert.equal(await readRateLimitMetadata(new Response(JSON.stringify({error:{type:'usage_limit_reached',resets_in_seconds:120,padding:'x'.repeat(20000)}}),{status:429})),undefined);
+});
 test('runtime returns one classified failure without leaking provider details',async()=>{
  assert.deepEqual(nativeFailure(200,{errorMessage:'Codex error: Our servers are currently overloaded. Please try again later.'}),{status:503,code:'pi_upstream_busy'});
  assert.deepEqual(nativeFailure(200,{errorMessage:'private payload and credential'}),{status:502,code:'pi_upstream_failed'});
@@ -45,6 +52,24 @@ test('standalone compact is forwarded through the bound OAuth identity',async()=
   assert.equal(outbound.init.headers.originator,'codex_cli_rs');
   assert.equal(outbound.body.store,false);assert.equal(outbound.body.stream,false);
  } finally {server.closeAllConnections();await new Promise(r=>server.close(r))}
+});
+test('quota failures retain reset metadata for gateway failover without provider content',async()=>{
+ const secret='a'.repeat(40);
+ const upstream=()=>new Response(JSON.stringify({error:{type:'usage_limit_reached',resets_in_seconds:3600,message:'private provider content',token:'private-token'}}),{
+  status:429,headers:{'retry-after':'3600','x-request-id':'quota-fixture','x-codex-primary-used-percent':'100','x-codex-primary-window-minutes':'300','x-codex-primary-reset-after-seconds':'3600','set-cookie':'private-cookie'}
+ });
+ const server=createRuntime({secret,native:options=>runNative({...base,...options,fetchImpl:async()=>upstream()}),compactFetch:async()=>upstream()});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ try {
+  for(const path of ['/responses','/compact']){
+   const response=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({owner_id:1,credential_id:5,session_id:'quota-test',account_id:'account-a',access_token:token('account-a'),request})});
+   assert.equal(response.status,429);
+   assert.equal(response.headers.get('retry-after'),'3600');
+   assert.equal(response.headers.get('x-codex-primary-window-minutes'),'300');
+   assert.equal(response.headers.has('set-cookie'),false);
+   assert.deepEqual(await response.json(),{error:'pi_upstream_rate_limited',rate_limit:{type:'usage_limit_reached',resets_in_seconds:3600}});
+  }
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
 });
 function completed(id){return JSON.stringify({type:'response.completed',response:{id,status:'completed',model:'gpt-6-astra',output:[],usage:{input_tokens:1,output_tokens:0,total_tokens:1}}})}
 test('native SDK produces its own headers, preserves Responses input, and streams exact bytes',async()=>{

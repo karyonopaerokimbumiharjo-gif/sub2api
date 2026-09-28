@@ -88,6 +88,7 @@ type StorageEndpoint struct {
 type storageConfig struct {
 	NativeRiskCategories  []string `json:"native_risk_categories"`
 	OperatorPolicyEnabled *bool    `json:"operator_policy_enabled"`
+	NativeAuditProfile    string   `json:"native_audit_profile"`
 	NativeAuditEnabled    bool     `json:"native_audit_enabled"`
 	Enabled               bool     `json:"enabled"`
 	BlockingEnabled       bool     `json:"blocking_enabled"`
@@ -145,6 +146,7 @@ type ActiveEndpoint struct {
 type ActiveConfig struct {
 	NativeRiskCategories        []string `json:"native_risk_categories"`
 	OperatorPolicyEnabled       bool     `json:"operator_policy_enabled"`
+	NativeAuditProfile          string   `json:"native_audit_profile"`
 	NativeAuditEnabled          bool     `json:"native_audit_enabled"`
 	RiskControlEnabled          bool
 	Enabled                     bool
@@ -195,6 +197,7 @@ type PublicConfig struct {
 	NativeRiskCatalog           []auditpolicy.RiskCategory `json:"native_risk_catalog"`
 	NativeRiskCategories        []string                   `json:"native_risk_categories"`
 	OperatorPolicyEnabled       bool                       `json:"operator_policy_enabled"`
+	NativeAuditProfile          string                     `json:"native_audit_profile"`
 	NativeAuditEnabled          bool                       `json:"native_audit_enabled"`
 	Enabled                     bool                       `json:"enabled"`
 	BlockingEnabled             bool                       `json:"blocking_enabled"`
@@ -259,6 +262,7 @@ type UpdateEndpoint struct {
 type UpdateConfigRequest struct {
 	NativeRiskCategories        []string         `json:"native_risk_categories"`
 	OperatorPolicyEnabled       *bool            `json:"operator_policy_enabled"`
+	NativeAuditProfile          string           `json:"native_audit_profile"`
 	NativeAuditEnabled          bool             `json:"native_audit_enabled"`
 	ExpectedConfigVersion       int64            `json:"expected_config_version" binding:"required"`
 	Enabled                     bool             `json:"enabled"`
@@ -427,10 +431,13 @@ func normalizeStorageConfig(cfg *storageConfig) {
 }
 
 func validateStorageConfig(cfg storageConfig) error {
+	if !auditpolicy.ValidNativeProfile(cfg.NativeAuditProfile) {
+		return infraerrors.BadRequest("invalid_native_audit_profile", "原生审核版本无效")
+	}
 	if !auditpolicy.ValidNativeCategories(cfg.NativeRiskCategories) {
 		return infraerrors.BadRequest("invalid_native_audit_category", "原生引擎审核分类无效")
 	}
-	if cfg.NativeAuditEnabled && cfg.NativeRiskCategories != nil && len(cfg.NativeRiskCategories) == 0 {
+	if cfg.NativeAuditEnabled && cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream && cfg.NativeRiskCategories != nil && len(cfg.NativeRiskCategories) == 0 {
 		return infraerrors.BadRequest("native_audit_category_required", "至少选择一项审核分类")
 	}
 	if cfg.BlockingEnabled && !cfg.Enabled {
@@ -558,10 +565,13 @@ func validateUpdateConfigRequest(req UpdateConfigRequest) error {
 	if req.NativeRiskCategories != nil && req.OperatorPolicyEnabled != nil && *req.OperatorPolicyEnabled != auditpolicy.HasOperatorCategory(req.NativeRiskCategories) {
 		return infraerrors.BadRequest("native_operator_selection_conflict", "全局规则开关与分类选择不一致")
 	}
+	if !auditpolicy.ValidNativeProfile(req.NativeAuditProfile) {
+		return infraerrors.BadRequest("invalid_native_audit_profile", "原生审核版本无效")
+	}
 	if !auditpolicy.ValidNativeCategories(req.NativeRiskCategories) {
 		return infraerrors.BadRequest("invalid_native_audit_category", "原生引擎审核分类无效")
 	}
-	if req.NativeAuditEnabled && req.NativeRiskCategories != nil && len(req.NativeRiskCategories) == 0 {
+	if req.NativeAuditEnabled && req.NativeAuditProfile != auditpolicy.NativeProfileUpstream && req.NativeRiskCategories != nil && len(req.NativeRiskCategories) == 0 {
 		return infraerrors.BadRequest("native_audit_category_required", "至少选择一项审核分类")
 	}
 	if mode := normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly); !validBlockingAuditMode(mode) {
@@ -788,6 +798,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		})
 	}
 	active := ActiveConfig{
+		NativeAuditProfile:  auditpolicy.NormalizeNativeProfile(cfg.NativeAuditProfile),
 		NativeAuditEnabled:  cfg.NativeAuditEnabled,
 		RiskControlEnabled:  riskControlEnabled,
 		Enabled:             cfg.Enabled,
@@ -796,6 +807,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 		BackgroundAuditMode: cfg.BackgroundAuditMode,
 	}
 	return PublicConfig{
+		NativeAuditProfile:   auditpolicy.NormalizeNativeProfile(cfg.NativeAuditProfile),
 		NativeRiskCatalog:    append([]auditpolicy.RiskCategory(nil), auditpolicy.NativeRiskCatalog...),
 		NativeRiskCategories: auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, operatorPolicyEnabled(cfg.OperatorPolicyEnabled)),
 		Enabled:              cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled, BlockingAuditMode: cfg.BlockingAuditMode,
@@ -815,6 +827,7 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 
 func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor SecretEncryptor) (ActiveConfig, error) {
 	active := ActiveConfig{
+		NativeAuditProfile:   auditpolicy.NormalizeNativeProfile(cfg.NativeAuditProfile),
 		NativeRiskCategories: auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, operatorPolicyEnabled(cfg.OperatorPolicyEnabled)),
 		RiskControlEnabled:   riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
 		BlockingAuditMode: cfg.BlockingAuditMode, BackgroundAuditMode: cfg.BackgroundAuditMode, BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly,
@@ -860,6 +873,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 
 func changeSummary(cfg storageConfig) string {
 	summary := struct {
+		NativeAuditProfile     string   `json:"native_audit_profile"`
 		NativeAuditEnabled     bool     `json:"native_audit_enabled"`
 		Enabled                bool     `json:"enabled"`
 		BlockingEnabled        bool     `json:"blocking_enabled"`
@@ -879,7 +893,7 @@ func changeSummary(cfg storageConfig) string {
 		WhitelistCount         int      `json:"whitelist_count"`
 		WhitelistHash          string   `json:"whitelist_hash"`
 		NativeRiskCategories   []string `json:"native_risk_categories"`
-	}{cfg.NativeAuditEnabled, cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.JevSafetyEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), "", auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, operatorPolicyEnabled(cfg.OperatorPolicyEnabled))}
+	}{auditpolicy.NormalizeNativeProfile(cfg.NativeAuditProfile), cfg.NativeAuditEnabled, cfg.Enabled, cfg.BlockingEnabled, cfg.BlockingAuditMode, cfg.BackgroundAuditMode, cfg.BlockingLatestTurnOnly, cfg.StorePassEvents, cfg.AdaptiveEnabled, cfg.JevSafetyEnabled, cfg.OutputAuditEnabled, cfg.PromptChunkConcurrency, len(cfg.Endpoints), len(cfg.Scanners), cfg.AllGroups, len(cfg.GroupIDs), "", len(cfg.WhitelistEmails), "", auditpolicy.ResolveNativeCategories(cfg.NativeRiskCategories, cfg.Scanners, operatorPolicyEnabled(cfg.OperatorPolicyEnabled))}
 	rawGroups, _ := json.Marshal(cfg.GroupIDs)
 	digest := sha256.Sum256(rawGroups)
 	summary.GroupHash = hex.EncodeToString(digest[:])

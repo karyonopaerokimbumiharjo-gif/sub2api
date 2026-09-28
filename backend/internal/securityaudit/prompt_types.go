@@ -97,6 +97,7 @@ type OutputCapture struct {
 }
 
 type Request struct {
+	NativeAuditProfile    string
 	NativeRiskCategories  []string
 	NativeScanners        []string
 	OperatorPolicyEnabled bool

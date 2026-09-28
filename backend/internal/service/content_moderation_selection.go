@@ -8,7 +8,13 @@ import (
 	"strings"
 )
 
-func applyModerationPolicySelection(cfg *ContentModerationConfig, selected, legacy []string, operatorEnabled bool) {
+func applyModerationPolicySelection(cfg *ContentModerationConfig, selected, legacy []string, operatorEnabled bool, profile ...string) {
+	if len(profile) > 0 {
+		cfg.NativeAuditProfile = auditpolicy.NormalizeNativeProfile(profile[0])
+	}
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		selected, legacy, operatorEnabled = auditpolicy.ContentCategoryIDs(), nil, false
+	}
 	cfg.PolicyScanners = append([]string(nil), legacy...)
 	cfg.PolicyCategories = auditpolicy.CloneCategories(selected)
 	cfg.OperatorPolicyEnabled = operatorEnabled
@@ -37,6 +43,7 @@ func (s *ContentModerationService) applySavedNativePolicyForTest(ctx context.Con
 		return nil
 	}
 	var policy struct {
+		Profile    string   `json:"native_audit_profile"`
 		Categories []string `json:"native_risk_categories"`
 		Scanners   []string `json:"scanners"`
 		Operator   *bool    `json:"operator_policy_enabled"`
@@ -44,10 +51,10 @@ func (s *ContentModerationService) applySavedNativePolicyForTest(ctx context.Con
 	if err = json.Unmarshal([]byte(raw), &policy); err != nil {
 		return err
 	}
-	if !auditpolicy.ValidNativeCategories(policy.Categories) {
+	if !auditpolicy.ValidNativeProfile(policy.Profile) || !auditpolicy.ValidNativeCategories(policy.Categories) {
 		return errors.New("invalid saved audit category")
 	}
 	enabled := policy.Operator == nil || *policy.Operator
-	applyModerationPolicySelection(cfg, policy.Categories, policy.Scanners, enabled)
+	applyModerationPolicySelection(cfg, policy.Categories, policy.Scanners, enabled, policy.Profile)
 	return nil
 }

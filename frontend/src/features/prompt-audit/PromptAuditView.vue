@@ -66,7 +66,7 @@
 
             <template v-if="draft">
               <p class="my-4 rounded-lg bg-primary-50 p-3 text-sm">{{ serverConfig?.native_audit_enabled ? '当前使用原生审计。这里保留本地配置，不会同时运行本地审核模型。' : '当前使用本地审计，不会同时调用原生审核模型。' }}</p>
-              <label class="my-4 flex items-center gap-2"><input :checked="draft.operator_policy_enabled" type="checkbox" @change="setOperatorMaster(($event.target as HTMLInputElement).checked)" />拦截 CTF 与破甲库（全局规则，共用开关）</label>
+              <label v-if="!draft.native_audit_enabled || draft.native_audit_profile !== 'upstream'" class="my-4 flex items-center gap-2"><input :checked="draft.operator_policy_enabled" type="checkbox" @change="setOperatorMaster(($event.target as HTMLInputElement).checked)" />拦截 CTF 与破甲库（全局规则，共用开关）</label>
               <LocalAuditControls />
               <EndpointPool
                 :endpoints="draft.endpoints"
@@ -299,14 +299,14 @@ onBeforeUnmount(() => {
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events' | 'adaptive' | 'native'
 const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
- active: '当前使用原生 Sub2API 审计', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: '普通风控开关已关闭。已启用的 CTF／破甲全局规则仍会执行。', enableFeature: '启用风控总开关',
+ active: serverConfig.value?.native_audit_profile === 'upstream' ? '当前使用 Sub2API 0.2.8 原版审核' : '当前使用原生 Sub2API 审计 · 增强版', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: serverConfig.value?.native_audit_enabled && serverConfig.value?.native_audit_profile === 'upstream' ? '风控总开关已关闭，当前原版审核不会执行。' : '普通风控开关已关闭。增强版中已启用的 CTF／破甲全局规则仍会执行。', enableFeature: '启用风控总开关',
  title: '原生 Sub2API 审计', toggle: '使用原生审计替代自定义模型审计',
- description: '选中后使用原生审核；关闭后使用本地审核，两套输入审核模型不会同时执行。CTF／破甲命中由本地规则提前拦截，记录仍属于当前选中的审核方式。',
+ description: '选中后使用下方选择的原生审核版本；关闭后使用本地审核，两套输入审核模型不会同时执行。',
  warning: '请先配置并启用下方原生审计，再保存此开关。配置不可用时请求会被拒绝；关闭开关可恢复原自定义配置。'
 } : {
  active: 'Native Sub2API auditing is selected', open: 'Open native audit settings', entryHint: 'Native enablement, engine, audit records and recording passed requests are in the Native Sub2API Audit tab.', featureDisabled: 'The risk-control switch is off. Auditing is disabled; configuration remains accessible.', enableFeature: 'Enable risk control',
  title: 'Native Sub2API Audit', toggle: 'Replace custom model audits with native auditing',
- description: 'Use native OpenAI / TypeSafe AI auditing plus local repository and explicit-bypass rules, without duplicate custom, background or output model audits.',
+ description: 'Use the selected native audit version. Turn this off to use local auditing; both input models never run together.',
  warning: 'Configure and enable native auditing below before saving this switch. Unavailable audit configuration rejects requests. Turn this off to restore custom settings.'
 })
 function setOperatorMaster(enabled: boolean) {

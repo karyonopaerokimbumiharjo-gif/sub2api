@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import {stream, getOpenAICodexWebSocketDebugStats, closeOpenAICodexWebSocketSessions} from '@earendil-works/pi-ai/api/openai-codex-responses';
 import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
 import {requestEvidence} from '../../tools/pi-integration/acceptance.mjs';
+import {readRateLimitMetadata} from './rate-limit.mjs';
 
 const active = new AsyncLocalStorage();
 const inFlight = new Set();
@@ -96,7 +97,7 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
  const state={active:true,observer,onBytes,outbound:null,transport:null,pending:Promise.resolve(),deliveryFailed:false,sseEOF:false,transportInterrupted:false};
  const model={id:request.model,name:request.model,provider:'openai-codex',api:'openai-codex-responses',baseUrl,
   reasoning:true,input:['text','image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:4096};
- let result;
+ let result,rateLimit;
  try {
   await active.run(state,async()=>{
    const contextMessages=[{role:'system',content:request.instructions||'You are a helpful assistant.',timestamp:0}];
@@ -113,6 +114,7 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
       state.transport='sse';
       const upstream=await fetchImpl(url,{...init,redirect:'error'});
       onHeaders(upstream.status,upstream.headers);
+      if(upstream.status===429)rateLimit=await readRateLimitMetadata(upstream);
       if(!upstream.ok)return upstream;
       const reader=upstream.body.getReader();
       return new Response(new ReadableStream({async pull(controller){
@@ -128,7 +130,7 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
   const interrupted=state.transportInterrupted||state.deliveryFailed||signal?.aborted===true||['error','aborted'].includes(result.stopReason);
   const evidence=observer.finish(interrupted);
   const stats=getOpenAICodexWebSocketDebugStats(scoped);
-  return {result,evidence,outbound:state.outbound,transport:state.transport,
+  return {result,evidence,rateLimit,outbound:state.outbound,transport:state.transport,
    continuation:stats?{connectionsCreated:stats.connectionsCreated,connectionsReused:stats.connectionsReused,
     deltaRequests:stats.deltaRequests,fullContextRequests:stats.fullContextRequests,sseFallbacks:stats.sseFallbacks}:null};
  }finally{state.active=false;inFlight.delete(scoped)}
