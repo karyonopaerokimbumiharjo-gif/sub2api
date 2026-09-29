@@ -53,7 +53,7 @@ test('post-header exceptions become failure terminals and pre-header exceptions 
  }},async post=>{
   const response=await post();const text=await response.text();assert.doesNotMatch(text,/private-provider-token-must-not-leak/);
   if(started){assert.equal(response.status,200);assert.equal(events(text).at(-1).type,'response.failed')}
-  else{assert.equal(response.status,400);assert.deepEqual(JSON.parse(text),{error:'pi_runtime_error'})}
+  else{assert.equal(response.status,502);assert.deepEqual(JSON.parse(text),{error:'pi_runtime_error'})}
  });
 });
 

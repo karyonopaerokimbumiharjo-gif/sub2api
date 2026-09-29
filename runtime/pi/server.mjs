@@ -9,6 +9,7 @@ import {runNative,credentialAccount,closeSessions} from './native.mjs';
 import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
 import {schedulingHeaders,readRateLimitMetadata} from './rate-limit.mjs';
 import {forwardImages} from './images.mjs';
+import {maxRuntimeRequestBodyBytes,maxControlRequestBodyBytes} from './request-limits.mjs';
 
 // Keep failure framing bounded and independent of SDK success/error heuristics.
 // Only actual, complete Responses terminal events suppress a fallback terminal.
@@ -68,8 +69,9 @@ export function nativeFailure(status,result) {
  return {status:502,code:'pi_upstream_failed'};
 }
 
-export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,imageFetch=fetch,timers={setTimeout,clearTimeout}}) {
+export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAuth,native=runNative,verifyAccess=validateCodexAccess,loadModels=fetchCodexModels,compactFetch=fetch,imageFetch=fetch,maxRequestBodyBytes=maxRuntimeRequestBodyBytes,timers={setTimeout,clearTimeout}}) {
  if(typeof secret!=='string'||secret.length<32)throw Error('runtime_secret_required');
+ if(!Number.isSafeInteger(maxRequestBodyBytes)||maxRequestBodyBytes<=0)throw Error('invalid_pi_body_limit');
  const sessions=new Map();let loginActive=false;
  const json=(res,status,value,headers={})=>{res.writeHead(status,{...headers,'content-type':'application/json'});res.end(JSON.stringify(value))};
  const credentials=(value,owner)=>({access_token:value.access,refresh_token:value.refresh,expires_at:Math.floor(value.expires/1000),
@@ -77,12 +79,20 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
  const server=createServer(async(req,res)=>{
   const supplied=Buffer.from(req.headers.authorization||'');const expected=Buffer.from(`Bearer ${secret}`);
   if(supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){json(res,401,{error:'unauthorized'});return}
+  const inference=['/responses','/compact','/images'].includes(req.url);
+  const limit=inference?maxRequestBodyBytes:Math.min(maxRequestBodyBytes,maxControlRequestBodyBytes);
+  let size=0;
   try {
    if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@0.87.1'});return}
    if(req.method!=='POST'){json(res,404,{error:'not_found'});return}
-   const chunks=[];let size=0;
-   for await(const chunk of req){size+=chunk.length;if(size>(req.url==='/images'?64:8)*1024*1024)throw Error('request_too_large');chunks.push(chunk)}
-   const body=JSON.parse(Buffer.concat(chunks));
+   if(Number(req.headers['content-length'])>limit)throw Error('request_too_large');
+   const chunks=[];
+   // Keep the socket available to return 413 when rejecting a chunked body.
+   for await(const chunk of req.iterator({destroyOnReturn:false})){
+    size+=chunk.length;if(size>limit)throw Error('request_too_large');chunks.push(chunk);
+   }
+   let body;
+   try{body=JSON.parse(Buffer.concat(chunks))}catch{throw Error('invalid_responses_request')}
    if(req.url==='/images'){await forwardImages(body,res,imageFetch);return}
    if(req.url==='/oauth/start') {
     if(!Number.isSafeInteger(body.owner_id)||body.owner_id<1)throw Error('owner_required');
@@ -227,9 +237,14 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
    json(res,404,{error:'not_found'});
   }catch(error){
    // Deliberately do not echo provider exceptions, callbacks, tokens or payloads.
-   const safe=['oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','invalid_pi_tools','unsupported_pi_field:max_output_tokens'];
-   const code=safe.includes(error.message)?error.message:String(error.message||'').startsWith('unsupported_pi_field:')?'unsupported_pi_field':'pi_runtime_error';
-   if(res.headersSent)res.destroy();else json(res,400,{error:code});
+   const safe=['request_too_large','oauth_start_failed','oauth_exchange_failed','oauth_exchange_timeout','oauth_access_rejected','oauth_access_invalid_response','oauth_login_in_progress','owner_required','oauth_session_mismatch','oauth_callback_mismatch','oauth_account_mismatch','invalid_responses_request','model_required','input_required','unsupported_pi_tool_type','invalid_pi_tools','unsupported_pi_field:max_output_tokens','invalid_pi_image_request','unsupported_pi_image_endpoint','invalid_compact_binding','invalid_compact_request','invalid_pi_timeout'];
+   const message=error?.message;
+   const code=safe.includes(message)?message:String(message||'').startsWith('unsupported_pi_field:')?'unsupported_pi_field':'pi_runtime_error';
+   const status=code==='request_too_large'?413:code==='pi_runtime_error'?502:400;
+   const declared=Number(req.headers['content-length']);
+   console.warn(JSON.stringify({event:'pi_request_rejected',endpoint:inference?req.url:'control',code,status,body_bytes:size,declared_bytes:Number.isSafeInteger(declared)?declared:undefined,limit_bytes:limit}));
+   if(res.headersSent)res.destroy();else json(res,status,{error:code},code==='request_too_large'?{connection:'close'}:{});
+   if(!req.readableEnded)req.resume();
   }
  });
  server.on('close',()=>{for(const record of sessions.values()){clearTimeout(record.timeout);record.controller.abort()}sessions.clear();closeSessions()});

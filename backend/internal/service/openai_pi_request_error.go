@@ -14,6 +14,9 @@ func nativePiClientRequestError(resp *http.Response) *nativePiRequestError {
 	if status == http.StatusConflict {
 		message = "Pi session is busy; retry after the active request finishes"
 	}
+	if status == http.StatusRequestEntityTooLarge {
+		message = "Pi request exceeds the size limit; reduce attachments or conversation history"
+	}
 	var failure struct {
 		Error string `json:"error"`
 	}

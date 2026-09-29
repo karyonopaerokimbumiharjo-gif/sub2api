@@ -5,6 +5,7 @@ services:
     environment:
       PI_RUNTIME_URL: http://pi-runtime:8091
       PI_RUNTIME_SECRET_FILE: /run/pi-runtime.secret
+      GATEWAY_MAX_BODY_SIZE: ${GATEWAY_MAX_BODY_SIZE:-268435456}
     volumes:
       - ./private/pi-runtime.secret:/run/pi-runtime.secret:ro
     depends_on:
@@ -21,6 +22,7 @@ services:
       https_proxy: ""
       all_proxy: ""
       PI_RUNTIME_SECRET_FILE: /run/pi-runtime.secret
+      GATEWAY_MAX_BODY_SIZE: ${GATEWAY_MAX_BODY_SIZE:-268435456}
     volumes:
       - ./private/pi-runtime.secret:/run/pi-runtime.secret:ro
     networks:

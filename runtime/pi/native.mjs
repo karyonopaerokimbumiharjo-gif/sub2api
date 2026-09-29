@@ -6,6 +6,7 @@ import {stream, getOpenAICodexWebSocketDebugStats, closeOpenAICodexWebSocketSess
 import {ResponseObserver} from '../../tools/pi-integration/response-observer.mjs';
 import {requestEvidence} from '../../tools/pi-integration/acceptance.mjs';
 import {readRateLimitMetadata} from './rate-limit.mjs';
+import {maxRuntimeRequestBodyBytes} from './request-limits.mjs';
 
 const active = new AsyncLocalStorage();
 const inFlight = new Set();
@@ -109,7 +110,7 @@ export async function runNative({request,accessToken,accountId,ownerId,credentia
      fetch:async(url,init)=>{
       // Native SDK has constructed the headers; inspect only redacted evidence.
       const headers=new Headers(init.headers);
-      const body=headers.get('content-encoding')==='zstd'?zstdDecompressSync(init.body,{maxOutputLength:8*1024*1024}).toString():init.body;
+      const body=headers.get('content-encoding')==='zstd'?zstdDecompressSync(init.body,{maxOutputLength:maxRuntimeRequestBodyBytes}).toString():init.body;
       state.outbound=requestEvidence(headers,JSON.parse(body));
       state.transport='sse';
       const upstream=await fetchImpl(url,{...init,redirect:'error'});

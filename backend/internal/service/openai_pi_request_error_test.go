@@ -19,6 +19,7 @@ func TestNativePiRequestErrorsSeparateValidationFromConcurrency(t *testing.T) {
 		{`{"error":"unsupported_pi_field"}`, 400, 400, "unsupported parameter"},
 		{`{"error":"input_required"}`, 400, 400, "input"},
 		{`{"error":"model_required"}`, 400, 400, "Model is required"},
+		{`{"error":"request_too_large"}`, 413, 413, "size limit"},
 		{`{"error":"oauth_account_mismatch"}`, 400, 502, "binding mismatch"},
 		{`{"error":"private-token-and-request"}`, 400, 400, "request format"},
 		{`not-json-private-token`, 400, 400, "request format"},

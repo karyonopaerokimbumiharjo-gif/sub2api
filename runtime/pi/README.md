@@ -14,6 +14,8 @@ The session key is an HMAC over the owner, credential record, OAuth account, mod
 
 Use Node 24 or newer. Install with `npm ci --prefix runtime/pi`. Create a private file containing at least 32 random secret characters and set `PI_RUNTIME_SECRET_FILE` in both processes. Start `npm start --prefix runtime/pi`; it binds `127.0.0.1:8091` by default. Set `PI_RUNTIME_URL=http://127.0.0.1:8091` in the gateway. Keep the secret outside the repository.
 
+Inference requests (Responses, Compact and Images) use the gateway's default 256 MiB body allowance plus 1 MiB for the private envelope. If `GATEWAY_MAX_BODY_SIZE` is overridden, set the same byte value on the gateway and Pi runtime. OAuth/control requests remain limited to 8 MiB. The SDK's compressed-request inspection uses the same inference limit. Oversized requests return HTTP 413; internal runtime failures return 502, rather than reporting a client format error. Rejection logs contain only a stable error code, endpoint category and byte counts.
+
 For Docker, build from the repository root:
 
 ```sh

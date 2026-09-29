@@ -234,6 +234,41 @@ func TestNativePiForwardThroughPrivateRuntime(t *testing.T) {
 	}
 }
 
+func TestNativePiForwardPreservesRuntimeBodyLimitStatus(t *testing.T) {
+	secret := strings.Repeat("s", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.URL.Path != "/responses" && r.URL.Path != "/compact") || r.Header.Get("Authorization") != "Bearer "+secret {
+			t.Error("wrong private runtime route")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(`{"error":"request_too_large"}`))
+	}))
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(file, []byte(secret), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_RUNTIME_URL", server.URL)
+	t.Setenv("PI_RUNTIME_SECRET_FILE", file)
+	for _, endpoint := range []string{"/v1/responses", "/v1/responses/compact"} {
+		for _, streaming := range []bool{true, false} {
+			account := nativePiAccount()
+			account.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("POST", endpoint, nil)
+			c.Set("api_key", nativePiTestKey(42))
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
+			body, _ := json.Marshal(map[string]any{"model": "gpt-6-sol", "input": "fixture", "stream": streaming})
+			_, err := svc.forwardNativePi(context.Background(), c, account, body)
+			if err == nil || w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), "size limit") {
+				t.Fatalf("runtime size limit must remain actionable: stream=%v status=%d body=%s err=%v", streaming, w.Code, w.Body.String(), err)
+			}
+		}
+	}
+}
+
 func TestNativePiSharedCredentialRequiresGroupAuthorizationAndSeparatesSessions(t *testing.T) {
 	account := nativePiAccount()
 	var sessions []string

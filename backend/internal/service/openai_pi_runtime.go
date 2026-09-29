@@ -188,7 +188,7 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		if resp.StatusCode == 400 || resp.StatusCode == 409 {
+		if resp.StatusCode == 400 || resp.StatusCode == 409 || resp.StatusCode == http.StatusRequestEntityTooLarge {
 			return nil, nativePiClientRequestError(resp)
 		}
 		switch resp.StatusCode {
@@ -365,6 +365,10 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusRequestEntityTooLarge {
+			failure := nativePiClientRequestError(resp)
+			return fail(failure.status, failure.message)
+		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, model)
 		}
