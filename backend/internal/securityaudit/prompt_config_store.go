@@ -504,8 +504,9 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		currentByID[endpoint.ID] = endpoint
 	}
 	next := storageConfig{
-		NativeAuditProfile:   auditpolicy.NormalizeNativeProfile(current.NativeAuditProfile),
-		NativeRiskCategories: auditpolicy.CloneCategories(current.NativeRiskCategories), OperatorPolicyEnabled: current.OperatorPolicyEnabled,
+		NativeUpstreamExtensions: auditpolicy.CloneCategories(current.NativeUpstreamExtensions),
+		NativeAuditProfile:       auditpolicy.NormalizeNativeProfile(current.NativeAuditProfile),
+		NativeRiskCategories:     auditpolicy.CloneCategories(current.NativeRiskCategories), OperatorPolicyEnabled: current.OperatorPolicyEnabled,
 		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled,
 		BlockingAuditMode:      normalizeBlockingAuditMode(req.BlockingAuditMode, req.BlockingLatestTurnOnly),
 		BackgroundAuditMode:    requestedBackgroundAuditMode(req),
@@ -520,6 +521,9 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		WhitelistEmails: append([]string(nil), current.WhitelistEmails...),
 		ConfigVersion:   current.ConfigVersion, UpdatedBy: actorID,
 		Endpoints: make([]StorageEndpoint, 0, len(req.Endpoints)),
+	}
+	if req.NativeUpstreamExtensions != nil {
+		next.NativeUpstreamExtensions = auditpolicy.NormalizeUpstreamExtensions(req.NativeUpstreamExtensions)
 	}
 	if req.NativeAuditProfile != "" {
 		next.NativeAuditProfile = req.NativeAuditProfile
@@ -721,6 +725,7 @@ func (m *ConfigManager) clearLoadError() bool {
 }
 
 func cloneStorageConfig(cfg storageConfig) storageConfig {
+	cfg.NativeUpstreamExtensions = auditpolicy.CloneCategories(cfg.NativeUpstreamExtensions)
 	cfg.NativeRiskCategories = auditpolicy.CloneCategories(cfg.NativeRiskCategories)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
@@ -730,6 +735,7 @@ func cloneStorageConfig(cfg storageConfig) storageConfig {
 }
 
 func cloneActiveConfig(cfg ActiveConfig) ActiveConfig {
+	cfg.NativeUpstreamExtensions = auditpolicy.CloneCategories(cfg.NativeUpstreamExtensions)
 	cfg.NativeRiskCategories = auditpolicy.CloneCategories(cfg.NativeRiskCategories)
 	cfg.Scanners = append([]string(nil), cfg.Scanners...)
 	cfg.GroupIDs = append([]int64(nil), cfg.GroupIDs...)

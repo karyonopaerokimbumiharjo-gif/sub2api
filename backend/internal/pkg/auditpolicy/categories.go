@@ -3,6 +3,31 @@ package auditpolicy
 const NativeProfileEnhanced = "enhanced"
 const NativeProfileUpstream = "upstream"
 
+// Optional additions to the original profile are independent of the saved
+// enhanced selection. Old configurations therefore remain the original 13.
+func NormalizeUpstreamExtensions(ids []string) []string {
+	out := []string{}
+	for _, id := range []string{"biological_risk", "operator_ctf", "operator_repository"} {
+		if HasCategory(ids, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func ValidUpstreamExtensions(ids []string) bool {
+	for _, id := range ids {
+		if id != "biological_risk" && id != "operator_ctf" && id != "operator_repository" {
+			return false
+		}
+	}
+	return true
+}
+
+func UpstreamCategories(extensions []string) []string {
+	return append(ContentCategoryIDs(), NormalizeUpstreamExtensions(extensions)...)
+}
+
 func ValidNativeProfile(profile string) bool {
 	return profile == "" || profile == NativeProfileEnhanced || profile == NativeProfileUpstream
 }

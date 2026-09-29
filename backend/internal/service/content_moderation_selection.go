@@ -8,12 +8,13 @@ import (
 	"strings"
 )
 
-func applyModerationPolicySelection(cfg *ContentModerationConfig, selected, legacy []string, operatorEnabled bool, profile ...string) {
-	if len(profile) > 0 {
-		cfg.NativeAuditProfile = auditpolicy.NormalizeNativeProfile(profile[0])
-	}
+func applyModerationPolicySelection(cfg *ContentModerationConfig, selected, legacy []string, operatorEnabled bool, profile string, extensions []string) {
+	cfg.NativeAuditProfile = auditpolicy.NormalizeNativeProfile(profile)
+	cfg.NativeUpstreamExtensions = nil
 	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
-		selected, legacy, operatorEnabled = auditpolicy.ContentCategoryIDs(), nil, false
+		cfg.NativeUpstreamExtensions = auditpolicy.NormalizeUpstreamExtensions(extensions)
+		selected, legacy = auditpolicy.UpstreamCategories(cfg.NativeUpstreamExtensions), nil
+		operatorEnabled = auditpolicy.HasOperatorCategory(cfg.NativeUpstreamExtensions)
 	}
 	cfg.PolicyScanners = append([]string(nil), legacy...)
 	cfg.PolicyCategories = auditpolicy.CloneCategories(selected)
@@ -43,6 +44,7 @@ func (s *ContentModerationService) applySavedNativePolicyForTest(ctx context.Con
 		return nil
 	}
 	var policy struct {
+		Extensions []string `json:"native_upstream_extensions"`
 		Profile    string   `json:"native_audit_profile"`
 		Categories []string `json:"native_risk_categories"`
 		Scanners   []string `json:"scanners"`
@@ -51,10 +53,10 @@ func (s *ContentModerationService) applySavedNativePolicyForTest(ctx context.Con
 	if err = json.Unmarshal([]byte(raw), &policy); err != nil {
 		return err
 	}
-	if !auditpolicy.ValidNativeProfile(policy.Profile) || !auditpolicy.ValidNativeCategories(policy.Categories) {
+	if !auditpolicy.ValidUpstreamExtensions(policy.Extensions) || !auditpolicy.ValidNativeProfile(policy.Profile) || !auditpolicy.ValidNativeCategories(policy.Categories) {
 		return errors.New("invalid saved audit category")
 	}
 	enabled := policy.Operator == nil || *policy.Operator
-	applyModerationPolicySelection(cfg, policy.Categories, policy.Scanners, enabled, policy.Profile)
+	applyModerationPolicySelection(cfg, policy.Categories, policy.Scanners, enabled, policy.Profile, policy.Extensions)
 	return nil
 }

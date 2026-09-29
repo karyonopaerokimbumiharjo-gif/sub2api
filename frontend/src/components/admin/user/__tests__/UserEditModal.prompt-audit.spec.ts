@@ -60,7 +60,7 @@ describe('UserEditModal prompt audit bypass', () => {
     showSuccess.mockReset()
   })
 
-  it('retires the bypass switch and clears the historical flag on save', async () => {
+  it('preserves the administrator whitelist and lets it be revoked', async () => {
     const wrapper = mount(UserEditModal, {
       props: { show: true, user },
       global: {
@@ -73,8 +73,11 @@ describe('UserEditModal prompt audit bypass', () => {
       }
     })
 
-    expect(wrapper.find('[data-test="prompt-audit-bypass"]').exists()).toBe(false)
-    expect(wrapper.get('[data-test="retired-audit-bypass"]').text()).toContain('已停用')
+    expect(wrapper.get<HTMLInputElement>('[data-test="prompt-audit-bypass"]').element.checked).toBe(true)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(updateUser).toHaveBeenCalledWith(42, expect.objectContaining({ prompt_audit_bypass: true }))
+    await wrapper.get('[data-test="prompt-audit-bypass"]').setValue(false)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 

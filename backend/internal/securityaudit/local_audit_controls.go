@@ -12,8 +12,9 @@ type localAuditControls interface {
 
 func moderationInput(req Request) service.ContentModerationCheckInput {
 	return service.ContentModerationCheckInput{RequestID: req.RequestID, UserID: req.UserID, UserEmail: req.UserEmail,
-		NativeAuditProfile: req.NativeAuditProfile,
-		APIKeyID:           req.APIKeyID, APIKeyName: req.APIKeyName, GroupID: req.GroupID, GroupName: req.GroupName,
+		NativeUpstreamExtensions: req.NativeUpstreamExtensions,
+		NativeAuditProfile:       req.NativeAuditProfile,
+		APIKeyID:                 req.APIKeyID, APIKeyName: req.APIKeyName, GroupID: req.GroupID, GroupName: req.GroupName,
 		Endpoint: req.Endpoint, Provider: req.Provider, Model: req.Model, Protocol: req.Protocol, Body: req.Body}
 }
 

@@ -23,6 +23,7 @@ func (c *Coordinator) nativeAuditSelected() bool {
 func (c *Coordinator) checkNative(ctx context.Context, req Request, engine nativeAuditPolicyEngine) Decision {
 	if provider, ok := engine.(interface{ NativePolicy() ActiveConfig }); ok {
 		policy := provider.NativePolicy()
+		req.NativeUpstreamExtensions = auditpolicy.CloneCategories(policy.NativeUpstreamExtensions)
 		req.NativeAuditProfile = policy.NativeAuditProfile
 		req.NativeScanners = append([]string(nil), policy.Scanners...)
 		req.NativeRiskCategories = auditpolicy.ResolveNativeCategories(policy.NativeRiskCategories, policy.Scanners, policy.OperatorPolicyEnabled)

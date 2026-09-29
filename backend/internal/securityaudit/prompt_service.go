@@ -172,8 +172,8 @@ func (s *PromptService) CaptureAuditGap(_ context.Context, req Request) {
 }
 
 func (s *PromptService) ShouldBypass(req Request) bool {
-	// Legacy flags no longer grant an unconditional audit exemption.
-	return false
+	// Only the authenticated, administrator-managed user flag grants exemption.
+	return s != nil && req.PromptAuditBypass && !req.RequireJev
 }
 
 // RecordUserBypass is intentionally asynchronous: explicitly released users

@@ -299,7 +299,7 @@ onBeforeUnmount(() => {
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events' | 'adaptive' | 'native'
 const nativeAuditCopy = computed(() => locale.value.startsWith('zh') ? {
- active: serverConfig.value?.native_audit_profile === 'upstream' ? '当前使用 Sub2API 0.2.8 原版审核' : '当前使用原生 Sub2API 审计 · 增强版', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: serverConfig.value?.native_audit_enabled && serverConfig.value?.native_audit_profile === 'upstream' ? '风控总开关已关闭，当前原版审核不会执行。' : '普通风控开关已关闭。增强版中已启用的 CTF／破甲全局规则仍会执行。', enableFeature: '启用风控总开关',
+ active: serverConfig.value?.native_audit_profile === 'upstream' ? ((serverConfig.value?.native_upstream_extensions?.length ?? 0) > 0 ? '当前使用 Sub2API 0.2.8 原版审核 + 可选扩展' : '当前使用 Sub2API 0.2.8 原版审核') : '当前使用原生 Sub2API 审计 · 增强版', open: '打开原生审计设置', entryHint: '原生审计的开关、引擎、审核记录和通过记录开关都在“原生 Sub2API 审计”页。', featureDisabled: serverConfig.value?.native_audit_enabled && serverConfig.value?.native_audit_profile === 'upstream' ? ((serverConfig.value?.native_upstream_extensions ?? []).some(id => ['operator_ctf', 'operator_repository'].includes(id)) ? '风控总开关已关闭；已勾选的 CTF／破甲库全局规则仍会执行。' : '风控总开关已关闭，当前原版审核不会执行。') : '普通风控开关已关闭。增强版中已启用的 CTF／破甲全局规则仍会执行。', enableFeature: '启用风控总开关',
  title: '原生 Sub2API 审计', toggle: '使用原生审计替代自定义模型审计',
  description: '选中后使用下方选择的原生审核版本；关闭后使用本地审核，两套输入审核模型不会同时执行。',
  warning: '请先配置并启用下方原生审计，再保存此开关。配置不可用时请求会被拒绝；关闭开关可恢复原自定义配置。'

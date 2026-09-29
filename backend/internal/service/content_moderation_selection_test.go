@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/stretchr/testify/require"
@@ -107,6 +109,8 @@ func TestNativeOriginalProfileUsesUnmodifiedThirteenQuestions(t *testing.T) {
 	content := ContentModerationInput{Text: text}
 	content.Normalize()
 	hashes := &contentModerationTestHashCache{hashes: map[string]struct{}{content.Hash(): {}}}
+	extensionHash := sha256.Sum256([]byte("sub2api-0.2.8:extensions:biological_risk:" + content.Hash()))
+	hashes.hashes[hex.EncodeToString(extensionHash[:])] = struct{}{}
 	cfg.Enabled, cfg.RecordNonHits, cfg.PreHashCheckEnabled = true, true, true
 	cfg.TypeSafe = &ContentModerationEngineConfig{BaseURL: "https://api.typesafe.ai", Model: "jev-fixture", APIKeys: []string{"fixture-key"}, TimeoutMS: 3000, Thresholds: ContentModerationDefaultThresholds()}
 	raw, err := json.Marshal(cfg)

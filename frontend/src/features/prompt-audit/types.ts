@@ -45,6 +45,7 @@ export interface PromptAuditConfig {
   native_risk_categories?: string[]
   native_risk_catalog?: NativeRiskCategory[]
   native_audit_profile?: 'enhanced' | 'upstream'
+  native_upstream_extensions?: string[]
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean
@@ -96,6 +97,7 @@ export interface PromptAuditUpdateRequest {
   operator_policy_enabled?: boolean
   native_risk_categories?: string[]
   native_audit_profile?: 'enhanced' | 'upstream'
+  native_upstream_extensions?: string[]
   native_audit_enabled?: boolean
   jev_safety_enabled?: boolean
   output_audit_enabled: boolean

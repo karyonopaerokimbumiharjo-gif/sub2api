@@ -97,16 +97,17 @@ type OutputCapture struct {
 }
 
 type Request struct {
-	NativeAuditProfile    string
-	NativeRiskCategories  []string
-	NativeScanners        []string
-	OperatorPolicyEnabled bool
-	OutputCapture         *OutputCapture
-	RequireJev            bool
-	RequestID             string
-	UserID                int64
-	Username              string
-	UserEmail             string
+	NativeUpstreamExtensions []string
+	NativeAuditProfile       string
+	NativeRiskCategories     []string
+	NativeScanners           []string
+	OperatorPolicyEnabled    bool
+	OutputCapture            *OutputCapture
+	RequireJev               bool
+	RequestID                string
+	UserID                   int64
+	Username                 string
+	UserEmail                string
 	// PromptAuditBypass comes only from the authenticated server-side user
 	// snapshot. Clients cannot opt themselves out of auditing.
 	PromptAuditBypass bool
@@ -123,6 +124,7 @@ type Request struct {
 }
 
 func (r Request) Clone() Request {
+	r.NativeUpstreamExtensions = append([]string(nil), r.NativeUpstreamExtensions...)
 	if r.NativeRiskCategories != nil {
 		r.NativeRiskCategories = append([]string{}, r.NativeRiskCategories...)
 	}

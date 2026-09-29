@@ -119,6 +119,14 @@ func (c *Coordinator) ObserveOutput(ctx context.Context, req Request, inputDecis
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+	// Apply explicit administrator release before local keywords, global rules,
+	// model audits and background scheduling. A bypass is recorded as NotAudited.
+	if c != nil && c.prompt != nil && req.PromptAuditBypass {
+		if bypass, ok := c.prompt.(PromptBypassEngine); ok && bypass.ShouldBypass(req) {
+			bypass.RecordUserBypass(ctx, req.Clone())
+			return allowDecision(nil, nil)
+		}
+	}
 	if c != nil && c.prompt != nil {
 		if policy, ok := c.prompt.(interface {
 			CheckOperatorPolicy(context.Context, Request) (*PromptDecision, error)
@@ -167,8 +175,6 @@ func (c *Coordinator) checkSelected(ctx context.Context, req Request) Decision {
 	if c == nil {
 		return allowDecision(nil, nil)
 	}
-	// Legacy per-user bypass flags are retained for data compatibility only.
-	// Neither administrator status nor a historical flag bypasses Safety.
 	mode := ModeOff
 	if c.prompt != nil {
 		mode = c.prompt.EffectiveMode()

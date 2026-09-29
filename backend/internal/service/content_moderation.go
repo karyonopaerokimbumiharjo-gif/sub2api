@@ -127,16 +127,17 @@ func ContentModerationCategories() []string {
 }
 
 type ContentModerationConfig struct {
-	NativeAuditProfile    string                         `json:"-"`
-	PolicyCategories      []string                       `json:"-"`
-	PolicyScanners        []string                       `json:"-"`
-	OperatorPolicyEnabled bool                           `json:"-"`
-	Engine                string                         `json:"engine,omitempty"`
-	TypeSafe              *ContentModerationEngineConfig `json:"typesafe,omitempty"`
-	Enabled               bool                           `json:"enabled"`
-	Mode                  string                         `json:"mode"`
-	BaseURL               string                         `json:"base_url"`
-	Model                 string                         `json:"model"`
+	NativeUpstreamExtensions []string                       `json:"-"`
+	NativeAuditProfile       string                         `json:"-"`
+	PolicyCategories         []string                       `json:"-"`
+	PolicyScanners           []string                       `json:"-"`
+	OperatorPolicyEnabled    bool                           `json:"-"`
+	Engine                   string                         `json:"engine,omitempty"`
+	TypeSafe                 *ContentModerationEngineConfig `json:"typesafe,omitempty"`
+	Enabled                  bool                           `json:"enabled"`
+	Mode                     string                         `json:"mode"`
+	BaseURL                  string                         `json:"base_url"`
+	Model                    string                         `json:"model"`
 	// ProxyID 指定审计请求使用的代理服务器（IP管理-代理服务器），nil 表示直连。
 	ProxyID              *int64                       `json:"proxy_id,omitempty"`
 	APIKey               string                       `json:"api_key,omitempty"`
@@ -308,24 +309,25 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
-	NativeAuditProfile    string `json:"-"`
-	PolicyCategories      []string
-	PolicyScanners        []string
-	OperatorPolicyEnabled bool
-	Strict                bool
-	AuditSubject          string
-	RequestID             string
-	UserID                int64
-	UserEmail             string
-	APIKeyID              int64
-	APIKeyName            string
-	GroupID               *int64
-	GroupName             string
-	Endpoint              string
-	Provider              string
-	Model                 string
-	Protocol              string
-	Body                  []byte
+	NativeUpstreamExtensions []string `json:"-"`
+	NativeAuditProfile       string   `json:"-"`
+	PolicyCategories         []string
+	PolicyScanners           []string
+	OperatorPolicyEnabled    bool
+	Strict                   bool
+	AuditSubject             string
+	RequestID                string
+	UserID                   int64
+	UserEmail                string
+	APIKeyID                 int64
+	APIKeyName               string
+	GroupID                  *int64
+	GroupName                string
+	Endpoint                 string
+	Provider                 string
+	Model                    string
+	Protocol                 string
+	Body                     []byte
 }
 
 type ContentModerationInput struct {
@@ -855,7 +857,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	cfg := cloneContentModerationConfig(runtimeSnapshot.config)
-	applyModerationPolicySelection(cfg, input.PolicyCategories, input.PolicyScanners, input.OperatorPolicyEnabled, input.NativeAuditProfile)
+	applyModerationPolicySelection(cfg, input.PolicyCategories, input.PolicyScanners, input.OperatorPolicyEnabled, input.NativeAuditProfile, input.NativeUpstreamExtensions)
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -963,7 +965,11 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
 		// A verdict from the enhanced policy cannot decide an original-policy
 		// request. Keep its hash cache separate without discarding either cache.
-		hash := sha256.Sum256([]byte("sub2api-0.2.8:" + hashText))
+		prefix := "sub2api-0.2.8:"
+		if len(cfg.NativeUpstreamExtensions) > 0 {
+			prefix += "extensions:" + strings.Join(cfg.NativeUpstreamExtensions, ",") + ":"
+		}
+		hash := sha256.Sum256([]byte(prefix + hashText))
 		hashText = hex.EncodeToString(hash[:])
 	}
 	if cfg.Mode == ContentModerationModePreBlock {
@@ -1830,6 +1836,9 @@ func (s *ContentModerationService) callModeration(ctx context.Context, cfg *Cont
 }
 
 func (s *ContentModerationService) callModerationOnceWithInput(ctx context.Context, cfg *ContentModerationConfig, apiKey string, input any, httpStatus *int) (*moderationAPIResult, error) {
+	if len(cfg.NativeUpstreamExtensions) > 0 && cfg.Engine != ContentModerationEngineTypeSafe {
+		return nil, errors.New("native audit extensions require the TypeSafe/Jev engine")
+	}
 	if err := validateNativeModerationDestination(cfg); err != nil {
 		return nil, err
 	}
@@ -2224,6 +2233,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 		return nil
 	}
 	clone := *cfg
+	clone.NativeUpstreamExtensions = auditpolicy.CloneCategories(cfg.NativeUpstreamExtensions)
 	clone.PolicyCategories = auditpolicy.CloneCategories(cfg.PolicyCategories)
 	if cfg.TypeSafe != nil {
 		clone.TypeSafe = cfg.engineProfile(ContentModerationEngineTypeSafe)

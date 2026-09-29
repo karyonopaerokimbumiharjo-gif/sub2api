@@ -11,6 +11,7 @@ import (
 )
 
 const TypeSafeModerationRulesVersion = "content-audit-13-zh-v1"
+const TypeSafeUpstreamExtensionsRulesVersion = "content-audit-13-extensions-v1"
 const TypeSafePolicyRulesVersion = "content-deduplicated-21-v3"
 
 // These are independent judgments, not a claim of OpenAI policy equivalence.
@@ -94,13 +95,11 @@ func (s *ContentModerationService) callTypeSafeModeration(ctx context.Context, c
 		}
 		result.Scores["intent_biological_risk"] = score
 	}
-	version := TypeSafeModerationRulesVersion
-	if cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream && (cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled) {
-		version = TypeSafePolicyRulesVersion
-	}
+	version := typeSafeRulesVersion(cfg)
 	meta := &ContentModerationEngineMeta{
-		NativeAuditProfile: cfg.NativeAuditProfile,
-		Engine:             ContentModerationEngineTypeSafe, Model: result.Model, RulesVersion: version, SkippedImages: skipped, BioTier: tier,
+		NativeUpstreamExtensions: auditpolicy.CloneCategories(cfg.NativeUpstreamExtensions),
+		NativeAuditProfile:       cfg.NativeAuditProfile,
+		Engine:                   ContentModerationEngineTypeSafe, Model: result.Model, RulesVersion: version, SkippedImages: skipped, BioTier: tier,
 		QuestionCount: len(questions), SelectedCategories: auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled),
 	}
 	if version == TypeSafeModerationRulesVersion && cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream {
@@ -110,27 +109,38 @@ func (s *ContentModerationService) callTypeSafeModeration(ctx context.Context, c
 	return &moderationAPIResult{CategoryScores: result.Scores, EngineMeta: meta}, nil
 }
 
-func moderationAttemptMeta(cfg *ContentModerationConfig, input ContentModerationInput) *ContentModerationEngineMeta {
-	meta := &ContentModerationEngineMeta{Engine: moderationEngine(cfg.Engine), NativeAuditProfile: cfg.NativeAuditProfile}
+func typeSafeRulesVersion(cfg *ContentModerationConfig) string {
 	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
-		meta.QuestionCount = 13
-		meta.SelectedCategories = auditpolicy.ContentCategoryIDs()
+		if len(cfg.NativeUpstreamExtensions) > 0 {
+			return TypeSafeUpstreamExtensionsRulesVersion
+		}
+		return TypeSafeModerationRulesVersion
+	}
+	if cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled {
+		return TypeSafePolicyRulesVersion
+	}
+	return TypeSafeModerationRulesVersion
+}
+
+func moderationAttemptMeta(cfg *ContentModerationConfig, input ContentModerationInput) *ContentModerationEngineMeta {
+	meta := &ContentModerationEngineMeta{Engine: moderationEngine(cfg.Engine), NativeAuditProfile: cfg.NativeAuditProfile, NativeUpstreamExtensions: auditpolicy.CloneCategories(cfg.NativeUpstreamExtensions)}
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+		meta.SelectedCategories = auditpolicy.UpstreamCategories(cfg.NativeUpstreamExtensions)
+		meta.QuestionCount = len(meta.SelectedCategories)
 	}
 	if cfg.Engine == ContentModerationEngineTypeSafe {
-		meta.RulesVersion = TypeSafeModerationRulesVersion
-		if cfg.NativeAuditProfile != auditpolicy.NativeProfileUpstream && (cfg.PolicyCategories != nil || len(cfg.PolicyScanners) > 0 || cfg.OperatorPolicyEnabled) {
-			meta.RulesVersion = TypeSafePolicyRulesVersion
+		meta.RulesVersion = typeSafeRulesVersion(cfg)
+		if meta.RulesVersion != TypeSafeModerationRulesVersion {
 			meta.QuestionCount = len(typeSafePolicyQuestions(cfg))
 			meta.SelectedCategories = auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled)
 		}
 		meta.SkippedImages = len(limitContentModerationImages(input.Images))
 	}
-	// Actual model remains empty until the upstream returns a successful response.
 	return meta
 }
 
 func typeSafePolicyQuestions(cfg *ContentModerationConfig) map[string]typesafe.Question {
-	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream {
+	if cfg.NativeAuditProfile == auditpolicy.NativeProfileUpstream && len(cfg.NativeUpstreamExtensions) == 0 {
 		return typeSafeModerationQuestions()
 	}
 	categories := auditpolicy.ResolveNativeCategories(cfg.PolicyCategories, cfg.PolicyScanners, cfg.OperatorPolicyEnabled)

@@ -66,7 +66,10 @@
         />
         <p class="input-hint">{{ t('admin.users.form.rpmLimitHint') }}</p>
       </div>
-      <p v-if="user?.prompt_audit_bypass" class="text-xs text-amber-700" data-test="retired-audit-bypass">旧版免审标记已停用，此账号仍按独立安全策略审计。</p>
+      <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/70 dark:bg-amber-950/30">
+        <input v-model="form.prompt_audit_bypass" type="checkbox" class="mt-1 h-4 w-4 rounded" data-test="prompt-audit-bypass" />
+        <span><span class="font-medium">审核白名单（本站免审）</span><span class="mt-1 block text-xs leading-5 text-gray-600 dark:text-dark-300">由管理员明确放行，跳过本站本地与原生审核，事件标记为“白名单免审”。上游服务仍按自身规则处理。</span></span>
+      </label>
       <UserAttributeForm v-model="form.customAttributes" :user-id="user?.id" />
     </form>
     <template #footer>
@@ -120,7 +123,7 @@ const form = reactive({
 
 watch(() => props.user, (u) => {
   if (u) {
-    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, prompt_audit_bypass: false, customAttributes: {} })
+    Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, prompt_audit_bypass: u.prompt_audit_bypass ?? false, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })

@@ -110,7 +110,7 @@ describe('PromptAuditView', () => {
     await wrapper.get('[data-test=native-profile-upstream]').trigger('click')
     await wrapper.get('[data-test=save-native-audit]').trigger('click')
     await flushPromises()
-    expect(mocks.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ native_audit_enabled: true, native_audit_profile: 'upstream', endpoints: expect.any(Array) }))
+    expect(mocks.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ native_audit_enabled: true, native_audit_profile: 'upstream', native_upstream_extensions: [], endpoints: expect.any(Array) }))
   })
 
   beforeEach(() => {
