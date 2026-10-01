@@ -240,6 +240,7 @@ const (
 	SettingKeyRiskControlEnabled                  = "risk_control_enabled"             // 是否启用风控中心入口与审计链路
 	SettingKeyContentModerationConfig             = "content_moderation_config"        // 内容审计配置（JSON）
 	SettingKeyCyberSessionBlockEnabled            = "cyber_session_block_enabled"      // cyber 命中后会话级自动屏蔽总开关(默认关)
+	SettingKeyCyberPolicyUserAllowlist            = "cyber_policy_user_allowlist"      // Platform user IDs with log-only cyber handling
 	SettingKeyCyberSessionBlockTTLSeconds         = "cyber_session_block_ttl_seconds"  // 会话屏蔽 TTL 秒数(默认 3600)
 	SettingKeyBioPromptBlockEnabled               = "bio_prompt_block_enabled"         // bio_policy 命中后同用户提示词指纹自动屏蔽
 	SettingKeyBioPromptBlockTTLSeconds            = "bio_prompt_block_ttl_seconds"     // bio 提示词指纹首次屏蔽 TTL 秒数(默认 30 天；重复命中滚动至 90 天)

@@ -56,6 +56,7 @@
       <p v-if="error || oauth.error.value" role="alert" class="whitespace-pre-wrap text-sm text-red-600">{{ error || oauth.error.value }}</p>
       <p v-if="summary" role="status" class="whitespace-pre-wrap text-sm text-emerald-700">{{ summary }}</p>
     </div>
+
     <template #footer>
       <div class="flex justify-end gap-3">
         <button type="button" class="btn btn-secondary" :disabled="busy" @click="close">{{ t('common.close') }}</button>

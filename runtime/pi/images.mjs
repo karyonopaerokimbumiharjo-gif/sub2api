@@ -29,7 +29,7 @@ export async function forwardImages(body,res,fetchImpl=fetch) {
   if(error.scope==='image')error.param='gpt-image';
   res.writeHead(upstream.status,{...headers,'content-type':'application/json'});res.end(JSON.stringify({error}));return;
  }
- res.writeHead(upstream.status,{...headers,'content-type':upstream.headers.get('content-type')||'application/json','x-sub2api-runtime':'pi-0.87.1'});
+ res.writeHead(upstream.status,{...headers,'content-type':upstream.headers.get('content-type')||'application/json','x-sub2api-runtime':'pi-0.99.2'});
  // Keep draining a paid generation when its consumer disconnects.
  for await(const chunk of upstream.body||[]){
   if(!res.destroyed&&!res.writableEnded&&!res.write(chunk)){

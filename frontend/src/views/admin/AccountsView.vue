@@ -253,7 +253,6 @@
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
                   :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
-                <span v-if="row.platform === 'openai' && row.extra?.openai_basispoints_enabled === true" data-testid="account-backend-basispoints" class="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200" :title="text('仅管理端标签；用户模型名保持原名，覆盖此账号已获授权的模型系列。', 'Admin-only label. Public model IDs remain unchanged for the model families authorized for this account.')">Excel / Basis Points</span>
                 <span
                   v-if="getOpenAIExecutionBackend(row) === 'pi'"
                   data-testid="account-backend-pi"
@@ -2593,9 +2592,6 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
-  if (new URLSearchParams(window.location.search).get('import') === 'basispoints') {
-    openAccountImport()
-  }
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches

@@ -84,6 +84,8 @@ export default {
           enabledHint: 'When off, gateway moderation is skipped. Administrators can still view audit records and configuration.',
           cyberSessionBlock: 'Cyber session auto-block',
           cyberSessionBlockHint: 'When enabled, sessions hit by upstream cyber_policy are blocked locally for the TTL and no longer forwarded. Only the offending session is blocked; other sessions on the same key are unaffected.',
+          riskControlUserAllowlist: 'Risk control log-only users',
+          riskControlUserAllowlistHint: 'Search users by email. Listed users are still audited and risk events are recorded, but local blocking, account bans and hit notifications are skipped. Upstream restrictions still apply. For a complete local audit exemption, use the audit whitelist in User Management.',
           cyberSessionBlockTTL: 'Block TTL (seconds)',
         },
         affiliate: {

@@ -35,7 +35,7 @@ describe('native audit origin checklist', () => {
   })
   it('groups 13 original and 8 custom choices, and persists select-all without hidden duplicates', async () => {
     const wrapper = mount(Host)
-    expect(wrapper.get('[data-test="native-category-original"]').text()).toContain('Sub2API 0.2.8 原版（13 类）')
+    expect(wrapper.get('[data-test="native-category-original"]').text()).toContain('Sub2API 原生版（13 类）')
     expect(wrapper.get('[data-test="native-category-custom"]').text()).toContain('我们新增（8 项，非原版）')
     expect(wrapper.get('[data-test="native-category-original"]').findAll('input')).toHaveLength(13)
     expect(wrapper.get('[data-test="native-category-custom"]').findAll('input')).toHaveLength(8)

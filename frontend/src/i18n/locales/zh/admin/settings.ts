@@ -84,6 +84,8 @@ export default {
           enabledHint: '关闭后网关内容审计不会执行；管理员仍可进入审计页面查看记录和调整配置。',
           cyberSessionBlock: 'cyber 会话自动屏蔽',
           cyberSessionBlockHint: '开启后,被上游网络安全策略(cyber_policy)拦截的会话将在 TTL 内被本地屏蔽,不再发往上游。仅屏蔽该会话,不影响同 Key 其他会话。',
+          riskControlUserAllowlist: '风控仅记录名单',
+          riskControlUserAllowlistHint: '输入邮箱关键词搜索用户。名单中的用户仍接受本站审核并保留风险记录，但不触发本站拦截、封号或命中通知；上游限制仍然生效。需要完全免审时，请在用户管理中设置审核白名单。',
           cyberSessionBlockTTL: '屏蔽时长(秒)',
         },
         affiliate: {

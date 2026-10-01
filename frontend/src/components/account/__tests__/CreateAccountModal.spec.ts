@@ -62,7 +62,7 @@ describe('one-step account import', () => {
   })
   it.each(['json', 'oauth', 'refresh'])('does not require a backend choice in %s mode', async mode => {
     const w = render(); await w.get(`[data-testid="cpa-tab-${mode}"]`).trigger('click')
-    for (const id of ['pi-auth-backend', 'basispoints-import-enabled', 'pi-auth-owner-user-id']) expect(w.find(`[data-testid="${id}"]`).exists()).toBe(false)
+    for (const id of ['pi-auth-backend', 'pi-auth-owner-user-id']) expect(w.find(`[data-testid="${id}"]`).exists()).toBe(false)
   })
   it('offers only active OpenAI groups and selects the only eligible group', () => {
     const w = render([group, { ...group, id: 43, status: 'inactive' }, { ...group, id: 44, platform: 'anthropic' }])
