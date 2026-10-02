@@ -198,8 +198,10 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 			return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
 		case http.StatusGatewayTimeout:
 			return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
-		case http.StatusUnauthorized, http.StatusForbidden:
+		case http.StatusUnauthorized:
 			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, upstreamModel)
+		case http.StatusForbidden:
+			return fail(http.StatusForbidden, "Pi upstream rejected the request or its permissions")
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
 	}
@@ -375,8 +377,11 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, model)
 		}
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, model)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return fail(http.StatusForbidden, "Pi upstream rejected the request or its permissions")
 		}
 		return fail(http.StatusBadGateway, "Pi compact upstream rejected the request")
 	}

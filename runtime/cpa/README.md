@@ -2,7 +2,9 @@
 
 The LAX gateway uses CLIProxyAPI v8.0.11 (`e2bff0107bb307337aaa19018ccddd55f64253d5`) with the small account-pinning and model quota-scope patch in `patches/v8.0.11-sub2.patch`.
 
-Apply the patch to that stable tag and build `./cmd/server` with Go 1.27.0, `CGO_ENABLED=0`, `GOOS=linux` and `GOARCH=amd64`. The production candidate identifies itself as `8.0.11-lax.1`, commit `dd567f8ec798bd9800a34f8d9c258e723d9403ca`.
+Apply the patch to that stable tag and build `./cmd/server` with Go 1.27.0, `-trimpath`, `CGO_ENABLED=0`, `GOOS=linux` and `GOARCH=amd64`. The production candidate identifies itself as `8.0.11-lax.1`, commit `dd567f8ec798bd9800a34f8d9c258e723d9403ca`.
+
+Keep IANA timezone data in the runtime image. The `cpa-lax:8.0.8-lax.1` production base includes `/usr/share/zoneinfo/Pacific/Honolulu`; minimal Go Alpine test images do not. For `-trimpath` tests in that image, set `ZONEINFO=/usr/local/go/lib/time/zoneinfo.zip` to use Go's supplied database instead of relying on an embedded GOROOT path.
 
 This release preserves top-level Responses token usage when `service_tier` is present, handles split Gemini usage metadata and maximum-token terminals, and retains shared upstream settings across historical v8 aliases. It also includes the earlier Responses `apply_patch` bridge, client configuration, Gemini signature handling and Antigravity stream-usage corrections. Exact Sub2 credential selection and Spark's independent quota pool remain covered by the local regressions. The older `v8.0.8-sub2.patch` and `v8.0.10-sub2.patch` are retained for reproducing prior candidates.
 

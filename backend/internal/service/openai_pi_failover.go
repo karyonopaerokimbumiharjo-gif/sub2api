@@ -26,6 +26,11 @@ func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context
 		// provider. This is not evidence against any upstream account.
 		return &nativePiRequestError{status: http.StatusServiceUnavailable, message: "Pi runtime authentication is unavailable"}
 	}
+	// The runtime masks the reason for a 403. It may be a request or content
+	// rejection, so neither retry another credential nor penalize an account.
+	if resp.StatusCode == http.StatusForbidden {
+		return &nativePiRequestError{status: http.StatusForbidden, message: "Pi upstream rejected the request or its permissions"}
+	}
 	detail := map[string]any{"type": "authentication_error", "message": message}
 	// Only explicit provider codes can establish permanent revocation. Do not
 	// classify free-form text, which may contain echoed input or credentials.
@@ -41,9 +46,7 @@ func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context
 	// Shared business aliases intentionally have no refresh token. Apply the
 	// auth cooldown to their credential owner, as token lookup and refresh do.
 	disabled := false
-	// A masked 403 cannot distinguish model permissions, CDN rejection and
-	// account suspension. Try another account for this request without adding
-	// strikes or disabling credentials based on information we no longer have.
+	// Only credential authorization failures enter account cooldown handling.
 	if resp.StatusCode == http.StatusUnauthorized {
 		if owner, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account); err == nil {
 			disabled = s.handleFailoverSideEffects(ctx, resp, owner, body, model)

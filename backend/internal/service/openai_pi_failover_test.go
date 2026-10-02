@@ -143,6 +143,15 @@ func TestNativePiAccountFailureReachesSchedulerWithoutCommittingResponse(t *test
 					_, err = svc.Forward(context.Background(), c, account, body)
 				}
 				var failover *UpstreamFailoverError
+				if status == http.StatusForbidden {
+					require.NotErrorAs(t, err, &failover)
+					require.Equal(t, http.StatusForbidden, w.Code)
+					require.Zero(t, repo.authErrorID)
+					require.Zero(t, repo.tempUnscheduledID)
+					require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+					require.Equal(t, []string{"fixture-access"}, attempts)
+					return
+				}
 				require.ErrorAs(t, err, &failover, "PI must return control to the existing account-switch loop")
 				require.False(t, c.Writer.Written(), "a 429 must not commit the client response before failover")
 				require.Equal(t, status, failover.StatusCode)
