@@ -16,8 +16,11 @@ import (
 // through the selected Pi credential and network route. Admin tests share this
 // transport; public callers additionally pass the gateway's API-key group gate.
 func (s *OpenAIGatewayService) openNativePiMediaResponse(ctx context.Context, account *Account, body []byte, targetURL string) (*http.Response, error) {
-	runtimeAccount, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
-	if err != nil || ValidateExecutionAccount(account) != nil || ValidateExecutionAccount(runtimeAccount) != nil {
+	runtimeAccount, err := s.resolveNativePiDispatchAccount(ctx, account)
+	if err != nil {
+		return nil, nativePiCredentialOwnerUnavailable()
+	}
+	if ValidateExecutionAccount(account) != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 		return nil, errors.New("Pi image credential binding is unavailable")
 	}
 	if s.openAITokenProvider == nil {

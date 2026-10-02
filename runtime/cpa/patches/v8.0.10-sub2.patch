@@ -1,0 +1,893 @@
+diff --git a/internal/runtime/executor/codex_executor_execute.go b/internal/runtime/executor/codex_executor_execute.go
+index 7fdda8b..59aed81 100644
+--- a/internal/runtime/executor/codex_executor_execute.go
++++ b/internal/runtime/executor/codex_executor_execute.go
+@@ -121,7 +121,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
+ 		}
+ 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling(), httpResp.Header)
+ 		return resp, err
+ 	}
+ 	data, errRead := io.ReadAll(httpResp.Body)
+@@ -145,7 +145,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
+ 			sawOutputDelta = true
+ 		}
+ 
+-		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(eventData, e.modelLevelCooling()); ok {
++		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(eventData, e.modelLevelCooling(), httpResp.Header); ok {
+ 			if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
+ 				return resp, errClearReplay
+ 			}
+@@ -289,7 +289,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
+ 		b, _ := io.ReadAll(httpResp.Body)
+ 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, b, e.modelLevelCooling(), httpResp.Header)
+ 		return resp, err
+ 	}
+ 	data, err := io.ReadAll(httpResp.Body)
+diff --git a/internal/runtime/executor/codex_executor_quota_scope_test.go b/internal/runtime/executor/codex_executor_quota_scope_test.go
+new file mode 100644
+index 0000000..6d006e2
+--- /dev/null
++++ b/internal/runtime/executor/codex_executor_quota_scope_test.go
+@@ -0,0 +1,107 @@
++package executor
++
++import (
++	"errors"
++	"net/http"
++	"testing"
++	"time"
++
++	"github.com/tidwall/gjson"
++)
++
++func TestCodexUsageLimitScopesIndependentSparkPool(t *testing.T) {
++	const quota = `{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":3600}`
++	const body = `{"error":` + quota + `}`
++	for _, tc := range []struct {
++		name           string
++		headers        http.Header
++		modelCooling   bool
++		wantCredential bool
++	}{
++		{name: "explicit Spark pool", headers: http.Header{"X-Codex-Active-Limit": {"codex_bengalfox"}}},
++		{name: "Spark display name", headers: http.Header{"X-Codex-Active-Limit": {"GPT-5.3-Codex-Spark"}}},
++		{name: "case and whitespace", headers: http.Header{"X-Codex-Active-Limit": {" CODEX_BENGALFOX "}}},
++		{name: "main quota", headers: http.Header{"X-Codex-Active-Limit": {"premium"}}, wantCredential: true},
++		{name: "unknown quota", headers: http.Header{"X-Codex-Active-Limit": {"future_shared_limit"}}, wantCredential: true},
++		{name: "missing scope", wantCredential: true},
++		{name: "explicit model cooling with missing scope", modelCooling: true},
++		{name: "explicit model cooling with shared quota", modelCooling: true, headers: http.Header{"X-Codex-Active-Limit": {"premium"}}},
++		{name: "additional Spark data does not narrow main quota", headers: http.Header{
++			"X-Codex-Active-Limit":                     {"premium"},
++			"X-Codex-Bengalfox-Limit-Name":             {"GPT-5.3-Codex-Spark"},
++			"X-Codex-Bengalfox-Secondary-Used-Percent": {"100"},
++		}, wantCredential: true},
++	} {
++		for _, transport := range []string{"http", "sse-error", "sse-failed", "websocket"} {
++			t.Run(tc.name+"/"+transport, func(t *testing.T) {
++				var err error
++				switch transport {
++				case "http":
++					// Even a provider HTTP 400 containing usage_limit_reached remains 429.
++					err = newCodexStatusErrWithCooling(http.StatusBadRequest, []byte(body), tc.modelCooling, tc.headers)
++				case "sse-error", "sse-failed":
++					payload := `{"type":"error","error":` + quota + `}`
++					if transport == "sse-failed" {
++						payload = `{"type":"response.failed","response":{"error":` + quota + `}}`
++					}
++					terminal, _, ok := codexTerminalFailureErrWithCooling([]byte(payload), tc.modelCooling, tc.headers)
++					if !ok {
++						t.Fatal("terminal usage limit was not recognized")
++					}
++					err = terminal
++				case "websocket":
++					var ok bool
++					err, ok = parseCodexWebsocketErrorWithCooling([]byte(`{"type":"error","status":429,"error":`+quota+`}`), tc.modelCooling, tc.headers)
++					if !ok {
++						t.Fatal("websocket usage limit was not recognized")
++					}
++				}
++				var scoped interface{ IsCredentialScoped() bool }
++				if !errors.As(err, &scoped) || scoped.IsCredentialScoped() != tc.wantCredential {
++					t.Fatalf("credential scope = %v, want %t", err, tc.wantCredential)
++				}
++				var status interface{ StatusCode() int }
++				if !errors.As(err, &status) || status.StatusCode() != http.StatusTooManyRequests {
++					t.Fatalf("quota status was not preserved: %v", err)
++				}
++				var retry interface{ RetryAfter() *time.Duration }
++				if !errors.As(err, &retry) || retry.RetryAfter() == nil || *retry.RetryAfter() != time.Hour {
++					t.Fatalf("upstream reset was not preserved: %v", err)
++				}
++				if gjson.Get(err.Error(), "error.type").String() != "usage_limit_reached" {
++					t.Fatalf("upstream quota error was changed: %v", err)
++				}
++			})
++		}
++	}
++}
++
++func TestCodexQuotaScopeUsesLatestFrameHeaders(t *testing.T) {
++	const quota = `{"type":"usage_limit_reached","resets_in_seconds":3600}`
++	for _, tc := range []struct {
++		name           string
++		attempt        string
++		frame          string
++		wantCredential bool
++	}{
++		{name: "Spark frame overrides main handshake", attempt: "premium", frame: "codex_bengalfox"},
++		{name: "main frame overrides earlier Spark observation", attempt: "codex_bengalfox", frame: "premium", wantCredential: true},
++		{name: "frame without quota retains current attempt", attempt: "codex_bengalfox"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			payload := []byte(`{"type":"error","status":429,"headers":{"x-codex-active-limit":"` + tc.frame + `"},"error":` + quota + `}`)
++			err, ok := parseCodexWebsocketError(payload, http.Header{"X-Codex-Active-Limit": {tc.attempt}})
++			if !ok {
++				t.Fatal("websocket error not recognized")
++			}
++			var scoped interface{ IsCredentialScoped() bool }
++			if !errors.As(err, &scoped) || scoped.IsCredentialScoped() != tc.wantCredential {
++				t.Fatalf("latest observation did not control scope: %v", err)
++			}
++			terminal, _, ok := codexTerminalFailureErr(payload, http.Header{"X-Codex-Active-Limit": {tc.attempt}})
++			if !ok || terminal.IsCredentialScoped() != tc.wantCredential {
++				t.Fatalf("terminal event scope = %t, want %t", terminal.IsCredentialScoped(), tc.wantCredential)
++			}
++		})
++	}
++}
+diff --git a/internal/runtime/executor/codex_executor_stream.go b/internal/runtime/executor/codex_executor_stream.go
+index bae496f..d29cd22 100644
+--- a/internal/runtime/executor/codex_executor_stream.go
++++ b/internal/runtime/executor/codex_executor_stream.go
+@@ -132,7 +132,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 		}
+ 		helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling(), httpResp.Header)
+ 		return nil, err
+ 	}
+ 
+@@ -197,7 +197,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 				observeCodexTokenEvent(reporter, data)
+ 				translatedLine = append([]byte("data: "), data...)
+ 				eventType := gjson.GetBytes(data, "type").String()
+-				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
++				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling(), httpResp.Header); ok {
+ 					closeBootstrapBody()
+ 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
+ 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
+@@ -387,7 +387,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 				observeCodexTokenEvent(reporter, data)
+ 				translatedLine = append([]byte("data: "), data...)
+ 				eventType := gjson.GetBytes(data, "type").String()
+-				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling()); ok {
++				if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(data, e.modelLevelCooling(), httpResp.Header); ok {
+ 					if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
+ 						helps.RecordAPIResponseError(ctx, e.cfg, errClearReplay)
+ 						reporter.PublishFailure(ctx, errClearReplay)
+diff --git a/internal/runtime/executor/codex_executor_terminal.go b/internal/runtime/executor/codex_executor_terminal.go
+index 01d4b37..f36caec 100644
+--- a/internal/runtime/executor/codex_executor_terminal.go
++++ b/internal/runtime/executor/codex_executor_terminal.go
+@@ -148,31 +148,31 @@ func codexTerminalStreamContextLengthErr(eventData []byte) (statusErr, bool) {
+ 	return streamErr, true
+ }
+ 
+-func codexTerminalStreamErr(eventData []byte) (statusErr, []byte, bool) {
+-	return codexTerminalStreamErrWithCooling(eventData, false)
++func codexTerminalStreamErr(eventData []byte, responseHeaders ...http.Header) (statusErr, []byte, bool) {
++	return codexTerminalStreamErrWithCooling(eventData, false, responseHeaders...)
+ }
+ 
+-func codexTerminalStreamErrWithCooling(eventData []byte, modelLevelCooling bool) (statusErr, []byte, bool) {
++func codexTerminalStreamErrWithCooling(eventData []byte, modelLevelCooling bool, responseHeaders ...http.Header) (statusErr, []byte, bool) {
+ 	body, ok := codexTerminalFailureBody(eventData)
+ 	if !ok || !codexTerminalStreamErrShouldHandle(body) {
+ 		return statusErr{}, nil, false
+ 	}
+-	return newCodexStatusErrWithCooling(http.StatusBadRequest, body, modelLevelCooling), body, true
++	return newCodexStatusErrWithCooling(http.StatusBadRequest, body, modelLevelCooling, append(responseHeaders, helps.ParseCodexQuotaEventHeaders(eventData))...), body, true
+ }
+ 
+-func codexTerminalFailureErr(eventData []byte) (statusErr, []byte, bool) {
+-	return codexTerminalFailureErrWithCooling(eventData, false)
++func codexTerminalFailureErr(eventData []byte, responseHeaders ...http.Header) (statusErr, []byte, bool) {
++	return codexTerminalFailureErrWithCooling(eventData, false, responseHeaders...)
+ }
+ 
+-func codexTerminalFailureErrWithCooling(eventData []byte, modelLevelCooling bool) (statusErr, []byte, bool) {
+-	if streamErr, body, ok := codexTerminalStreamErrWithCooling(eventData, modelLevelCooling); ok {
++func codexTerminalFailureErrWithCooling(eventData []byte, modelLevelCooling bool, responseHeaders ...http.Header) (statusErr, []byte, bool) {
++	if streamErr, body, ok := codexTerminalStreamErrWithCooling(eventData, modelLevelCooling, responseHeaders...); ok {
+ 		return streamErr, body, true
+ 	}
+ 	body, ok := codexTerminalFailureBody(eventData)
+ 	if !ok {
+ 		return statusErr{}, nil, false
+ 	}
+-	return newCodexStatusErrWithCooling(codexTerminalFailureStatus(body), body, modelLevelCooling), body, true
++	return newCodexStatusErrWithCooling(codexTerminalFailureStatus(body), body, modelLevelCooling, append(responseHeaders, helps.ParseCodexQuotaEventHeaders(eventData))...), body, true
+ }
+ 
+ func codexTerminalFailureStatus(body []byte) int {
+@@ -310,14 +310,14 @@ func codexTerminalErrorIsContextLength(body []byte) bool {
+ 		strings.Contains(message, "too many tokens")
+ }
+ 
+-func newCodexStatusErr(statusCode int, body []byte) statusErr {
+-	return newCodexStatusErrWithCooling(statusCode, body, false)
++func newCodexStatusErr(statusCode int, body []byte, responseHeaders ...http.Header) statusErr {
++	return newCodexStatusErrWithCooling(statusCode, body, false, responseHeaders...)
+ }
+ 
+-func newCodexStatusErrWithCooling(statusCode int, body []byte, modelLevelCooling bool) statusErr {
++func newCodexStatusErrWithCooling(statusCode int, body []byte, modelLevelCooling bool, responseHeaders ...http.Header) statusErr {
+ 	errCode := statusCode
+ 	isUsageLimit := isCodexUsageLimitError(body)
+-	credentialScoped := isUsageLimit && !modelLevelCooling
++	credentialScoped := isUsageLimit && !modelLevelCooling && !helps.CodexHasIndependentSparkLimit(responseHeaders...)
+ 	if isCodexModelCapacityError(body) || isUsageLimit {
+ 		errCode = http.StatusTooManyRequests
+ 	}
+diff --git a/internal/runtime/executor/codex_openai_images.go b/internal/runtime/executor/codex_openai_images.go
+index 65797a3..de43626 100644
+--- a/internal/runtime/executor/codex_openai_images.go
++++ b/internal/runtime/executor/codex_openai_images.go
+@@ -140,7 +140,7 @@ func (e *CodexExecutor) executeOpenAIImage(ctx context.Context, auth *cliproxyau
+ 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+ 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling(), httpResp.Header)
+ 		return resp, err
+ 	}
+ 
+@@ -232,7 +232,7 @@ func (e *CodexExecutor) executeOpenAIImageStream(ctx context.Context, auth *clip
+ 		}
+ 		helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling(), httpResp.Header)
+ 		return nil, err
+ 	}
+ 
+@@ -363,7 +363,7 @@ func (e *CodexExecutor) executeDirectOpenAIImage(ctx context.Context, auth *clip
+ 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+ 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling(), httpResp.Header)
+ 		return resp, err
+ 	}
+ 
+@@ -418,7 +418,7 @@ func (e *CodexExecutor) executeDirectOpenAIImageStream(ctx context.Context, auth
+ 		}
+ 		helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+ 		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), data))
+-		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling())
++		err = newCodexStatusErrWithCooling(httpResp.StatusCode, data, e.modelLevelCooling(), httpResp.Header)
+ 		return nil, err
+ 	}
+ 
+diff --git a/internal/runtime/executor/codex_websockets_errors.go b/internal/runtime/executor/codex_websockets_errors.go
+index c080417..932fd91 100644
+--- a/internal/runtime/executor/codex_websockets_errors.go
++++ b/internal/runtime/executor/codex_websockets_errors.go
+@@ -26,11 +26,11 @@ func (e statusErrWithHeaders) Headers() http.Header {
+ 	return e.headers.Clone()
+ }
+ 
+-func parseCodexWebsocketError(payload []byte) (error, bool) {
+-	return parseCodexWebsocketErrorWithCooling(payload, false)
++func parseCodexWebsocketError(payload []byte, responseHeaders ...http.Header) (error, bool) {
++	return parseCodexWebsocketErrorWithCooling(payload, false, responseHeaders...)
+ }
+ 
+-func parseCodexWebsocketErrorWithCooling(payload []byte, modelLevelCooling bool) (error, bool) {
++func parseCodexWebsocketErrorWithCooling(payload []byte, modelLevelCooling bool, responseHeaders ...http.Header) (error, bool) {
+ 	if len(payload) == 0 {
+ 		return nil, false
+ 	}
+@@ -51,7 +51,7 @@ func parseCodexWebsocketErrorWithCooling(payload []byte, modelLevelCooling bool)
+ 	statusError := statusErr{
+ 		code:             status,
+ 		msg:              string(out),
+-		credentialScoped: isUsageLimit && !modelLevelCooling,
++		credentialScoped: isUsageLimit && !modelLevelCooling && !helps.CodexHasIndependentSparkLimit(append(responseHeaders, headers)...),
+ 	}
+ 	if retryAfter := parseCodexRetryAfter(status, out, time.Now()); retryAfter != nil {
+ 		statusError.retryAfter = retryAfter
+diff --git a/internal/runtime/executor/codex_websockets_execute.go b/internal/runtime/executor/codex_websockets_execute.go
+index 7c6eca0..7c144d6 100644
+--- a/internal/runtime/executor/codex_websockets_execute.go
++++ b/internal/runtime/executor/codex_websockets_execute.go
+@@ -9,6 +9,7 @@ import (
+ 
+ 	"github.com/gorilla/websocket"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+@@ -161,7 +162,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
+ 			cliproxyexecutor.MarkUpstreamAttempt(ctx)
+ 		}
+ 		if respHS != nil && respHS.StatusCode > 0 {
+-			return resp, newCodexStatusErrWithCooling(respHS.StatusCode, bodyErr, e.modelLevelCooling())
++			return resp, newCodexStatusErrWithCooling(respHS.StatusCode, bodyErr, e.modelLevelCooling(), respHS.Header)
+ 		}
+ 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
+ 		return resp, errDial
+@@ -305,7 +306,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
+ 		helps.EmitWebSocketResponseEvent(ctx, opts, auth, e.Identifier(), req.Model, payload)
+ 		payload = helps.RestoreCodexMultiAgentV2Response(payload, restoreMultiAgentV2)
+ 
+-		if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling()); ok {
++		if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 			if sess != nil {
+ 				e.invalidateUpstreamConn(sess, conn, "upstream_error", wsErr)
+ 			}
+@@ -315,7 +316,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
+ 			helps.RecordAPIWebsocketError(ctx, e.cfg, "upstream_error", wsErr)
+ 			return resp, wsErr
+ 		}
+-		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling()); ok {
++		if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 			if sess != nil {
+ 				unlockSession()
+ 				e.invalidateUpstreamConn(sess, conn, "terminal_failure", streamErr)
+diff --git a/internal/runtime/executor/codex_websockets_stream.go b/internal/runtime/executor/codex_websockets_stream.go
+index b6bcb49..f5b8b64 100644
+--- a/internal/runtime/executor/codex_websockets_stream.go
++++ b/internal/runtime/executor/codex_websockets_stream.go
+@@ -10,6 +10,7 @@ import (
+ 
+ 	"github.com/gorilla/websocket"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+@@ -128,7 +129,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
+ 		}
+ 		if respHS != nil && respHS.StatusCode > 0 {
+ 			unlockStreamSession()
+-			return nil, newCodexStatusErrWithCooling(respHS.StatusCode, bodyErr, e.modelLevelCooling())
++			return nil, newCodexStatusErrWithCooling(respHS.StatusCode, bodyErr, e.modelLevelCooling(), respHS.Header)
+ 		}
+ 		helps.RecordAPIWebsocketError(ctx, e.cfg, "dial", errDial)
+ 		unlockStreamSession()
+@@ -356,7 +357,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
+ 			helps.EmitWebSocketResponseEvent(ctx, opts, auth, e.Identifier(), req.Model, payload)
+ 			payload = helps.RestoreCodexMultiAgentV2Response(payload, restoreMultiAgentV2)
+ 
+-			if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling()); ok {
++			if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 				if sess != nil {
+ 					e.invalidateUpstreamConn(sess, conn, "upstream_error", wsErr)
+ 					sess.clearActive(conn, readCh)
+@@ -379,7 +380,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
+ 				}
+ 				return nil, wsErr
+ 			}
+-			if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling()); ok {
++			if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 				// A transient capacity rejection is retried on another credential, so the
+ 				// downstream websocket session must survive this upstream teardown. Notifying
+ 				// the disconnect here would close the client connection before the retry can
+@@ -620,7 +621,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
+ 			helps.EmitWebSocketResponseEvent(ctx, opts, auth, e.Identifier(), req.Model, payload)
+ 			payload = helps.RestoreCodexMultiAgentV2Response(payload, restoreMultiAgentV2)
+ 
+-			if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling()); ok {
++			if wsErr, ok := parseCodexWebsocketErrorWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 				terminateReason = "upstream_error"
+ 				terminateErr = wsErr
+ 				if sess != nil {
+@@ -638,7 +639,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
+ 				_ = send(cliproxyexecutor.StreamChunk{Err: wsErr})
+ 				return
+ 			}
+-			if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling()); ok {
++			if streamErr, terminalBody, ok := codexTerminalFailureErrWithCooling(payload, e.modelLevelCooling(), logging.GetResponseHeaders(ctx)); ok {
+ 				terminateReason = "upstream_error"
+ 				terminateErr = streamErr
+ 				if sess != nil {
+diff --git a/internal/runtime/executor/helps/codex_quota_scope.go b/internal/runtime/executor/helps/codex_quota_scope.go
+new file mode 100644
+index 0000000..e2966f5
+--- /dev/null
++++ b/internal/runtime/executor/helps/codex_quota_scope.go
+@@ -0,0 +1,27 @@
++package helps
++
++import (
++	"net/http"
++	"strings"
++)
++
++// CodexHasIndependentSparkLimit reports whether the current upstream attempt
++// explicitly selected Spark's separate quota pool. Other quota windows may be
++// included in every response, so only the active limit can narrow error scope.
++// Later observations (for example websocket error headers) override earlier ones.
++// Unknown or absent limits retain the existing credential-wide quota behavior.
++func CodexHasIndependentSparkLimit(observations ...http.Header) bool {
++	for i := len(observations) - 1; i >= 0; i-- {
++		active := strings.TrimSpace(observations[i].Get("X-Codex-Active-Limit"))
++		if active == "" {
++			continue
++		}
++		switch strings.ToLower(active) {
++		case "codex_bengalfox", "gpt-5.3-codex-spark":
++			return true
++		default:
++			return false
++		}
++	}
++	return false
++}
+diff --git a/sdk/api/handlers/handlers.go b/sdk/api/handlers/handlers.go
+index 3c8aad9..718988b 100644
+--- a/sdk/api/handlers/handlers.go
++++ b/sdk/api/handlers/handlers.go
+@@ -229,6 +229,11 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
+ 	if pinnedAuthID := pinnedAuthIDFromContext(ctx); pinnedAuthID != "" {
+ 		meta[coreexecutor.PinnedAuthMetadataKey] = pinnedAuthID
+ 	}
++	if ginCtx != nil {
++		if id := strings.TrimSpace(ginCtx.GetHeader("X-Sub2API-CPA-Auth-ID")); id != "" {
++			meta[coreexecutor.PinnedAuthMetadataKey] = id
++		}
++	}
+ 	if selectedCallback := selectedAuthIDCallbackFromContext(ctx); selectedCallback != nil {
+ 		meta[coreexecutor.SelectedAuthCallbackMetadataKey] = selectedCallback
+ 	}
+diff --git a/sdk/api/handlers/sub2_account_pin_test.go b/sdk/api/handlers/sub2_account_pin_test.go
+new file mode 100644
+index 0000000..d522779
+--- /dev/null
++++ b/sdk/api/handlers/sub2_account_pin_test.go
+@@ -0,0 +1,124 @@
++package handlers
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
++)
++
++func TestSub2AccountPinOverridesSessionAffinity(t *testing.T) {
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
++	c.Request.Header.Set("X-Sub2API-CPA-Auth-ID", "chosen-identity")
++	ctx := context.WithValue(context.Background(), "gin", c)
++	ctx = WithPinnedAuthID(ctx, "stale-session-identity")
++	meta := requestExecutionMetadata(ctx)
++	if meta[coreexecutor.PinnedAuthMetadataKey] != "chosen-identity" {
++		t.Fatal("account pin was not enforced")
++	}
++}
++
++// Exercise the actual selection path, including retired Excel requests from
++// older clients, so the CPA upgrade cannot replace Sub2's selected identity.
++func TestSub2AccountPinKeepsNativeIdentityAndNeverFallsBack(t *testing.T) {
++	for _, streaming := range []bool{false, true} {
++		for _, state := range []string{"active", "disabled", "missing", "failed"} {
++			t.Run(fmt.Sprintf("stream=%t/%s", streaming, state), func(t *testing.T) {
++				model := "sub2-pin-" + t.Name()
++				chosen := "chosen-" + t.Name()
++				var calls []string
++				execute := func(auth *coreauth.Auth) error {
++					calls = append(calls, auth.ID)
++					if state == "failed" {
++						return errors.New("controlled upstream failure")
++					}
++					return nil
++				}
++				executor := &modelExecutionCaptureExecutor{
++					provider: "codex",
++					execute: func(_ context.Context, auth *coreauth.Auth, req coreexecutor.Request, _ coreexecutor.Options) (coreexecutor.Response, error) {
++						if req.Model != model {
++							t.Errorf("model changed to %s", req.Model)
++						}
++						return coreexecutor.Response{Payload: []byte(`{"status":"completed","output":[]}`)}, execute(auth)
++					},
++					stream: func(_ context.Context, auth *coreauth.Auth, req coreexecutor.Request, _ coreexecutor.Options) (*coreexecutor.StreamResult, error) {
++						if req.Model != model {
++							t.Errorf("model changed to %s", req.Model)
++						}
++						if err := execute(auth); err != nil {
++							return nil, err
++						}
++						chunks := make(chan coreexecutor.StreamChunk, 1)
++						chunks <- coreexecutor.StreamChunk{Payload: []byte("data: " + `{"type":"response.completed","response":{"status":"completed","output":[]}}` + "\n\n")}
++						close(chunks)
++						return &coreexecutor.StreamResult{Chunks: chunks}, nil
++					},
++				}
++				manager := coreauth.NewManager(nil, nil, nil)
++				manager.SetRetryConfig(0, 0, 0)
++				manager.RegisterExecutor(executor)
++				auths := []*coreauth.Auth{
++					{ID: "other-" + t.Name(), Provider: "codex", Status: coreauth.StatusActive, Attributes: map[string]string{"priority": "100"}},
++				}
++				if state != "missing" {
++					auths = append(auths, &coreauth.Auth{ID: chosen, Provider: "codex", Status: coreauth.StatusActive, Disabled: state == "disabled"})
++				}
++				for _, auth := range auths {
++					if _, err := manager.Register(context.Background(), auth); err != nil {
++						t.Fatal(err)
++					}
++					registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: model}})
++					t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
++				}
++				handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager)
++				c, _ := gin.CreateTestContext(httptest.NewRecorder())
++				c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
++				c.Request.Header.Set("X-Sub2API-CPA-Auth-ID", chosen)
++				c.Request.Header.Set("X-Sub2API-BasisPoints", "1")
++				ctx := WithPinnedAuthID(context.WithValue(context.Background(), "gin", c), auths[0].ID)
++				body := []byte(fmt.Sprintf(`{"model":%q,"input":"benign fixture"}`, model))
++				failed := false
++				if streaming {
++					chunks, _, errs := handler.ExecuteStreamWithAuthManager(ctx, "openai-response", model, body, "")
++					if chunks != nil {
++						for range chunks {
++						}
++					}
++					if errs != nil {
++						for err := range errs {
++							if err != nil {
++								failed = true
++							}
++						}
++					}
++				} else {
++					_, _, err := handler.ExecuteWithAuthManager(ctx, "openai-response", model, body, "")
++					failed = err != nil
++				}
++				if failed != (state != "active") {
++					t.Fatalf("failure=%t for state %s", failed, state)
++				}
++				for _, id := range calls {
++					if id != chosen {
++						t.Fatalf("selected %s instead of %s", id, chosen)
++					}
++				}
++				if state == "active" && len(calls) != 1 {
++					t.Fatalf("calls=%v", calls)
++				}
++				if (state == "disabled" || state == "missing") && len(calls) != 0 {
++					t.Fatalf("inactive identity made calls: %v", calls)
++				}
++			})
++		}
++	}
++}
+diff --git a/test/codex_spark_quota_scope_test.go b/test/codex_spark_quota_scope_test.go
+new file mode 100644
+index 0000000..a3c6558
+--- /dev/null
++++ b/test/codex_spark_quota_scope_test.go
+@@ -0,0 +1,305 @@
++package test
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/gorilla/websocket"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
++	runtimeexecutor "github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
++	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
++	"github.com/tidwall/gjson"
++)
++
++// Exercise actual upstream decoding and scheduler decisions together. The same
++// exhausted Spark metadata accompanies both Spark and premium responses, so its
++// mere presence must not turn a premium quota failure into a model-only failure.
++func TestCodexSparkQuotaScopePreservesOtherModels(t *testing.T) {
++	const sparkModel = "gpt-5.3-codex-spark"
++	const astraModel = "gpt-6-astra"
++	const lunaModel = "gpt-5.6-luna"
++	const apiKey = "spark-scope-test-key"
++	const created = `{"type":"response.created","response":{"id":"spark-scope-created"}}`
++	const quota = `{"type":"usage_limit_reached","message":"You've hit your usage limit.","resets_in_seconds":3600}`
++	const completed = `{"type":"response.completed","response":{"id":"spark-scope-success","status":"completed","output":[{"id":"spark-scope-message","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
++
++	for _, transport := range []string{
++		"http-429", "sse-error", "sse-failed", "websocket-handshake",
++		"websocket-error", "websocket-quota-error", "websocket-quota-failed",
++	} {
++		for _, mode := range []string{"execute", "stream", "stream-buffered"} {
++			for _, activeLimit := range []string{"codex_bengalfox", "premium"} {
++				t.Run(transport+"/"+mode+"/"+activeLimit, func(t *testing.T) {
++					credentialScoped := activeLimit == "premium"
++					websocketTransport := strings.HasPrefix(transport, "websocket-")
++					type attempt struct {
++						model string
++						key   string
++					}
++					var attemptsMu sync.Mutex
++					var attempts []attempt
++					recordAttempt := func(model, key string) int {
++						attemptsMu.Lock()
++						defer attemptsMu.Unlock()
++						attempts = append(attempts, attempt{model: model, key: key})
++						return len(attempts)
++					}
++					attemptCount := func() int {
++						attemptsMu.Lock()
++						defer attemptsMu.Unlock()
++						return len(attempts)
++					}
++					quotaHeaders := func(active string) http.Header {
++						mainUsed := "95"
++						if credentialScoped {
++							mainUsed = "100"
++						}
++						return http.Header{
++							"X-Codex-Active-Limit":                          []string{active},
++							"X-Codex-Primary-Used-Percent":                  []string{mainUsed},
++							"X-Codex-Primary-Window-Minutes":                []string{"10080"},
++							"X-Codex-Primary-Reset-After-Seconds":           []string{"7200"},
++							"X-Codex-Bengalfox-Limit-Name":                  []string{"GPT-5.3-Codex-Spark"},
++							"X-Codex-Bengalfox-Primary-Used-Percent":        []string{"100"},
++							"X-Codex-Bengalfox-Primary-Window-Minutes":      []string{"10080"},
++							"X-Codex-Bengalfox-Primary-Reset-After-Seconds": []string{"3600"},
++						}
++					}
++					errorFrame := func(withHeaders bool) string {
++						frame := map[string]any{
++							"type": "error", "status": http.StatusTooManyRequests,
++							"body": map[string]any{"error": json.RawMessage(quota)},
++						}
++						if withHeaders {
++							headers := make(map[string]string)
++							for key, values := range quotaHeaders(activeLimit) {
++								headers[key] = values[0]
++							}
++							frame["headers"] = headers
++						}
++						encoded, errMarshal := json.Marshal(frame)
++						if errMarshal != nil {
++							t.Fatalf("marshal websocket error: %v", errMarshal)
++						}
++						return string(encoded)
++					}
++					wsErrorWithHeaders, wsErrorWithoutHeaders := errorFrame(true), errorFrame(false)
++					mainUsed := 95
++					if credentialScoped {
++						mainUsed = 100
++					}
++					quotaEvent := fmt.Sprintf(`{"type":"codex.rate_limits","metered_limit_name":%q,"rate_limits":{"allowed":%t,"limit_reached":%t,"primary":{"used_percent":%d,"window_minutes":10080,"reset_after_seconds":7200}},"additional_rate_limits":{"GPT-5.3-Codex-Spark":{"allowed":false,"limit_reached":true,"primary":{"used_percent":100,"window_minutes":10080,"reset_after_seconds":3600}}}}`, activeLimit, !credentialScoped, credentialScoped, mainUsed)
++					upgrader := websocket.Upgrader{}
++					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++						key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
++						// A rejected upgrade has no request frame yet. The first
++						// request below always asks for Spark.
++						if transport == "websocket-handshake" && attemptCount() == 0 {
++							recordAttempt(sparkModel, key)
++							for name, values := range quotaHeaders(activeLimit) {
++								w.Header()[name] = values
++							}
++							w.Header().Set("Content-Type", "application/json")
++							w.WriteHeader(http.StatusTooManyRequests)
++							_, _ = fmt.Fprintf(w, `{"error":%s}`, quota)
++							return
++						}
++						if websocketTransport {
++							conn, errUpgrade := upgrader.Upgrade(w, r, nil)
++							if errUpgrade != nil {
++								t.Errorf("upgrade websocket: %v", errUpgrade)
++								return
++							}
++							defer conn.Close()
++							_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
++							_, request, errRead := conn.ReadMessage()
++							if errRead != nil {
++								t.Errorf("read websocket request: %v", errRead)
++								return
++							}
++							model := gjson.GetBytes(request, "model").String()
++							recordAttempt(model, key)
++							events := []string{created, completed}
++							if model == sparkModel {
++								switch transport {
++								case "websocket-error":
++									events = []string{created, wsErrorWithHeaders}
++								case "websocket-quota-error":
++									events = []string{quotaEvent, created, wsErrorWithoutHeaders}
++								case "websocket-quota-failed":
++									events = []string{quotaEvent, created, `{"type":"response.failed","response":{"error":` + quota + `}}`}
++								default:
++									t.Errorf("Spark was retried after the rejected websocket handshake")
++									return
++								}
++							}
++							for _, event := range events {
++								if errWrite := conn.WriteMessage(websocket.TextMessage, []byte(event)); errWrite != nil {
++									t.Errorf("write websocket event: %v", errWrite)
++									return
++								}
++							}
++							return
++						}
++						request, errRead := io.ReadAll(r.Body)
++						if errRead != nil {
++							t.Errorf("read HTTP request: %v", errRead)
++							return
++						}
++						model := gjson.GetBytes(request, "model").String()
++						recordAttempt(model, key)
++						active := "premium"
++						if model == sparkModel {
++							active = activeLimit
++						}
++						for name, values := range quotaHeaders(active) {
++							w.Header()[name] = values
++						}
++						if model == sparkModel && transport == "http-429" {
++							w.Header().Set("Content-Type", "application/json")
++							w.WriteHeader(http.StatusTooManyRequests)
++							_, _ = fmt.Fprintf(w, `{"error":%s}`, quota)
++							return
++						}
++						terminal := completed
++						if model == sparkModel {
++							terminal = `{"type":"error","error":` + quota + `}`
++							if transport == "sse-failed" {
++								terminal = `{"type":"response.failed","response":{"error":` + quota + `}}`
++							}
++						}
++						w.Header().Set("Content-Type", "text/event-stream")
++						if _, errWrite := fmt.Fprintf(w, "data: %s\n\ndata: %s\n\n", created, terminal); errWrite != nil {
++							t.Errorf("write SSE response: %v", errWrite)
++						}
++					}))
++					defer server.Close()
++
++					manager := cliproxyauth.NewManager(nil, &cliproxyauth.RoundRobinSelector{}, nil)
++					manager.SetRetryConfig(0, 0, 0)
++					cfg := &config.Config{}
++					cfg.Codex.StreamBootstrapBuffering = mode == "stream-buffered"
++					if websocketTransport {
++						manager.RegisterExecutor(runtimeexecutor.NewCodexWebsocketsExecutor(cfg))
++					} else {
++						manager.RegisterExecutor(runtimeexecutor.NewCodexExecutor(cfg))
++					}
++					authID := "spark-scope-" + t.Name()
++					registry.GetGlobalRegistry().RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: sparkModel}, {ID: astraModel}, {ID: lunaModel}})
++					t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(authID) })
++					if _, errRegister := manager.Register(context.Background(), &cliproxyauth.Auth{
++						ID: authID, Provider: "codex", Status: cliproxyauth.StatusActive,
++						Attributes: map[string]string{"base_url": server.URL, "api_key": apiKey},
++						Metadata:   map[string]any{"disable_cooling": false},
++					}); errRegister != nil {
++						t.Fatal(errRegister)
++					}
++					run := func(model string) ([]byte, error) {
++						t.Helper()
++						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++						defer cancel()
++						request := cliproxyexecutor.Request{Model: model, Payload: []byte(fmt.Sprintf(`{"model":%q,"input":"hello"}`, model))}
++						options := cliproxyexecutor.Options{Stream: mode != "execute", SourceFormat: sdktranslator.FromString("openai-response")}
++						if mode == "execute" {
++							response, errExecute := manager.Execute(ctx, []string{"codex"}, request, options)
++							return response.Payload, errExecute
++						}
++						result, errStream := manager.ExecuteStream(ctx, []string{"codex"}, request, options)
++						if errStream != nil {
++							return nil, errStream
++						}
++						var payload []byte
++						var terminalErr error
++						for chunk := range result.Chunks {
++							payload = append(payload, chunk.Payload...)
++							if chunk.Err != nil {
++								terminalErr = chunk.Err
++							}
++						}
++						return payload, terminalErr
++					}
++
++					before := time.Now()
++					_, quotaErr := run(sparkModel)
++					if quotaErr == nil || !strings.Contains(quotaErr.Error(), "usage_limit_reached") {
++						t.Fatalf("expected the original Spark quota error, got %v", quotaErr)
++					}
++					var status interface{ StatusCode() int }
++					if !errors.As(quotaErr, &status) || status.StatusCode() != http.StatusTooManyRequests {
++						t.Errorf("quota error lost HTTP 429: %T %v", quotaErr, quotaErr)
++					}
++					var scoped interface{ IsCredentialScoped() bool }
++					if !errors.As(quotaErr, &scoped) || scoped.IsCredentialScoped() != credentialScoped {
++						t.Errorf("credential scope = %v, want %t; error=%T %v", scoped, credentialScoped, quotaErr, quotaErr)
++					}
++					var retry interface{ RetryAfter() *time.Duration }
++					if !errors.As(quotaErr, &retry) || retry.RetryAfter() == nil || *retry.RetryAfter() != time.Hour {
++						t.Errorf("quota error lost its one-hour upstream reset: %T %v", quotaErr, quotaErr)
++					}
++					auth, ok := manager.GetByID(authID)
++					if !ok {
++						t.Fatal("test credential disappeared")
++					}
++					state := auth.ModelStates[sparkModel]
++					if state == nil || !state.Quota.Exceeded || state.NextRetryAfter.Before(before.Add(time.Hour)) || state.Quota.NextRecoverAt.Before(before.Add(time.Hour)) {
++						t.Fatalf("Spark cooldown lost the upstream reset: %+v", state)
++					}
++					sparkDeadline, sparkQuotaDeadline := state.NextRetryAfter, state.Quota.NextRecoverAt
++					if credentialScoped {
++						if auth.Quota.Reason != "credential_quota" || auth.Quota.NextRecoverAt.Before(before.Add(time.Hour)) {
++							t.Errorf("premium control lost its account-wide cooldown: %+v", auth.Quota)
++						}
++					} else if auth.Quota.Reason == "credential_quota" {
++						t.Errorf("independent Spark quota cooled the whole credential: %+v", auth.Quota)
++					}
++					for _, model := range []string{astraModel, lunaModel} {
++						payload, errOther := run(model)
++						if credentialScoped {
++							if errOther == nil {
++								t.Errorf("premium account-wide quota unexpectedly allowed %s: %s", model, payload)
++							}
++						} else if errOther != nil || !strings.Contains(string(payload), `"completed"`) || !strings.Contains(string(payload), "OK") {
++							t.Errorf("%s must still complete using the same credential: payload=%s error=%v", model, payload, errOther)
++						}
++					}
++					auth, _ = manager.GetByID(authID)
++					state = auth.ModelStates[sparkModel]
++					if state == nil || !state.Quota.Exceeded || !state.NextRetryAfter.Equal(sparkDeadline) || !state.Quota.NextRecoverAt.Equal(sparkQuotaDeadline) {
++						t.Errorf("other models' results changed Spark's live cooldown: %+v", state)
++					}
++					if _, errSparkRetry := run(sparkModel); errSparkRetry == nil {
++						t.Error("Spark became selectable before its quota reset")
++					}
++					wantModels := []string{sparkModel}
++					if !credentialScoped {
++						wantModels = append(wantModels, astraModel, lunaModel)
++					}
++					attemptsMu.Lock()
++					gotAttempts := append([]attempt(nil), attempts...)
++					attemptsMu.Unlock()
++					if len(gotAttempts) != len(wantModels) {
++						t.Fatalf("upstream attempts = %+v, want models %v on one credential", gotAttempts, wantModels)
++					}
++					for i, got := range gotAttempts {
++						if got.model != wantModels[i] || got.key != apiKey {
++							t.Errorf("attempt %d = %+v, want model %s on the original credential", i, got, wantModels[i])
++						}
++					}
++				})
++			}
++		}
++	}
++}

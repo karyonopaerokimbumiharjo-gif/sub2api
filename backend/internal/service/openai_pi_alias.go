@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -51,4 +53,30 @@ func ResolveNativePiRuntimeAccount(ctx context.Context, repo PiRuntimeAccountRes
 		return nil, fmt.Errorf("Pi shared account owner does not match runtime owner")
 	}
 	return runtimeAccount, nil
+}
+
+var errNativePiDispatchUnavailable = errors.New("Pi credential owner is unavailable for dispatch")
+
+// resolveNativePiDispatchAccount adds dispatch health checks to shared aliases.
+// Management and reauthorization still use ResolveNativePiRuntimeAccount so an
+// unavailable credential remains readable and repairable. Expiry is left to the
+// token provider, which can refresh an otherwise healthy credential.
+func (s *OpenAIGatewayService) resolveNativePiDispatchAccount(ctx context.Context, account *Account) (*Account, error) {
+	if account == nil || s == nil {
+		return nil, errNativePiDispatchUnavailable
+	}
+	owner, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+	if err != nil {
+		return nil, errNativePiDispatchUnavailable
+	}
+	if account.GetCredential("harness_kind") != PiSharedHarnessKind {
+		return owner, nil
+	}
+	if ValidateExecutionAccount(account) != nil || ValidateExecutionAccount(owner) != nil ||
+		owner.Status != StatusActive || !owner.Schedulable ||
+		(owner.TempUnschedulableUntil != nil && time.Now().Before(*owner.TempUnschedulableUntil)) ||
+		s.isOpenAIAccountRuntimeBlocked(owner) {
+		return nil, errNativePiDispatchUnavailable
+	}
+	return owner, nil
 }

@@ -5,6 +5,7 @@
 
 import { apiClient } from '../client'
 import type { OpenAIReferralRefreshResult, OpenAIReferralSendResult } from '@/types/openaiReferrals'
+import type { OpenAICreditsSnapshot } from '@/types/openaiCredits'
 import type {
   Account,
   AccountListItem,
@@ -992,7 +993,9 @@ export interface OpenAIRateLimitResetCredits {
   credits?: OpenAIRateLimitResetCreditDetail[]
 }
 
-export interface OpenAIQuotaUsage {
+export type { OpenAICredits, OpenAISpendControl, OpenAIIndividualLimit } from '@/types/openaiCredits'
+
+export interface OpenAIQuotaUsage extends OpenAICreditsSnapshot {
   user_id?: string
   account_id?: string
   email?: string
@@ -1000,14 +1003,6 @@ export interface OpenAIQuotaUsage {
   rate_limit?: OpenAIRateLimit | null
   additional_rate_limits?: OpenAIAdditionalRateLimit[]
   rate_limit_reset_credits?: OpenAIRateLimitResetCredits | null
-  credits?: OpenAICredits | null
-  fetched_at: number
-}
-
-export interface OpenAICredits {
-  has_credits: boolean
-  unlimited: boolean
-  balance: string | null
 }
 
 export interface OpenAIQuotaResetCredit {

@@ -84,11 +84,38 @@ type OpenAICredits struct {
 	HasCredits bool    `json:"has_credits"`
 	Unlimited  bool    `json:"unlimited"`
 	Balance    *string `json:"balance"`
+	Remaining  *string `json:"remaining,omitempty"`
 }
 
 type openAICreditsSnapshot struct {
-	Credits   *OpenAICredits `json:"credits"`
-	FetchedAt int64          `json:"fetched_at"`
+	Credits              *OpenAICredits              `json:"credits"`
+	SpendControl         *OpenAISpendControl         `json:"spend_control,omitempty"`
+	RateLimit            *OpenAIRateLimit            `json:"rate_limit,omitempty"`
+	RateLimitReachedType *OpenAIRateLimitReachedType `json:"rate_limit_reached_type,omitempty"`
+	FetchedAt            int64                       `json:"fetched_at"`
+}
+
+// OpenAISpendControl is the account's upstream spending cap, not relay billing.
+// The upstream schema does not specify a currency/unit. Keep decimal amounts as
+// strings and never add these limits to credits.balance or convert them to USD.
+type OpenAISpendControl struct {
+	Reached         *bool                    `json:"reached,omitempty"`
+	IndividualLimit *OpenAISpendControlLimit `json:"individual_limit,omitempty"`
+}
+
+type OpenAISpendControlLimit struct {
+	Source            *string  `json:"source,omitempty"`
+	Limit             *string  `json:"limit,omitempty"`
+	Used              *string  `json:"used,omitempty"`
+	Remaining         *string  `json:"remaining,omitempty"`
+	UsedPercent       *float64 `json:"used_percent,omitempty"`
+	RemainingPercent  *float64 `json:"remaining_percent,omitempty"`
+	ResetAfterSeconds *int64   `json:"reset_after_seconds,omitempty"`
+	ResetAt           *int64   `json:"reset_at,omitempty"`
+}
+
+type OpenAIRateLimitReachedType struct {
+	Type string `json:"type"`
 }
 
 // OpenAIQuotaUsage is the typed projection of /wham/usage we expose to the UI.
@@ -103,6 +130,8 @@ type OpenAIQuotaUsage struct {
 	AdditionalRateLimits  []OpenAIAdditionalRateLimit  `json:"additional_rate_limits,omitempty"`
 	RateLimitResetCredits *OpenAIRateLimitResetCredits `json:"rate_limit_reset_credits,omitempty"`
 	Credits               *OpenAICredits               `json:"credits,omitempty"`
+	SpendControl          *OpenAISpendControl          `json:"spend_control,omitempty"`
+	RateLimitReachedType  *OpenAIRateLimitReachedType  `json:"rate_limit_reached_type,omitempty"`
 	FetchedAt             int64                        `json:"fetched_at"`
 	autoResetCandidates   []openAIAutoResetCreditCandidate
 }
@@ -132,18 +161,19 @@ type OpenAIQuotaResetResult struct {
 // for OpenAI OAuth accounts. It reuses the privacy client factory so all calls
 // flow through the impersonated HTTP client (Cloudflare-friendly TLS fingerprint).
 type OpenAIQuotaService struct {
-	accountRepo          AccountRepository
-	proxyRepo            ProxyRepository
-	tokenProvider        *OpenAITokenProvider
-	privacyClientFactory PrivacyClientFactory
-	referralClient       OpenAIReferralClient
-	agentIdentityTaskMu  sync.Mutex
-	agentIdentityWS      agentIdentityWSConnectionInvalidator
-	autoResetMu          sync.Mutex
-	autoResetCancel      context.CancelFunc
-	autoResetDone        chan struct{}
-	autoResetQueryUsage  func(context.Context, int64) (*OpenAIQuotaUsage, error)
-	autoResetResetCredit func(context.Context, int64) (*OpenAIQuotaResetResult, error)
+	accountRepo            AccountRepository
+	proxyRepo              ProxyRepository
+	tokenProvider          *OpenAITokenProvider
+	privacyClientFactory   PrivacyClientFactory
+	referralClient         OpenAIReferralClient
+	agentIdentityTaskMu    sync.Mutex
+	agentIdentityWS        agentIdentityWSConnectionInvalidator
+	autoResetMu            sync.Mutex
+	autoResetCancel        context.CancelFunc
+	autoResetDone          chan struct{}
+	autoResetQueryUsage    func(context.Context, int64) (*OpenAIQuotaUsage, error)
+	autoResetResetCredit   func(context.Context, int64) (*OpenAIQuotaResetResult, error)
+	creditsRefreshAttempts map[int64]time.Time
 }
 
 // NewOpenAIQuotaService constructs a quota service. token provider is required —
@@ -274,7 +304,7 @@ func (s *OpenAIQuotaService) CacheCreditsSnapshot(ctx context.Context, accountID
 		return infraerrors.New(http.StatusBadGateway, "OPENAI_QUOTA_EMPTY_USAGE", "openai quota query returned an empty result")
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
-		openaiQuotaCreditsKey: openAICreditsSnapshot{Credits: usage.Credits, FetchedAt: usage.FetchedAt},
+		openaiQuotaCreditsKey: codexCreditsSnapshotFromUsage(usage),
 	}); err != nil {
 		return infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_CACHE_WRITE_FAILED", "failed to cache Codex credits").WithCause(err)
 	}
@@ -290,7 +320,7 @@ func (s *OpenAIQuotaService) CachePostResetSnapshot(ctx context.Context, account
 	if updates == nil {
 		updates = make(map[string]any)
 	}
-	updates[openaiQuotaCreditsKey] = openAICreditsSnapshot{Credits: usage.Credits, FetchedAt: usage.FetchedAt}
+	updates[openaiQuotaCreditsKey] = codexCreditsSnapshotFromUsage(usage)
 	return s.cacheResetCreditsSnapshot(
 		ctx,
 		accountID,

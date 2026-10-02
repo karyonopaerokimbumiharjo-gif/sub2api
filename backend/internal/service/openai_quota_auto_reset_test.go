@@ -91,7 +91,7 @@ func TestShouldAutoPauseOpenAIAccountByQuota_AutoResetCreditStates(t *testing.T)
 		require.Equal(t, "5h", decision.window)
 	})
 
-	t.Run("自然窗口重置后清除动态阻塞", func(t *testing.T) {
+	t.Run("5h自然窗口重置后不保留历史失败阻塞", func(t *testing.T) {
 		extra := cloneOpenAIAutoResetExtra(baseExtra)
 		extra["codex_5h_used_percent"] = 100.0
 		extra["codex_5h_reset_at"] = now.Add(-time.Second).Format(time.RFC3339)
@@ -100,9 +100,8 @@ func TestShouldAutoPauseOpenAIAccountByQuota_AutoResetCreditStates(t *testing.T)
 		}
 		account := &Account{ID: 4, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: extra}
 		paused, decision := shouldAutoPauseOpenAIAccountByQuota(context.Background(), account)
-		require.True(t, paused)
-		require.Equal(t, "5h", decision.window)
-		require.Empty(t, decision.reason)
+		require.False(t, paused, "an expired 5h snapshot must not pause a new window or trigger a reset card")
+		require.Equal(t, openAIQuotaAutoPauseDecision{}, decision)
 	})
 }
 
@@ -315,9 +314,10 @@ func TestOpenAIQuotaAutoResetService_ConcurrentInstancesConsumeOnce(t *testing.T
 		_ = serviceA.evaluateAccount(context.Background(), account.ID)
 	}()
 	select {
- case <-quota.resetEntered:
- case <-time.After(2*time.Second): t.Fatal("automatic reset did not start")
- }
+	case <-quota.resetEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("automatic reset did not start")
+	}
 	go func() {
 		defer wg.Done()
 		_ = serviceB.evaluateAccount(context.Background(), account.ID)

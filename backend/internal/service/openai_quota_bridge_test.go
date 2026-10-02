@@ -41,7 +41,7 @@ func TestOpenAIQuotaBridgeQueryAndResetUseBoundCPAAuth(t *testing.T) {
 			var body string
 			switch request.URL {
 			case chatGPTUsageURL:
-				body = `{"account_id":"` + chatGPTAccountID + `","plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":300}}}`
+				body = `{"account_id":"` + chatGPTAccountID + `","plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":12,"limit_window_seconds":18000,"reset_after_seconds":300}},"spend_control":{"reached":false,"individual_limit":{"limit":"400","used":"48.98","remaining":"351.02"}}}`
 			case chatGPTRateLimitCreditsURL:
 				body = `{"available_count":2,"credits":[{"reset_type":"codex_rate_limits","status":"available","expires_at":"2099-09-01T01:00:00Z"},{"reset_type":"codex_rate_limits","status":"available","expires_at":"2099-09-02T01:00:00Z"}]}`
 			case chatGPTRateLimitResetURL:
@@ -77,6 +77,9 @@ func TestOpenAIQuotaBridgeQueryAndResetUseBoundCPAAuth(t *testing.T) {
 	require.Equal(t, 2, usage.RateLimitResetCredits.AvailableCount)
 	require.Len(t, usage.RateLimitResetCredits.Credits, 2)
 	require.NotZero(t, usage.FetchedAt)
+	require.NotNil(t, usage.SpendControl)
+	require.NotNil(t, usage.SpendControl.IndividualLimit)
+	require.Equal(t, "351.02", *usage.SpendControl.IndividualLimit.Remaining)
 
 	reset, err := service.ResetCredit(context.Background(), account.ID)
 	require.NoError(t, err)

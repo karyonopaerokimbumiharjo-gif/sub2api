@@ -43,6 +43,39 @@ describe('UseKeyModal', () => {
     saveAsMock.mockClear()
   })
 
+  it('renders executable SystemOne examples for each shell without duplicating the API prefix', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-typesafe-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'typesafe'
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+    expect(wrapper.find('nav[aria-label="Client"]').text()).toContain('keys.useKeyModal.cliTabs.systemOne')
+    for (const shell of ['macOS / Linux', 'Windows CMD', 'PowerShell']) {
+      const tab = wrapper.findAll('button').find(button => button.text().trim() === shell)
+      await tab!.trigger('click')
+      const code = wrapper.get('pre code').text()
+      expect(code).toContain('https://example.com/v1/systemone')
+      expect(code).not.toContain('/v1/v1/')
+      expect(code).toContain('jev-latest')
+      if (shell === 'Windows CMD') {
+        const escapedBody = code.match(/--data "(.*)"$/)?.[1]
+        expect(escapedBody).toContain('\\"model\\"')
+        const body = JSON.parse(escapedBody!.replaceAll('\\"', '"'))
+        expect(body).toMatchObject({ model: 'jev-latest', questions: { safety: { type: 'noul' } } })
+      }
+    }
+    wrapper.unmount()
+  })
+
   it('shows only Claude Code for Claude Code-only groups', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {

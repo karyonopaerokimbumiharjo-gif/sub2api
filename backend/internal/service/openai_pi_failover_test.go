@@ -19,8 +19,10 @@ import (
 
 type nativePiQuotaRepo struct {
 	AccountRepository
-	rateLimitedID int64
-	account       *Account
+	rateLimitedID     int64
+	tempUnscheduledID int64
+	authErrorID       int64
+	account           *Account
 }
 
 func (r *nativePiQuotaRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
@@ -32,6 +34,24 @@ func (r *nativePiQuotaRepo) SetRateLimited(_ context.Context, id int64, resetAt 
 }
 
 func (r *nativePiQuotaRepo) UpdateExtra(context.Context, int64, map[string]any) error { return nil }
+
+func (r *nativePiQuotaRepo) GetByID(_ context.Context, _ int64) (*Account, error) {
+	return r.account, nil
+}
+func (r *nativePiQuotaRepo) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
+	r.tempUnscheduledID = id
+	r.account.TempUnschedulableUntil = &until
+	r.account.TempUnschedulableReason = reason
+	return nil
+}
+
+func (r *nativePiQuotaRepo) SetError(_ context.Context, id int64, message string) error {
+	r.authErrorID = id
+	if id == r.account.ID {
+		r.account.Status = StatusError
+	}
+	return nil
+}
 
 func TestNativePiTransient429KeepsOriginalBoundedRetryPolicy(t *testing.T) {
 	account := nativePiAccount()
@@ -50,11 +70,18 @@ func TestNativePiTransient429KeepsOriginalBoundedRetryPolicy(t *testing.T) {
 	require.NotContains(t, string(failover.ResponseBody), "private provider content")
 }
 
-func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testing.T) {
+func TestNativePiAccountFailureReachesSchedulerWithoutCommittingResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, endpoint := range []string{"responses", "responses/compact", "chat/completions", "messages"} {
-		for _, signal := range []string{"headers", "body"} {
+		for _, signal := range []string{"headers", "body", "unauthorized", "forbidden"} {
 			t.Run(endpoint+"/"+signal, func(t *testing.T) {
+				status := http.StatusTooManyRequests
+				if signal == "unauthorized" {
+					status = http.StatusUnauthorized
+				}
+				if signal == "forbidden" {
+					status = http.StatusForbidden
+				}
 				secret := strings.Repeat("s", 40)
 				var attempts []string
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,8 +108,10 @@ func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testin
 						w.Header().Set("x-codex-primary-window-minutes", "300")
 						w.Header().Set("x-codex-primary-reset-after-seconds", "3600")
 					}
-					w.WriteHeader(http.StatusTooManyRequests)
-					if signal == "body" {
+					w.WriteHeader(status)
+					if signal == "unauthorized" || signal == "forbidden" {
+						_, _ = w.Write([]byte(`{"error":"pi_upstream_authorization_rejected","private":"must-not-leak"}`))
+					} else if signal == "body" {
 						_, _ = w.Write([]byte(`{"error":"pi_upstream_rate_limited","rate_limit":{"type":"usage_limit_reached","resets_in_seconds":3600}}`))
 					} else {
 						_, _ = w.Write([]byte(`{"error":"pi_upstream_rate_limited"}`))
@@ -97,7 +126,7 @@ func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testin
 				account.Status, account.Schedulable, account.Concurrency = StatusActive, true, 4
 				account.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
 				repo := &nativePiQuotaRepo{account: account}
-				svc := &OpenAIGatewayService{cfg: &config.Config{}, rateLimitService: NewRateLimitService(repo, nil, nil, nil, nil), toolCorrector: NewCodexToolCorrector(), openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil), toolCorrector: NewCodexToolCorrector(), openAITokenProvider: NewOpenAITokenProvider(nil, nil, nil)}
 				svc.rateLimitService.SetAccountRuntimeBlocker(svc)
 				w := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(w)
@@ -116,11 +145,20 @@ func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testin
 				var failover *UpstreamFailoverError
 				require.ErrorAs(t, err, &failover, "PI must return control to the existing account-switch loop")
 				require.False(t, c.Writer.Written(), "a 429 must not commit the client response before failover")
-				require.Equal(t, 429, failover.StatusCode)
+				require.Equal(t, status, failover.StatusCode)
+				require.NotContains(t, string(failover.ResponseBody), "must-not-leak")
 				require.False(t, failover.RetryableOnSameAccount, "exhausted quota must switch immediately")
 				require.Equal(t, "3600", failover.ResponseHeaders.Get("Retry-After"))
-				require.Equal(t, account.ID, repo.rateLimitedID)
-				require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+				if status == http.StatusTooManyRequests {
+					require.Equal(t, account.ID, repo.rateLimitedID)
+				} else if status == http.StatusForbidden {
+					require.Zero(t, repo.authErrorID)
+					require.Equal(t, StatusActive, account.Status)
+				} else {
+					require.NotNil(t, account.TempUnschedulableUntil)
+					require.Equal(t, StatusActive, account.Status)
+				}
+				require.Equal(t, status != http.StatusForbidden, svc.isOpenAIAccountRuntimeBlocked(account))
 				require.True(t, account.Schedulable, "temporary cooldown must not change the administrator's scheduling switch")
 				// Even a sticky session must escape the exhausted account.
 				fallback := nativePiAccount()
@@ -131,7 +169,7 @@ func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testin
 				svc.cache = &schedulerTestGatewayCache{sessionBindings: map[string]int64{"sticky-fixture": account.ID}}
 				svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{})
 				groupID := int64(9)
-				selection, _, selectErr := svc.SelectAccountWithSchedulerForCapability(context.Background(), &groupID, "", "sticky-fixture", "gpt-6-astra", nil, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true, PlatformOpenAI)
+				selection, _, selectErr := svc.SelectAccountWithSchedulerForCapability(context.Background(), &groupID, "", "sticky-fixture", "gpt-6-astra", map[int64]struct{}{account.ID: {}}, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true, PlatformOpenAI)
 				require.NoError(t, selectErr)
 				require.Equal(t, fallback.ID, selection.Account.ID)
 				if selection.ReleaseFunc != nil {
@@ -154,4 +192,47 @@ func TestNativePiQuotaFailureReachesSchedulerWithoutCommittingResponse(t *testin
 			})
 		}
 	}
+}
+
+func TestNativePiSharedAuthorizationFailureTargetsCredentialOwner(t *testing.T) {
+	owner := nativePiAccount()
+	owner.Status, owner.Schedulable = StatusActive, true
+	alias := nativePiAccount()
+	alias.ID, alias.Status, alias.Schedulable = 8, StatusActive, true
+	alias.Credentials["harness_kind"] = PiSharedHarnessKind
+	alias.Credentials[PiRuntimeAccountIDCredential] = "7"
+	delete(alias.Credentials, "access_token")
+	delete(alias.Credentials, "refresh_token")
+	repo := &nativePiQuotaRepo{account: owner}
+	svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil)}
+	svc.rateLimitService.SetAccountRuntimeBlocker(svc)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	resp := &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":"pi_upstream_authorization_rejected"}`))}
+	err := svc.nativePiAuthorizationFailover(context.Background(), c, alias, resp, "gpt-6-sol")
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, owner.ID, repo.tempUnscheduledID)
+	require.Zero(t, repo.authErrorID)
+	require.Equal(t, StatusActive, alias.Status)
+	require.False(t, c.Writer.Written())
+}
+
+func TestNativePiPrivateRuntimeUnauthorizedDoesNotPoisonAccounts(t *testing.T) {
+	account := nativePiAccount()
+	repo := &nativePiQuotaRepo{account: account}
+	svc := &OpenAIGatewayService{accountRepo: repo, rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil)}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	resp := &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":"unauthorized"}`))}
+	err := svc.nativePiAuthorizationFailover(context.Background(), c, account, resp, "gpt-6-sol")
+	var failover *UpstreamFailoverError
+	require.NotErrorAs(t, err, &failover)
+	var runtimeError *nativePiRequestError
+	require.ErrorAs(t, err, &runtimeError)
+	require.Equal(t, http.StatusServiceUnavailable, runtimeError.status)
+	require.Zero(t, repo.authErrorID)
+	require.Zero(t, repo.tempUnscheduledID)
+	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.False(t, c.Writer.Written())
 }

@@ -83,7 +83,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
   const limit=inference?maxRequestBodyBytes:Math.min(maxRequestBodyBytes,maxControlRequestBodyBytes);
   let size=0;
   try {
-   if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@0.99.2'});return}
+   if(req.method==='GET'&&req.url==='/health'){json(res,200,{status:'ok',adapter:'@earendil-works/pi-ai@1.0.0'});return}
    if(req.method!=='POST'){json(res,404,{error:'not_found'});return}
    if(Number(req.headers['content-length'])>limit)throw Error('request_too_large');
    const chunks=[];
@@ -172,7 +172,7 @@ export function createRuntime({secret,sessionSecret=secret,oauth=openaiCodexOAut
     const onClose=()=>{if(!res.writableFinished)abort.abort()};
     res.on('close',onClose);
     let upstreamStatus=200;const responseHeaders={};
-    const headers=()=>{if(!res.headersSent)res.writeHead(upstreamStatus,{...responseHeaders,'content-type':'text/event-stream','cache-control':'no-cache','x-sub2api-runtime':'pi-0.99.2'})};
+    const headers=()=>{if(!res.headersSent)res.writeHead(upstreamStatus,{...responseHeaders,'content-type':'text/event-stream','cache-control':'no-cache','x-sub2api-runtime':'pi-1.0.0'})};
     const finishFailure=failure=>{
      if(res.destroyed||res.writableEnded)return;
      if(delivered.terminals.size){res.end();return}

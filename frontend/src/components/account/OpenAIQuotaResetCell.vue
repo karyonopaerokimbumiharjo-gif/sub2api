@@ -8,8 +8,8 @@
 
       The 5h / 7d window bars are deliberately NOT rendered here — the local
       active-sampling display (UsageProgressBar in AccountUsageCell) already
-      owns that real estate. This cell is purely about the rate-limit reset
-      credit: query its count, consume one if needed.
+      owns that real estate. Reset-card controls and the separate credits/usage
+      summary below share a single upstream query.
     -->
     <div class="flex flex-wrap items-center gap-1.5">
       <slot name="pre-actions" />
@@ -170,6 +170,8 @@
       </div>
     </div>
 
+    <OpenAICreditsSummary :snapshot="creditsSnapshot" :loading="loading || resetting" @refresh="handleQuery" />
+
     <!-- Error / success feedback -->
     <div
       v-if="error"
@@ -217,6 +219,7 @@ import {
   type OpenAIQuotaResetResult
 } from '@/api/admin/accounts'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import OpenAICreditsSummary from './OpenAICreditsSummary.vue'
 
 const props = defineProps<{
   account: Account
@@ -247,6 +250,12 @@ const resetting = ref(false)
 const error = ref<string | null>(null)
 const data = ref<OpenAIQuotaUsage | null>(null)
 const cachedData = ref<OpenAIQuotaUsage | null>(null)
+let queryGeneration = 0
+// A completed query owns every displayed credit field, including missing ones.
+// Only pre-query rendering falls back to the persisted snapshot.
+const creditsSnapshot = computed(() => data.value && data.value.fetched_at > 0
+  ? data.value
+  : props.account.extra?.codex_credits_snapshot ?? null)
 const resetMessage = ref<string | null>(null)
 const resetWarning = ref<string | null>(null)
 const showResetConfirm = ref(false)
@@ -453,14 +462,17 @@ const toggleResetCreditDetails = () => {
 }
 
 const handleQuery = async () => {
-  if (loading.value) return
+  if (loading.value || resetting.value) return
+  const generation = ++queryGeneration
+  const accountId = props.account.id
   loading.value = true
   error.value = null
   resetMessage.value = null
   resetWarning.value = null
   showResetCreditDetails.value = false
   try {
-    const result = await refreshOpenAIQuota(props.account.id)
+    const result = await refreshOpenAIQuota(accountId)
+    if (generation !== queryGeneration || accountId !== props.account.id) return
     // The upstream read succeeded even when the snapshot write was rejected, so
     // the live count is always adopted. Only the persisted view is left alone,
     // which keeps the displayed expirations consistent with what is stored.
@@ -471,9 +483,9 @@ const handleQuery = async () => {
       resetWarning.value = t('admin.accounts.openaiQuotaReset.refreshCachePersistFailed')
     }
   } catch (e) {
-    error.value = extractErrorMessage(e)
+    if (generation === queryGeneration) error.value = extractErrorMessage(e)
   } finally {
-    loading.value = false
+    if (generation === queryGeneration) loading.value = false
   }
 }
 
@@ -597,6 +609,7 @@ watch(
   () => props.account.id,
   () => {
     // Account row may be reused across paginated lists; reset local state.
+    queryGeneration++
     cachedData.value = readCachedResetCredits(props.account)
     data.value = cachedData.value
     error.value = null

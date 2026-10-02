@@ -366,11 +366,10 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	if account.Platform == PlatformOpenAI &&
 		(account.Type == AccountTypeOAuth || account.IsOpenAICompatibleQuotaBridge()) {
-		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
-		if err == nil && usage != nil && usage.Error == "" {
-			s.tryClearRecoverableAccountError(ctx, account)
-		}
-		return usage, err
+		// Cached quota, or even an authenticated quota read with a still-valid
+		// access token, does not prove that a failed refresh credential recovered.
+		// Usage reads must never clear authorization errors or reactivate accounts.
+		return s.getOpenAIUsage(ctx, account, forceProbe)
 	}
 
 	if account.Platform == PlatformGemini {
@@ -731,9 +730,10 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
-		if account.IsOpenAICompatibleQuotaBridge() {
+		if account.IsOpenAICompatibleQuotaBridge() || (account.IsOAuth() && !account.IsShadow() && s.openAIQuotaService != nil) {
 			// Query the explicitly bound CPA identity, not a generation probe that
-			// can pick a different account or an unsupported default model.
+			// can pick a different account or an unsupported default model. Native
+			// OAuth uses the same read-only endpoint so credits/spend caps survive.
 			var quota *OpenAIQuotaUsage
 			var queryErr error
 			if s.openAIQuotaService == nil {
@@ -741,8 +741,8 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			} else {
 				quota, queryErr = s.openAIQuotaService.QueryUsage(ctx, account.ID)
 			}
-			if queryErr == nil && (quota == nil || quota.RateLimit == nil) {
-				queryErr = fmt.Errorf("quota response has no rate limit")
+			if queryErr == nil && (quota == nil || (quota.RateLimit == nil && quota.Credits == nil && quota.SpendControl == nil)) {
+				queryErr = fmt.Errorf("quota response has no usage data")
 			}
 			if queryErr != nil {
 				usage.ErrorCode = "quota_refresh_failed"
@@ -750,6 +750,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			} else {
 				fetchedAt := time.Now()
 				updates := buildCodexQuotaWindowExtraUpdates(quota.RateLimit, fetchedAt)
+				updates[openaiQuotaCreditsKey] = codexCreditsSnapshotFromUsage(quota)
 				mergeAccountExtra(account, updates)
 				s.persistOpenAICodexProbeSnapshot(account.ID, updates)
 				applyExtraToUsage(usage, account.Extra, fetchedAt)

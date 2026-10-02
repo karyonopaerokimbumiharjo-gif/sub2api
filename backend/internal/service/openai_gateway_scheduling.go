@@ -576,12 +576,16 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 	now := time.Now()
 	if !disabled5h && threshold5h > 0 {
 		if utilization, ok := resolveOpenAIQuotaUtilization(account.Extra, "5h", now); ok && utilization >= threshold5h {
-			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: threshold5h, utilization: utilization}
+			if !openAICreditsOverrideWindowPause(account, "5h", threshold5h, utilization, now) {
+				return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: threshold5h, utilization: utilization}
+			}
 		}
 	}
 	if !disabled7d && threshold7d > 0 {
 		if utilization, ok := resolveOpenAIQuotaUtilization(account.Extra, "7d", now); ok && utilization >= threshold7d {
-			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: threshold7d, utilization: utilization}
+			if !openAICreditsOverrideWindowPause(account, "7d", threshold7d, utilization, now) {
+				return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: threshold7d, utilization: utilization}
+			}
 		}
 	}
 	return false, openAIQuotaAutoPauseDecision{}

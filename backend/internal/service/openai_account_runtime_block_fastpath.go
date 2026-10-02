@@ -557,6 +557,14 @@ func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Acc
 	if s == nil {
 		return false
 	}
+	if account != nil && account.GetCredential("harness_kind") == PiSharedHarnessKind {
+		lookupCtx, cancel := context.WithTimeout(context.Background(), openAIAccountStateUpdateTimeout)
+		_, err := s.resolveNativePiDispatchAccount(lookupCtx, account)
+		cancel()
+		if err != nil {
+			return true
+		}
+	}
 	snapshot := s.peekOpenAIAccountRuntimeBlock(account)
 	if snapshot.blocked {
 		if accountPersistedSchedulingCooldownActive(account) {

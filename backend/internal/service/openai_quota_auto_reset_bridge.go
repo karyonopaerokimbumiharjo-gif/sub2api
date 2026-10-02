@@ -112,6 +112,7 @@ func (s *OpenAIQuotaService) runAutoResetLoop(ctx context.Context) {
 	}
 
 	s.runAutoResetCycle(ctx, time.Now())
+	s.runCreditsRefreshCycle(ctx, time.Now())
 	ticker := time.NewTicker(openAIQuotaAutoResetInterval)
 	defer ticker.Stop()
 	for {
@@ -120,6 +121,7 @@ func (s *OpenAIQuotaService) runAutoResetLoop(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			s.runAutoResetCycle(ctx, now)
+			s.runCreditsRefreshCycle(ctx, now)
 		}
 	}
 }

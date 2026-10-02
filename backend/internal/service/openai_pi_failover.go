@@ -9,6 +9,49 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Keep rejected upstream credentials inside the existing account retry loop.
+// Committing a 502 here pins sticky requests to the failed account indefinitely.
+func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, model string) error {
+	const message = "Pi upstream rejected the account authorization; reauthorize the account"
+	var raw []byte
+	if resp.Body != nil {
+		raw, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
+	}
+	var runtimeFailure struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &runtimeFailure)
+	if runtimeFailure.Error == "unauthorized" {
+		// The runtime rejects its private service bearer before contacting a
+		// provider. This is not evidence against any upstream account.
+		return &nativePiRequestError{status: http.StatusServiceUnavailable, message: "Pi runtime authentication is unavailable"}
+	}
+	detail := map[string]any{"type": "authentication_error", "message": message}
+	// Only explicit provider codes can establish permanent revocation. Do not
+	// classify free-form text, which may contain echoed input or credentials.
+	if code := extractUpstreamErrorCode(raw); resp.StatusCode == http.StatusUnauthorized && (code == "token_invalidated" || code == "token_revoked") {
+		detail["code"] = code
+	}
+	body, _ := json.Marshal(map[string]any{"error": detail})
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+		UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+		Kind: "failover", Message: message,
+	})
+	// Shared business aliases intentionally have no refresh token. Apply the
+	// auth cooldown to their credential owner, as token lookup and refresh do.
+	disabled := false
+	// A masked 403 cannot distinguish model permissions, CDN rejection and
+	// account suspension. Try another account for this request without adding
+	// strikes or disabling credentials based on information we no longer have.
+	if resp.StatusCode == http.StatusUnauthorized {
+		if owner, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account); err == nil {
+			disabled = s.handleFailoverSideEffects(ctx, resp, owner, body, model)
+		}
+	}
+	return s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, body, message, disabled, false)
+}
+
 // PI is a transport, not a separate scheduling policy. A quota failure must
 // reach the same cooldown and bounded retry/switch loop as direct OAuth calls,
 // before any response is written to the caller.
@@ -50,4 +93,12 @@ func (s *OpenAIGatewayService) nativePiRateLimitFailover(ctx context.Context, c 
 	})
 	disabled := s.handleFailoverSideEffects(ctx, resp, account, body, model)
 	return s.newOpenAIAccountFailoverError(account, http.StatusTooManyRequests, resp.Header, body, message, disabled, false)
+}
+
+// A credential can become unavailable after account selection. Keep this race
+// within the request's bounded failover loop without writing a response first.
+func nativePiCredentialOwnerUnavailable() *UpstreamFailoverError {
+	const message = "Pi credential owner is unavailable for dispatch"
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{"type": "upstream_error", "message": message}})
+	return newOpenAIUpstreamFailoverError(http.StatusServiceUnavailable, http.Header{}, body, message, false)
 }

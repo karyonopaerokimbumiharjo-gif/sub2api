@@ -103,6 +103,12 @@ export default {
       schedulableEnabled: 'Scheduling enabled',
       schedulableDisabled: 'Scheduling disabled',
       failedToToggleSchedulable: 'Failed to toggle scheduling status',
+      priorityQuick: {
+        raise: 'Raise priority (value -1)',
+        lower: 'Lower priority (value +1)',
+        editHint: 'Click to type a value; lower is used first',
+        failed: 'Failed to update priority'
+      },
       groupCountTotal: '{count} groups total',
       platforms: {
         anthropic: 'Anthropic',
@@ -116,6 +122,7 @@ export default {
         deepseek: 'DeepSeek',
         minimax: 'MiniMax',
         opencode_go: 'OpenCode',
+        typesafe: 'TypeSafe / Jev',
       },
       cnProviders: {
         accountMode: {
@@ -865,7 +872,7 @@ export default {
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Custom error codes only filter normal account-error handling (such as stopping scheduling or marking rate limits). They do not decide whether a request is retried or switched to another account. Unselected errors may still trigger a retry or an account switch, and the status returned to the client depends on the gateway path and error-passthrough rules; it is not always 500. An empty list applies no filtering.',
       customErrorCodes429Warning:
         '429 already has built-in rate limit handling. Adding it to custom error codes will disable the account instead of temporary rate limiting. Are you sure?',
       customErrorCodes529Warning:
@@ -1707,6 +1714,23 @@ export default {
         shadowHint: 'Send invitations from the parent account.',
         cacheFailed: 'Live capacity was fetched, but the cache could not be saved. Query again.',
         refreshFailed: 'The invitation was sent, but remaining capacity could not be refreshed. Query again.'
+      },
+      openaiCredits: {
+        title: 'Credits and usage',
+        refresh: 'Refresh usage',
+        refreshing: 'Refreshing…',
+        balance: 'Credit balance',
+        usageAllowance: 'Usage allowance (upstream units)',
+        limit: 'Limit',
+        used: 'Used',
+        remaining: 'Remaining',
+        remainingPercent: '{percent}% remaining',
+        reached: 'Limit reached',
+        unlimited: 'Unlimited',
+        unknown: 'Unknown',
+        usageScope: 'Upstream cycle total; gateway request charges are tracked separately.',
+        resetsAt: 'Resets:',
+        updatedAt: 'Updated:',
       },
       openaiQuotaReset: {
         count: 'Credits',

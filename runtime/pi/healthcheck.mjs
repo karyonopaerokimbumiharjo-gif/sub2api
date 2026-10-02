@@ -17,7 +17,7 @@ export async function checkRuntimeHealth({
   });
   if(response.status!==200)return false;
   const body=await response.json();
-  return body.status==='ok'&&body.adapter==='@earendil-works/pi-ai@0.99.2';
+  return body.status==='ok'&&body.adapter==='@earendil-works/pi-ai@1.0.0';
  }catch{return false}
 }
 

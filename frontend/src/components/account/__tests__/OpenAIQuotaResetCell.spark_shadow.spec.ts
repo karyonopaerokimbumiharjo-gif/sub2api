@@ -66,6 +66,61 @@ beforeEach(() => {
   vi.mocked(setOpenAIQuotaAutoReset).mockReset()
 })
 
+describe('OpenAIQuotaResetCell credit balance and spend-control snapshots', () => {
+  it('hydrates credit usage independently from reset cards and refreshes all fields in one request', async () => {
+    const account = makeAccount({ extra: {
+      codex_credits_snapshot: {
+        credits: { has_credits: true, unlimited: false, balance: '25' },
+        spend_control: { individual_limit: { limit: '100', used: '40', remaining: '60' } },
+        fetched_at: 1700000000,
+      },
+    } })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+    expect(refreshOpenAIQuota).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="openai-credits-balance"]').text()).toBe('25')
+    expect(wrapper.get('[data-testid="openai-spend-remaining"]').text()).toBe('60')
+    expect(resetButton(wrapper).attributes('disabled')).toBeDefined()
+    vi.mocked(refreshOpenAIQuota).mockResolvedValueOnce({
+      fetched_at: 1700000100, cache_persisted: true,
+      credits: { has_credits: true, unlimited: false, balance: '20' },
+      spend_control: { individual_limit: { limit: '100', used: '45', remaining: '55' } },
+    })
+    await wrapper.get('[data-testid="openai-credits-refresh"]').trigger('click')
+    await flushPromises()
+    expect(refreshOpenAIQuota).toHaveBeenCalledTimes(1)
+    expect(refreshOpenAIQuota).toHaveBeenCalledWith(1)
+    expect(resetOpenAIQuota).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="openai-credits-balance"]').text()).toBe('20')
+    expect(wrapper.get('[data-testid="openai-spend-remaining"]').text()).toBe('55')
+    wrapper.unmount()
+  })
+
+  it('does not replace missing live credit fields with an older balance', async () => {
+    const account = makeAccount({ extra: { codex_credits_snapshot: {
+      credits: { has_credits: true, unlimited: false, balance: '999' }, fetched_at: 1700000000,
+    } } })
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account } })
+    vi.mocked(refreshOpenAIQuota).mockResolvedValueOnce({ fetched_at: 1700000100, cache_persisted: true })
+    await wrapper.get('[data-testid="openai-credits-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-credits-balance"]').text()).toContain('unknown')
+    expect(wrapper.get('[data-testid="openai-credits-fetched"] time').attributes('datetime')).toBe(new Date(1700000100000).toISOString())
+    wrapper.unmount()
+  })
+
+  it('discards a slow result after the table row changes to another account', async () => {
+    let resolveQuery!: (value: Awaited<ReturnType<typeof refreshOpenAIQuota>>) => void
+    vi.mocked(refreshOpenAIQuota).mockImplementationOnce(() => new Promise(resolve => { resolveQuery = resolve }))
+    const wrapper = mount(OpenAIQuotaResetCell, { props: { account: makeAccount({ id: 1 }) } })
+    await wrapper.get('[data-testid="openai-credits-refresh"]').trigger('click')
+    await wrapper.setProps({ account: makeAccount({ id: 2 }) })
+    resolveQuery({ fetched_at: 1700000100, cache_persisted: true, credits: { has_credits: true, unlimited: false, balance: '500' } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-credits-balance"]').text()).toContain('unknown')
+    wrapper.unmount()
+  })
+})
+
 describe('OpenAIQuotaResetCell — 外审 F6:影子禁用重置', () => {
   it('影子账号(parent_account_id 非空)的 reset 按钮被禁用且提示在母账号重置', () => {
     const account = makeAccount({ parent_account_id: 100 })

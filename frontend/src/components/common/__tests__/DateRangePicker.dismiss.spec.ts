@@ -17,7 +17,10 @@ async function chooseDraft() {
     },
   })
   await wrapper.get('.date-picker-trigger').trigger('click')
-  await wrapper.findAll('.date-picker-preset').find(node => node.text() === 'dates.last7Days')!.trigger('click')
+  // Preset buttons apply immediately; only custom date edits remain a draft.
+  const inputs = wrapper.findAll<HTMLInputElement>('input[type="date"]')
+  await inputs[0].setValue('2026-09-07')
+  await inputs[1].setValue('2026-09-13')
 }
 
 describe('DateRangePicker unapplied changes', () => {

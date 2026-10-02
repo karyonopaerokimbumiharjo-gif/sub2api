@@ -107,6 +107,7 @@ data: {"type":"response.completed","response":{"id":"resp_pi_compat","object":"r
 			for _, authorized := range []bool{true, false} {
 				t.Run(endpoint+"/"+map[bool]string{true: "stream", false: "json"}[streaming]+"/"+map[bool]string{true: "allowed", false: "denied"}[authorized], func(t *testing.T) {
 					owner := nativePiAccount()
+					owner.Status, owner.Schedulable = StatusActive, true
 					owner.Credentials["expires_at"] = time.Now().Add(time.Hour).Format(time.RFC3339)
 					alias := nativePiAccount()
 					alias.ID = 8

@@ -90,6 +90,10 @@ func (r *quotaErrorClearRecorder) ClearError(context.Context, int64) error {
 	return nil
 }
 
+func (r *quotaErrorClearRecorder) UpdateExtra(context.Context, int64, map[string]any) error {
+	return nil
+}
+
 func TestCompatibleQuotaFailureDoesNotClearAccountAuthError(t *testing.T) {
 	account := newOpenAIQuotaBridgeTestAccount(30, "http://unreachable.invalid", "auth.json", "owner@example.test")
 	account.Status = StatusError
@@ -101,4 +105,36 @@ func TestCompatibleQuotaFailureDoesNotClearAccountAuthError(t *testing.T) {
 	require.Equal(t, "quota_refresh_failed", usage.ErrorCode)
 	require.Equal(t, StatusError, account.Status)
 	require.Zero(t, repo.clears)
+}
+
+func TestOpenAIQuotaReadSuccessPreservesAccountAuthError(t *testing.T) {
+	now := time.Now()
+	for _, account := range []*Account{
+		creditSchedulingAccount(t, now, `{}`),
+		newOpenAIQuotaBridgeTestAccount(30, "http://quota-test.invalid", "auth.json", "owner@example.test"),
+	} {
+		t.Run(account.Type, func(t *testing.T) {
+			const authError = "Token refresh failed (non-retryable): refresh_token_invalidated"
+			account.Status = StatusError
+			account.ErrorMessage = authError
+			balance := "25.00"
+			query := &quotaUsageQueryStub{usage: &OpenAIQuotaUsage{
+				FetchedAt: now.Unix(),
+				Credits:   &OpenAICredits{HasCredits: true, Balance: &balance},
+				RateLimit: &OpenAIRateLimit{Allowed: true, PrimaryWindow: &OpenAIRateLimitWindow{
+					UsedPercent: 12, LimitWindowSeconds: 18000, ResetAt: now.Add(time.Hour).Unix(),
+				}},
+			}}
+			repo := &quotaErrorClearRecorder{}
+			svc := &AccountUsageService{accountRepo: repo, openAIQuotaService: query}
+			usage, err := svc.getUsageForAccount(context.Background(), account, true)
+			require.NoError(t, err)
+			require.Empty(t, usage.Error)
+			require.Equal(t, []int64{account.ID}, query.ids, "the bound quota read really succeeded")
+			require.NotNil(t, readCodexCreditsSnapshot(account.Extra), "balance refresh still works")
+			require.Equal(t, StatusError, account.Status)
+			require.Equal(t, authError, account.ErrorMessage)
+			require.Zero(t, repo.clears, "a valid access token does not establish refresh-token recovery")
+		})
+	}
 }

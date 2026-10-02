@@ -98,9 +98,9 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 	fail := func(status int, message string) (*http.Response, error) {
 		return nil, &nativePiRequestError{status: status, message: message}
 	}
-	runtimeAccount, resolveErr := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
+	runtimeAccount, resolveErr := s.resolveNativePiDispatchAccount(ctx, account)
 	if resolveErr != nil {
-		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+		return nil, nativePiCredentialOwnerUnavailable()
 	}
 	if err := ValidateExecutionAccount(account); err != nil || ValidateExecutionAccount(runtimeAccount) != nil {
 		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
@@ -199,7 +199,7 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		case http.StatusGatewayTimeout:
 			return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
+			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, upstreamModel)
 		}
 		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
 	}
@@ -329,8 +329,11 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 	if err != nil {
 		return fail(http.StatusForbidden, err.Error())
 	}
-	runtimeAccount, err := ResolveNativePiRuntimeAccount(ctx, s.accountRepo, account)
-	if err != nil || ValidateExecutionAccount(runtimeAccount) != nil {
+	runtimeAccount, err := s.resolveNativePiDispatchAccount(ctx, account)
+	if err != nil {
+		return nil, nativePiCredentialOwnerUnavailable()
+	}
+	if ValidateExecutionAccount(runtimeAccount) != nil {
 		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
 	}
 	var request map[string]any
@@ -373,7 +376,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, model)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
+			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, model)
 		}
 		return fail(http.StatusBadGateway, "Pi compact upstream rejected the request")
 	}
