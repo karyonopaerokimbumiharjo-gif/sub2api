@@ -32,7 +32,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompat(ctx context.Context, c *gin
 		if errors.As(err, &failover) {
 			return nil, err
 		}
-		status, message := http.StatusBadGateway, "Pi runtime unavailable"
+		status, message := http.StatusBadGateway, "The selected execution backend is unavailable"
 		var requestErr *nativePiRequestError
 		if errors.As(err, &requestErr) {
 			status, message = requestErr.status, requestErr.message
@@ -40,7 +40,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompat(ctx context.Context, c *gin
 		if anthropic {
 			writeAnthropicError(c, status, "api_error", message)
 		} else {
-			writeChatCompletionsError(c, status, "pi_request_error", message)
+			writeChatCompletionsError(c, status, nativePiPublicErrorType(status), message)
 		}
 		return nil, &ForwardResponseWrittenError{Err: err}
 	}

@@ -10,12 +10,12 @@ import (
 // credential, or arbitrary field name back to a client or operations log.
 func nativePiClientRequestError(resp *http.Response) *nativePiRequestError {
 	status := resp.StatusCode
-	message := "Pi rejected the request format"
+	message := "The selected execution backend rejected the request format"
 	if status == http.StatusConflict {
-		message = "Pi session is busy; retry after the active request finishes"
+		message = "The selected execution backend session is busy; retry after the active request finishes"
 	}
 	if status == http.StatusRequestEntityTooLarge {
-		message = "Pi request exceeds the size limit; reduce attachments or conversation history"
+		message = "The request exceeds the selected execution backend's size limit; reduce attachments or conversation history"
 	}
 	var failure struct {
 		Error string `json:"error"`
@@ -25,20 +25,20 @@ func nativePiClientRequestError(resp *http.Response) *nativePiRequestError {
 	}
 	switch failure.Error {
 	case "unsupported_pi_tool_type":
-		message = "Pi does not support a tool type declared in this request"
+		message = "The selected execution backend does not support a tool type in this request; remove that tool or use a compatible backend"
 	case "invalid_pi_tools":
-		message = "Pi requires tools to be an array of tool definitions"
+		message = "The selected execution backend requires tools to be an array of tool definitions"
 	case "unsupported_pi_field", "unsupported_pi_field:max_output_tokens":
-		message = "Pi request contains an unsupported parameter"
+		message = "The request contains a parameter unsupported by the selected execution backend"
 	case "model_required":
 		message = "Model is required"
 	case "input_required":
-		message = "Pi requires input as text or a Responses input array"
+		message = "The selected execution backend requires input as text or a Responses input array"
 	case "invalid_responses_request":
 		message = "Invalid Responses request"
 	case "oauth_account_mismatch":
 		status = http.StatusBadGateway
-		message = "Pi credential account binding mismatch; reauthorize this account"
+		message = "The execution account binding mismatch requires reauthorization"
 	}
 	return &nativePiRequestError{status: status, message: message}
 }

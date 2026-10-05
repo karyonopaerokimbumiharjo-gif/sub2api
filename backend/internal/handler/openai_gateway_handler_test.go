@@ -3230,9 +3230,9 @@ func TestOpenAIForwardErrorAlreadyCommunicated(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, strings.NewReader(`{"stream":true}`))
 		before := c.Writer.Size()
-		err := &service.ForwardResponseWrittenError{Err: errors.New("Pi upstream unavailable")}
+		err := &service.ForwardResponseWrittenError{Err: errors.New("The selected execution backend is unavailable")}
 		require.False(t, openAIForwardErrorAlreadyCommunicated(c, before, err))
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "pi_request_error", "message": err.Error()}})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"type": "api_error", "message": err.Error()}})
 		require.True(t, openAIForwardErrorAlreadyCommunicated(c, before, err))
 		require.True(t, json.Valid(w.Body.Bytes()))
 		require.NotContains(t, w.Body.String(), "event:")

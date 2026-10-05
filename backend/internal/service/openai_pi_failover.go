@@ -12,7 +12,7 @@ import (
 // Keep rejected upstream credentials inside the existing account retry loop.
 // Committing a 502 here pins sticky requests to the failed account indefinitely.
 func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, model string) error {
-	const message = "Pi upstream rejected the account authorization; reauthorize the account"
+	const message = "The execution provider rejected the account authorization; reauthorize the account"
 	var raw []byte
 	if resp.Body != nil {
 		raw, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -24,12 +24,12 @@ func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context
 	if runtimeFailure.Error == "unauthorized" {
 		// The runtime rejects its private service bearer before contacting a
 		// provider. This is not evidence against any upstream account.
-		return &nativePiRequestError{status: http.StatusServiceUnavailable, message: "Pi runtime authentication is unavailable"}
+		return &nativePiRequestError{status: http.StatusServiceUnavailable, message: "The execution backend authentication is unavailable"}
 	}
 	// The runtime masks the reason for a 403. It may be a request or content
 	// rejection, so neither retry another credential nor penalize an account.
 	if resp.StatusCode == http.StatusForbidden {
-		return &nativePiRequestError{status: http.StatusForbidden, message: "Pi upstream rejected the request or its permissions"}
+		return &nativePiRequestError{status: http.StatusForbidden, message: "The execution provider rejected the request or its permissions"}
 	}
 	detail := map[string]any{"type": "authentication_error", "message": message}
 	// Only explicit provider codes can establish permanent revocation. Do not
@@ -59,7 +59,7 @@ func (s *OpenAIGatewayService) nativePiAuthorizationFailover(ctx context.Context
 // reach the same cooldown and bounded retry/switch loop as direct OAuth calls,
 // before any response is written to the caller.
 func (s *OpenAIGatewayService) nativePiRateLimitFailover(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, model string) error {
-	const message = "Pi upstream rate limit reached; retry later"
+	const message = "The execution provider rate limit was reached; retry later"
 	var metadata struct {
 		RateLimit struct {
 			Scope           string `json:"scope"`
@@ -101,7 +101,7 @@ func (s *OpenAIGatewayService) nativePiRateLimitFailover(ctx context.Context, c 
 // A credential can become unavailable after account selection. Keep this race
 // within the request's bounded failover loop without writing a response first.
 func nativePiCredentialOwnerUnavailable() *UpstreamFailoverError {
-	const message = "Pi credential owner is unavailable for dispatch"
+	const message = "The execution credential owner is unavailable for dispatch"
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{"type": "upstream_error", "message": message}})
 	return newOpenAIUpstreamFailoverError(http.StatusServiceUnavailable, http.Header{}, body, message, false)
 }

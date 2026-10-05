@@ -208,7 +208,7 @@
               </div>
             </div>
 
-            <div v-if="ev.message" class="mt-3 break-words text-sm font-medium text-gray-900 dark:text-white">{{ ev.message }}</div>
+            <div v-if="ev.message" class="mt-3 break-words text-sm font-medium text-gray-900 dark:text-white">{{ sanitizeOpsErrorMessage(ev.message) }}</div>
 
             <pre
               v-if="expandedUpstreamDetailIds.has(ev.id)"
@@ -240,6 +240,7 @@ import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
 import { resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import { sanitizeOpsErrorMessage } from '../utils/errorMessage'
 
 interface Props {
   show: boolean
@@ -293,7 +294,7 @@ const diagnosticPayloadSections = computed(() => {
 })
 
 function meaningfulPayload(candidate: unknown): string {
-  const value = String(candidate || '').trim()
+  const value = sanitizeOpsErrorMessage(candidate).trim()
   if (!value || value === '[]' || value === '{}' || value.toLowerCase() === 'null') return ''
   return value
 }
@@ -402,9 +403,9 @@ function goBack() {
 function prettyJSON(raw?: string): string {
   if (!raw) return 'N/A'
   try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
+    return sanitizeOpsErrorMessage(JSON.stringify(JSON.parse(raw), null, 2))
   } catch {
-    return raw
+    return sanitizeOpsErrorMessage(raw)
   }
 }
 

@@ -16,7 +16,7 @@ func TestNativePiRequestErrorsSeparateValidationFromConcurrency(t *testing.T) {
 	}{
 		{`{"error":"unsupported_pi_tool_type"}`, 400, 400, "tool type"},
 		{`{"error":"invalid_pi_tools"}`, 400, 400, "array"},
-		{`{"error":"unsupported_pi_field"}`, 400, 400, "unsupported parameter"},
+		{`{"error":"unsupported_pi_field"}`, 400, 400, "unsupported"},
 		{`{"error":"input_required"}`, 400, 400, "input"},
 		{`{"error":"model_required"}`, 400, 400, "Model is required"},
 		{`{"error":"request_too_large"}`, 413, 413, "size limit"},
@@ -28,7 +28,15 @@ func TestNativePiRequestErrorsSeparateValidationFromConcurrency(t *testing.T) {
 		d := nativePiClientRequestError(&http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))})
 		require.Equal(t, tc.wantStatus, d.status)
 		require.Contains(t, d.message, tc.message)
+		require.NotContains(t, d.message, "Pi")
 		require.NotContains(t, d.message, "private-token")
 		require.NotContains(t, d.message, "Invalid or concurrent")
 	}
+}
+
+func TestNativePiPublicErrorTypeHidesExecutionBackend(t *testing.T) {
+	require.Equal(t, "invalid_request_error", nativePiPublicErrorType(http.StatusBadRequest))
+	require.Equal(t, "invalid_request_error", nativePiPublicErrorType(http.StatusForbidden))
+	require.Equal(t, "api_error", nativePiPublicErrorType(http.StatusBadGateway))
+	require.Equal(t, "api_error", nativePiPublicErrorType(http.StatusGatewayTimeout))
 }

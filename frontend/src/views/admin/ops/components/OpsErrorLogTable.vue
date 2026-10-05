@@ -126,7 +126,7 @@
           <div v-if="row.message" class="max-w-[280px] space-y-1">
             <span
               class="block truncate text-sm text-gray-600 dark:text-gray-400"
-              :title="row.message"
+              :title="sanitizeOpsErrorMessage(row.message)"
             >{{ formatSmartMessage(row.message) || '-' }}</span>
             <span
               v-if="(row.occurrence_count || 1) > 1"
@@ -195,6 +195,7 @@ import IpGeoBatchToolbar from '@/components/common/IpGeoBatchToolbar.vue'
 import type { OpsErrorLog } from '@/api/admin/ops'
 import type { Column } from '@/components/common/types'
 import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
+import { sanitizeOpsErrorMessage } from '../utils/errorMessage'
 import { mapErrorCategory } from '@/utils/errorCategory'
 import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
 
@@ -331,10 +332,10 @@ function formatSmartMessage(msg: string): string {
   if (msg.startsWith('{') || msg.startsWith('[')) {
     try {
       const obj = JSON.parse(msg)
-      if (obj?.error?.message) return String(obj.error.message)
-      if (obj?.message) return String(obj.message)
-      if (obj?.detail) return String(obj.detail)
-      if (typeof obj === 'object') return JSON.stringify(obj).substring(0, 150)
+      if (obj?.error?.message) return sanitizeOpsErrorMessage(String(obj.error.message))
+      if (obj?.message) return sanitizeOpsErrorMessage(String(obj.message))
+      if (obj?.detail) return sanitizeOpsErrorMessage(String(obj.detail))
+      if (typeof obj === 'object') return sanitizeOpsErrorMessage(JSON.stringify(obj).substring(0, 150))
     } catch {
       // ignore parse error
     }
@@ -344,7 +345,8 @@ function formatSmartMessage(msg: string): string {
   if (msg.includes('connection refused')) return t('admin.ops.errorLog.commonErrors.connectionRefused')
   if (msg.toLowerCase().includes('rate limit')) return t('admin.ops.errorLog.commonErrors.rateLimit')
 
-  return msg.length > 200 ? msg.substring(0, 200) + '...' : msg
+  const safe = sanitizeOpsErrorMessage(msg)
+  return safe.length > 200 ? safe.substring(0, 200) + '...' : safe
 }
 
 function aggregationTitle(log: OpsErrorLog): string {

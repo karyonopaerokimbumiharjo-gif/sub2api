@@ -24,15 +24,15 @@ func (a *Account) UsesNativePiRuntime() bool {
 func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 	value, ok := c.Get("api_key")
 	if !ok {
-		return 0, errors.New("Pi account requires an authenticated API key")
+		return 0, errors.New("An authenticated API key is required")
 	}
 	key, ok := value.(*APIKey)
 	if !ok || key == nil || key.ID <= 0 || key.UserID <= 0 {
-		return 0, errors.New("Pi account requires an authenticated API key")
+		return 0, errors.New("An authenticated API key is required")
 	}
 	owner, err := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
 	if err != nil || owner <= 0 {
-		return 0, errors.New("Pi credential owner is invalid")
+		return 0, errors.New("The execution credential owner is invalid")
 	}
 	// The credential owner controls refresh, not exclusive use of the account.
 	// A selected shared account is usable only inside the authenticated key's
@@ -41,14 +41,14 @@ func piRequestOwner(c *gin.Context, account *Account) (int64, error) {
 		!key.Group.IsActive() || key.Group.Platform != PlatformOpenAI ||
 		key.User == nil || key.User.ID != key.UserID || !key.User.IsActive() ||
 		(!key.Group.IsSubscriptionType() && !key.User.CanBindGroup(*key.GroupID, key.Group.IsExclusive)) {
-		return 0, errors.New("Pi request requires an authorized OpenAI group")
+		return 0, errors.New("An authorized OpenAI group is required for this request")
 	}
 	for _, groupID := range account.GroupIDs {
 		if groupID == *key.GroupID {
 			return owner, nil
 		}
 	}
-	return 0, errors.New("Pi account does not belong to the selected group")
+	return 0, errors.New("The selected execution account is not in the requested group")
 }
 
 // A request correlation ID can change every turn; it cannot establish the
@@ -75,11 +75,11 @@ func nativePiSession(c *gin.Context, request map[string]any) string {
 func scopedNativePiSession(c *gin.Context, session string) (string, error) {
 	value, ok := c.Get("api_key")
 	if !ok {
-		return "", errors.New("Pi account requires an authenticated API key")
+		return "", errors.New("An authenticated API key is required")
 	}
 	key, ok := value.(*APIKey)
 	if !ok || key == nil || key.ID <= 0 || key.UserID <= 0 {
-		return "", errors.New("Pi account requires an authenticated API key")
+		return "", errors.New("An authenticated API key is required")
 	}
 	return strconv.FormatInt(key.UserID, 10) + ":" + strconv.FormatInt(key.ID, 10) + ":" + session, nil
 }
@@ -90,6 +90,16 @@ type nativePiRequestError struct {
 }
 
 func (e *nativePiRequestError) Error() string { return e.message }
+
+// Keep the public error shape compatible with OpenAI clients without exposing
+// the selected internal execution backend. The backend-specific runtime code
+// remains available to internal classification and logs.
+func nativePiPublicErrorType(status int) string {
+	if status >= http.StatusInternalServerError {
+		return "api_error"
+	}
+	return "invalid_request_error"
+}
 
 // openNativePiResponse is the shared authenticated transport for Responses,
 // Chat Completions and Messages. Protocol adapters keep their existing output
@@ -103,14 +113,14 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		return nil, nativePiCredentialOwnerUnavailable()
 	}
 	if err := ValidateExecutionAccount(account); err != nil || ValidateExecutionAccount(runtimeAccount) != nil {
-		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+		return fail(http.StatusServiceUnavailable, "The execution credential binding is unavailable")
 	}
 	owner, err := piRequestOwner(c, account)
 	if err != nil {
 		return fail(http.StatusForbidden, err.Error())
 	}
 	if account.ProxyID != nil {
-		return fail(http.StatusBadRequest, "Pi runtime uses its configured network route; per-account proxy is not supported")
+		return fail(http.StatusBadRequest, "The selected execution backend uses its configured network route; per-account proxy is not supported")
 	}
 	normalizedBody, _, normalizeErr := normalizeOpenAIResponsesLegacyIngress(body)
 	if normalizeErr != nil {
@@ -149,11 +159,11 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		return fail(http.StatusBadRequest, "Model is required")
 	}
 	if s.openAITokenProvider == nil {
-		return fail(http.StatusServiceUnavailable, "Pi token provider unavailable")
+		return fail(http.StatusServiceUnavailable, "The execution token provider is unavailable")
 	}
 	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
-		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
+		return fail(http.StatusUnauthorized, "The execution credential is unavailable; reauthorize this account")
 	}
 	if upstreamModel == "" {
 		upstreamModel = account.GetMappedModel(model)
@@ -173,18 +183,18 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		if errors.As(err, &runtimeErr) {
 			switch runtimeErr.Code {
 			case "pi_upstream_busy":
-				return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
+				return fail(http.StatusServiceUnavailable, "The selected execution backend is temporarily busy; retry later")
 			case "pi_upstream_rate_limited":
 				return nil, s.nativePiRateLimitFailover(ctx, c, account, &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}, upstreamModel)
 			case "pi_upstream_authorization_rejected":
-				return fail(http.StatusBadGateway, "Pi upstream rejected this account's authorization")
+				return fail(http.StatusBadGateway, "The execution provider rejected this account's authorization")
 			case "pi_upstream_failed":
-				return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
+				return fail(http.StatusBadGateway, "The execution provider rejected the request")
 			case "pi_upstream_timeout":
-				return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
+				return fail(http.StatusGatewayTimeout, "The execution provider timed out while waiting for response data; retry the request")
 			}
 		}
-		return fail(http.StatusBadGateway, "Pi runtime unavailable")
+		return fail(http.StatusBadGateway, "The selected execution backend is unavailable")
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
@@ -195,15 +205,15 @@ func (s *OpenAIGatewayService) openNativePiResponse(ctx context.Context, c *gin.
 		case http.StatusTooManyRequests:
 			return nil, s.nativePiRateLimitFailover(ctx, c, account, resp, upstreamModel)
 		case http.StatusServiceUnavailable:
-			return fail(http.StatusServiceUnavailable, "Pi upstream is temporarily busy; retry later")
+			return fail(http.StatusServiceUnavailable, "The selected execution backend is temporarily busy; retry later")
 		case http.StatusGatewayTimeout:
-			return fail(http.StatusGatewayTimeout, "Pi upstream timed out while waiting for response data; retry the request")
+			return fail(http.StatusGatewayTimeout, "The execution provider timed out while waiting for response data; retry the request")
 		case http.StatusUnauthorized:
 			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, upstreamModel)
 		case http.StatusForbidden:
-			return fail(http.StatusForbidden, "Pi upstream rejected the request or its permissions")
+			return fail(http.StatusForbidden, "The execution provider rejected the request or its permissions")
 		}
-		return fail(http.StatusBadGateway, "Pi native upstream rejected the request")
+		return fail(http.StatusBadGateway, "The execution provider rejected the request")
 	}
 	return resp, nil
 }
@@ -219,12 +229,12 @@ func (s *OpenAIGatewayService) nativePiRuntimeTimeouts() (headerMS, idleMS int64
 
 func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
-		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
+		c.JSON(status, gin.H{"error": gin.H{"type": nativePiPublicErrorType(status), "message": message}})
 		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
 	}
 	if isOpenAIResponsesCompactPath(c) {
 		if ValidateExecutionAccount(account) != nil {
-			return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+			return fail(http.StatusServiceUnavailable, "The execution credential binding is unavailable")
 		}
 		return s.forwardNativePiCompact(ctx, c, account, body)
 	}
@@ -272,7 +282,7 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 		if errors.As(err, &requestErr) {
 			return fail(requestErr.status, requestErr.message)
 		}
-		return fail(http.StatusBadGateway, "Pi runtime unavailable")
+		return fail(http.StatusBadGateway, "The selected execution backend is unavailable")
 	}
 	defer resp.Body.Close()
 	SetActualOpenAIUpstreamEndpoint(c, "/backend-api/codex/responses")
@@ -324,7 +334,7 @@ func (s *OpenAIGatewayService) forwardNativePi(ctx context.Context, c *gin.Conte
 // account binding and credential redaction identical to normal Pi Responses.
 func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	fail := func(status int, message string) (*OpenAIForwardResult, error) {
-		c.JSON(status, gin.H{"error": gin.H{"type": "pi_request_error", "message": message}})
+		c.JSON(status, gin.H{"error": gin.H{"type": nativePiPublicErrorType(status), "message": message}})
 		return nil, &ForwardResponseWrittenError{Err: errors.New(message)}
 	}
 	owner, err := piRequestOwner(c, account)
@@ -336,7 +346,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 		return nil, nativePiCredentialOwnerUnavailable()
 	}
 	if ValidateExecutionAccount(runtimeAccount) != nil {
-		return fail(http.StatusServiceUnavailable, "Pi credential binding is unavailable")
+		return fail(http.StatusServiceUnavailable, "The execution credential binding is unavailable")
 	}
 	var request map[string]any
 	if json.Unmarshal(body, &request) != nil {
@@ -353,11 +363,11 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 		}
 	}
 	if s.openAITokenProvider == nil {
-		return fail(http.StatusServiceUnavailable, "Pi token provider unavailable")
+		return fail(http.StatusServiceUnavailable, "The execution token provider is unavailable")
 	}
 	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
-		return fail(http.StatusUnauthorized, "Pi credential is unavailable; reauthorize this account")
+		return fail(http.StatusUnauthorized, "The execution credential is unavailable; reauthorize this account")
 	}
 	started := time.Now()
 	resp, err := piruntime.Do(ctx, "/compact", map[string]any{
@@ -366,7 +376,7 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 		"owner_id":   owner, "credential_id": runtimeAccount.ID,
 	})
 	if err != nil {
-		return fail(http.StatusBadGateway, "Pi runtime unavailable")
+		return fail(http.StatusBadGateway, "The selected execution backend is unavailable")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -381,9 +391,9 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 			return nil, s.nativePiAuthorizationFailover(ctx, c, account, resp, model)
 		}
 		if resp.StatusCode == http.StatusForbidden {
-			return fail(http.StatusForbidden, "Pi upstream rejected the request or its permissions")
+			return fail(http.StatusForbidden, "The execution provider rejected the request or its permissions")
 		}
-		return fail(http.StatusBadGateway, "Pi compact upstream rejected the request")
+		return fail(http.StatusBadGateway, "The execution provider rejected the request")
 	}
 	result := &OpenAIForwardResult{Model: model, UpstreamModel: model, Stream: false, UpstreamHeaders: resp.Header, UpstreamEndpoint: "/backend-api/codex/responses/compact", BillingModel: model, RequestID: resp.Header.Get("x-request-id"), Duration: time.Since(started)}
 	nonstream, err := s.handleNonStreamingResponse(ctx, resp, c, account, model, model)
@@ -403,21 +413,21 @@ func (s *OpenAIGatewayService) forwardNativePiCompact(ctx context.Context, c *gi
 // Native Pi credentials stay on the Pi SDK refresh path, under Sub2API's existing refresh lock.
 func refreshNativePiToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
 	if account.GetCredential("harness_kind") == PiSharedHarnessKind {
-		return nil, errors.New("shared Pi aliases must refresh through their runtime owner")
+		return nil, errors.New("shared execution aliases must refresh through their runtime owner")
 	}
 	owner, err := strconv.ParseInt(account.GetCredential("pi_owner_user_id"), 10, 64)
 	if err != nil || owner <= 0 || account.ProxyID != nil || account.GetOpenAIRefreshToken() == "" {
-		return nil, errors.New("invalid Pi credential binding")
+		return nil, errors.New("invalid execution credential binding")
 	}
 	var info OpenAITokenInfo
 	if err := piruntime.JSON(ctx, "/oauth/refresh", map[string]any{"owner_id": owner, "account_id": account.GetCredential("chatgpt_account_id"), "refresh_token": account.GetOpenAIRefreshToken()}, &info); err != nil {
 		return nil, err
 	}
 	if info.HarnessKind != "pi" || info.PiOwnerUserID != strconv.FormatInt(owner, 10) || info.ChatGPTAccountID != account.GetCredential("chatgpt_account_id") || info.AccessToken == "" || info.ExpiresAt <= time.Now().Unix() {
-		return nil, errors.New("Pi refresh returned an invalid binding")
+		return nil, errors.New("execution credential refresh returned an invalid binding")
 	}
 	if strings.HasPrefix(OpenAIOAuthPrincipal(account.Credentials), "user:") && !SameOpenAIOAuthIdentity(account.Credentials, map[string]any{"access_token": info.AccessToken, "chatgpt_account_id": info.ChatGPTAccountID}) {
-		return nil, errors.New("Pi refresh returned a different login identity")
+		return nil, errors.New("execution credential refresh returned a different login identity")
 	}
 	return &info, nil
 }

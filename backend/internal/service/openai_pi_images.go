@@ -21,22 +21,22 @@ func (s *OpenAIGatewayService) openNativePiMediaResponse(ctx context.Context, ac
 		return nil, nativePiCredentialOwnerUnavailable()
 	}
 	if ValidateExecutionAccount(account) != nil || ValidateExecutionAccount(runtimeAccount) != nil {
-		return nil, errors.New("Pi image credential binding is unavailable")
+		return nil, errors.New("The image execution credential binding is unavailable")
 	}
 	if s.openAITokenProvider == nil {
-		return nil, errors.New("Pi token provider unavailable")
+		return nil, errors.New("The execution token provider is unavailable")
 	}
 	token, err := s.openAITokenProvider.GetAccessToken(ctx, runtimeAccount)
 	if err != nil {
-		return nil, errors.New("Pi credential unavailable; reauthorize this account")
+		return nil, errors.New("The execution credential is unavailable; reauthorize this account")
 	}
 	owner, err := strconv.ParseInt(runtimeAccount.GetCredential("pi_owner_user_id"), 10, 64)
 	if err != nil || owner <= 0 {
-		return nil, errors.New("Pi credential owner is invalid")
+		return nil, errors.New("The execution credential owner is invalid")
 	}
 	var request map[string]any
 	if json.Unmarshal(body, &request) != nil {
-		return nil, errors.New("Invalid Pi image request")
+		return nil, errors.New("Invalid image request")
 	}
 	path := "/responses"
 	endpoint := ""
@@ -48,7 +48,7 @@ func (s *OpenAIGatewayService) openNativePiMediaResponse(ctx context.Context, ac
 			}
 		}
 		if endpoint == "" {
-			return nil, errors.New("Unsupported Pi image endpoint")
+			return nil, errors.New("Unsupported image endpoint")
 		}
 		path = "/images"
 	}
